@@ -915,35 +915,35 @@ class ApiService {
     }
     // Training
     async setupTraining(config) {
-        const response = await api.post('/training/setup', config);
+        const response = await api.post('/training/training/setup', config);
         return response.data;
     }
     async getTrainingStatus(jobId) {
-        const url = jobId ? `/training/status?job_id=${jobId}` : '/training/status';
+        const url = jobId ? `/training/training/status?job_id=${jobId}` : '/training/training/status';
         const response = await api.get(url);
         return response.data;
     }
     async controlTraining(jobId, action) {
-        const response = await api.post(`/training/${jobId}/control?action=${action}`);
+        const response = await api.post(`/training/training/${jobId}/control?action=${action}`);
         return response.data;
     }
     async getTrainedModels(deviceId) {
-        const url = deviceId ? `/training/models?device_id=${deviceId}` : '/training/models';
+        const url = deviceId ? `/training/training/models?device_id=${deviceId}` : '/training/training/models';
         const response = await api.get(url);
         return response.data;
     }
     // Federated Learning
     async startFederatedTraining(config) {
-        const response = await api.post('/federated/train', config);
+        const response = await api.post('/training/federated/train', config);
         return response.data;
     }
     async getFederatedStatus(sessionId) {
-        const url = sessionId ? `/federated/status?session_id=${sessionId}` : '/federated/status';
+        const url = sessionId ? `/training/federated/status?session_id=${sessionId}` : '/training/federated/status';
         const response = await api.get(url);
         return response.data;
     }
     async joinFederatedSession(sessionId, deviceId, dataSamples) {
-        const response = await api.post(`/federated/${sessionId}/join`, null, {
+        const response = await api.post(`/training/federated/${sessionId}/join`, null, {
             params: {
                 device_id: deviceId,
                 data_samples: dataSamples

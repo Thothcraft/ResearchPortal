@@ -258,23 +258,23 @@ class ApiService {
     learning_rate?: number;
     device_id?: string;
   }) {
-    const response = await api.post('/training/setup', config);
+    const response = await api.post('/training/training/setup', config);
     return response.data;
   }
 
   async getTrainingStatus(jobId?: string): Promise<TrainingJob | { jobs: TrainingJob[] }> {
-    const url = jobId ? `/training/status?job_id=${jobId}` : '/training/status';
+    const url = jobId ? `/training/training/status?job_id=${jobId}` : '/training/training/status';
     const response = await api.get(url);
     return response.data;
   }
 
   async controlTraining(jobId: string, action: 'pause' | 'resume' | 'cancel') {
-    const response = await api.post(`/training/${jobId}/control?action=${action}`);
+    const response = await api.post(`/training/training/${jobId}/control?action=${action}`);
     return response.data;
   }
 
   async getTrainedModels(deviceId?: string) {
-    const url = deviceId ? `/training/models?device_id=${deviceId}` : '/training/models';
+    const url = deviceId ? `/training/training/models?device_id=${deviceId}` : '/training/training/models';
     const response = await api.get(url);
     return response.data;
   }
@@ -289,18 +289,18 @@ class ApiService {
     noise_multiplier?: number;
     model_config: any;
   }) {
-    const response = await api.post('/federated/train', config);
+    const response = await api.post('/training/federated/train', config);
     return response.data;
   }
 
   async getFederatedStatus(sessionId?: string): Promise<FederatedSession | { sessions: FederatedSession[] }> {
-    const url = sessionId ? `/federated/status?session_id=${sessionId}` : '/federated/status';
+    const url = sessionId ? `/training/federated/status?session_id=${sessionId}` : '/training/federated/status';
     const response = await api.get(url);
     return response.data;
   }
 
   async joinFederatedSession(sessionId: string, deviceId: string, dataSamples: number) {
-    const response = await api.post(`/federated/${sessionId}/join`, null, {
+    const response = await api.post(`/training/federated/${sessionId}/join`, null, {
       params: {
         device_id: deviceId,
         data_samples: dataSamples
