@@ -636,6 +636,39 @@ class ApiService {
         const response = await api.get('/health');
         return response.data;
     }
+    // ============================================
+    // Device Management
+    // ============================================
+    /**
+   * Get all registered devices for the current user
+   */ async getDevices() {
+        const response = await api.get('/device/list');
+        return response.data;
+    }
+    /**
+   * Register a new device
+   */ async registerDevice(deviceData) {
+        const response = await api.post('/device/register', deviceData);
+        return response.data;
+    }
+    /**
+   * Update device information
+   */ async updateDevice(deviceId, data) {
+        const response = await api.put(`/device/${deviceId}`, data);
+        return response.data;
+    }
+    /**
+   * Get detailed status of a specific device
+   */ async getDeviceStatus(deviceId) {
+        const response = await api.get(`/device/${deviceId}/status`);
+        return response.data;
+    }
+    /**
+   * Delete a device
+   */ async deleteDevice(deviceId) {
+        const response = await api.delete(`/device/${deviceId}`);
+        return response.data;
+    }
     // Sensors
     async getCurrentSensorData(deviceId = 'thoth-001') {
         const response = await api.get(`/sensors/current?device_id=${deviceId}`);
@@ -738,35 +771,35 @@ class ApiService {
     }
     // Training
     async setupTraining(config) {
-        const response = await api.post('/training/setup', config);
+        const response = await api.post('/training/training/setup', config);
         return response.data;
     }
     async getTrainingStatus(jobId) {
-        const url = jobId ? `/training/status?job_id=${jobId}` : '/training/status';
+        const url = jobId ? `/training/training/status?job_id=${jobId}` : '/training/training/status';
         const response = await api.get(url);
         return response.data;
     }
     async controlTraining(jobId, action) {
-        const response = await api.post(`/training/${jobId}/control?action=${action}`);
+        const response = await api.post(`/training/training/${jobId}/control?action=${action}`);
         return response.data;
     }
     async getTrainedModels(deviceId) {
-        const url = deviceId ? `/training/models?device_id=${deviceId}` : '/training/models';
+        const url = deviceId ? `/training/training/models?device_id=${deviceId}` : '/training/training/models';
         const response = await api.get(url);
         return response.data;
     }
     // Federated Learning
     async startFederatedTraining(config) {
-        const response = await api.post('/federated/train', config);
+        const response = await api.post('/training/federated/train', config);
         return response.data;
     }
     async getFederatedStatus(sessionId) {
-        const url = sessionId ? `/federated/status?session_id=${sessionId}` : '/federated/status';
+        const url = sessionId ? `/training/federated/status?session_id=${sessionId}` : '/training/federated/status';
         const response = await api.get(url);
         return response.data;
     }
     async joinFederatedSession(sessionId, deviceId, dataSamples) {
-        const response = await api.post(`/federated/${sessionId}/join`, null, {
+        const response = await api.post(`/training/federated/${sessionId}/join`, null, {
             params: {
                 device_id: deviceId,
                 data_samples: dataSamples

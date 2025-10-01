@@ -134,8 +134,8 @@ var __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist
 var __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$axios$2f$lib$2f$axios$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__ = __turbopack_context__.i("[project]/node_modules/axios/lib/axios.js [app-client] (ecmascript)");
 ;
 // API Configuration
-const API_BASE_URL = ("TURBOPACK compile-time value", "https://web-production-d7d37.up.railway.app") || 'https://web-production-d7d37.up.railway.app';
-const WS_URL = ("TURBOPACK compile-time value", "wss://web-production-d7d37.up.railway.app") || 'wss://web-production-d7d37.up.railway.app';
+const API_BASE_URL = ("TURBOPACK compile-time value", "http://localhost:8000") || 'https://web-production-d7d37.up.railway.app';
+const WS_URL = ("TURBOPACK compile-time value", "ws://localhost:8000") || 'wss://web-production-d7d37.up.railway.app';
 // Create axios instance
 const api = __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$axios$2f$lib$2f$axios$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["default"].create({
     baseURL: API_BASE_URL,
@@ -199,6 +199,39 @@ class ApiService {
     // System
     async getHealth() {
         const response = await api.get('/health');
+        return response.data;
+    }
+    // ============================================
+    // Device Management
+    // ============================================
+    /**
+   * Get all registered devices for the current user
+   */ async getDevices() {
+        const response = await api.get('/device/list');
+        return response.data;
+    }
+    /**
+   * Register a new device
+   */ async registerDevice(deviceData) {
+        const response = await api.post('/device/register', deviceData);
+        return response.data;
+    }
+    /**
+   * Update device information
+   */ async updateDevice(deviceId, data) {
+        const response = await api.put(`/device/${deviceId}`, data);
+        return response.data;
+    }
+    /**
+   * Get detailed status of a specific device
+   */ async getDeviceStatus(deviceId) {
+        const response = await api.get(`/device/${deviceId}/status`);
+        return response.data;
+    }
+    /**
+   * Delete a device
+   */ async deleteDevice(deviceId) {
+        const response = await api.delete(`/device/${deviceId}`);
         return response.data;
     }
     // Sensors

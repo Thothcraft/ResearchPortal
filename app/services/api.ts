@@ -128,6 +128,55 @@ class ApiService {
     return response.data;
   }
 
+  // ============================================
+  // Device Management
+  // ============================================
+
+  /**
+   * Get all registered devices for the current user
+   */
+  async getDevices() {
+    const response = await api.get('/device/list');
+    return response.data;
+  }
+
+  /**
+   * Register a new device
+   */
+  async registerDevice(deviceData: {
+    device_id: string;
+    device_name?: string;
+    device_type?: string;
+    hardware_info?: Record<string, any>;
+  }) {
+    const response = await api.post('/device/register', deviceData);
+    return response.data;
+  }
+
+  /**
+   * Update device information
+   */
+  async updateDevice(deviceId: string, data: any) {
+    const response = await api.put(`/device/${deviceId}`, data);
+    return response.data;
+  }
+
+  /**
+   * Get detailed status of a specific device
+   */
+  async getDeviceStatus(deviceId: string) {
+    const response = await api.get(`/device/${deviceId}/status`);
+    return response.data;
+  }
+
+  /**
+   * Delete a device
+   */
+  async deleteDevice(deviceId: string) {
+    const response = await api.delete(`/device/${deviceId}`);
+    return response.data;
+  }
+
   // Sensors
   async getCurrentSensorData(deviceId: string = 'thoth-001'): Promise<SensorData> {
     const response = await api.get(`/sensors/current?device_id=${deviceId}`);
