@@ -1,0 +1,36 @@
+nohup: ignoring input
+
+> thoth@0.1.0 dev
+> next dev --turbopack
+
+   ▲ Next.js 15.3.3 (Turbopack)
+   - Local:        http://localhost:3000
+   - Network:      http://129.100.17.219:3000
+   - Environments: .env.local
+
+ ✓ Starting...
+ ✓ Ready in 685ms
+ ○ Compiling / ...
+ ✓ Compiled / in 1071ms
+ GET / 200 in 1227ms
+ ✓ Compiled /_not-found/page in 291ms
+ GET /devices 404 in 311ms
+ GET /devices 404 in 20ms
+ GET / 200 in 34ms
+ GET /devices 404 in 13ms
+ GET /devices 404 in 26ms
+ GET / 200 in 26ms
+ GET /devices 404 in 17ms
+ GET /devices 404 in 29ms
+ GET / 200 in 31ms
+ GET /devices 404 in 14ms
+ GET /devices 404 in 22ms
+ GET / 200 in 21ms
+ GET /devices 404 in 19ms
+ GET /devices 404 in 19ms
+ GET / 200 in 25ms
+ GET /devices 404 in 19ms
+ GET /devices 404 in 34ms
+ GET / 200 in 29ms
+ GET /devices 404 in 13ms
+ GET /devices 404 in 19ms

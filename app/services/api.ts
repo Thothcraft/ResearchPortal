@@ -13,8 +13,10 @@ const WS_URL = process.env.NEXT_PUBLIC_WS_URL || 'wss://web-production-d7d37.up.
 // Create axios instance
 const api = axios.create({
   baseURL: API_BASE_URL,
+  withCredentials: true,
   headers: {
     'Content-Type': 'application/json',
+    'Accept': 'application/json',
   },
 });
 
@@ -99,16 +101,43 @@ class ApiService {
   private socket: Socket | null = null;
 
   // Authentication
-  async login(email: string, password: string) {
-    const response = await api.post('/token', { email, password });
-    if (response.data.access_token) {
-      localStorage.setItem('auth_token', response.data.access_token);
+  async login(username: string, password: string) {
+    try {
+      const response = await api.post('/token', {
+        username,
+        password,
+        grant_type: 'password'
+      });
+    
+      if (response.data.access_token) {
+        localStorage.setItem('auth_token', response.data.access_token);
+        // Set default auth header for subsequent requests
+        api.defaults.headers.common['Authorization'] = `Bearer ${response.data.access_token}`;
+      }
+      return response.data;
+    } catch (error: any) {
+      console.error('Login error:', error);
+      if (error.response) {
+        // The request was made and the server responded with a status code
+        // that falls out of the range of 2xx
+        throw new Error(error.response.data.detail || 'Login failed');
+      } else if (error.request) {
+        // The request was made but no response was received
+        throw new Error('No response from server. Please check your connection.');
+      } else {
+        // Something happened in setting up the request that triggered an Error
+        throw new Error('Error setting up login request');
+      }
     }
-    return response.data;
   }
 
-  async register(email: string, password: string, role: string = 'researcher') {
-    const response = await api.post('/register', { email, password, role });
+  async register(username: string, password: string, phone: string, role: string = 'researcher') {
+    const response = await api.post('/register', { 
+      username, 
+      password, 
+      phone_number: phone,
+      role 
+    });
     return response.data;
   }
 
@@ -208,72 +237,77 @@ class ApiService {
   }
 
   // WebSocket for live sensor streaming
+  private onDataCallback: ((data: SensorData) => void) | null = null;
+  private simulationInterval: NodeJS.Timeout | null = null;
+
   connectToSensorStream(deviceId: string, onData: (data: SensorData) => void) {
     if (this.socket) {
       this.socket.disconnect();
     }
 
-    // For now, simulate WebSocket data since the backend WebSocket might not be available
-    // In production, you would use the actual WebSocket connection
-    const simulateData = () => {
+    this.onDataCallback = onData;
+    
+    // In production, you would connect to the actual WebSocket
+    // this.socket = io(`${WS_URL}?deviceId=${deviceId}`, {
+    //   auth: { token: localStorage.getItem('auth_token') }
+    // });
+    // 
+    // this.socket.on('sensor_data', (data: SensorData) => {
+    //   this.onDataCallback?.(data);
+    // });
+    
+    // For now, simulate WebSocket data
+    this.simulateData();
+    
+    return () => {
+      this.disconnectSensorStream();
+    };
+  }
+
+  private simulateData() {
+    // Clear any existing simulation
+    if (this.simulationInterval) {
+      clearInterval(this.simulationInterval);
+    }
+    
+    this.simulationInterval = setInterval(() => {
+      if (!this.onDataCallback) return;
+      
       const mockData: SensorData = {
-        temperature: 20 + Math.random() * 10,
+        temperature: 25 + Math.random() * 5,
         humidity: 40 + Math.random() * 20,
-        pressure: 1013 + Math.random() * 20,
+        pressure: 1000 + Math.random() * 20,
         orientation: {
           pitch: Math.random() * 360 - 180,
           roll: Math.random() * 360 - 180,
-          yaw: Math.random() * 360
+          yaw: Math.random() * 360 - 180,
         },
         acceleration: {
-          x: Math.random() * 4 - 2,
-          y: Math.random() * 4 - 2,
-          z: Math.random() * 4 - 2
+          x: Math.random() * 2 - 1,
+          y: Math.random() * 2 - 1,
+          z: 9.8 + Math.random() * 0.2 - 0.1,
         },
         compass: Math.random() * 360,
         timestamp: new Date().toISOString(),
-        device_id: deviceId
+        device_id: 'simulated-device',
       };
-      onData(mockData);
-    };
-
-    // Simulate real-time data every 2 seconds
-    const interval = setInterval(simulateData, 2000);
-    
-    // Return a mock socket object
-    return {
-      disconnect: () => clearInterval(interval),
-      on: () => {},
-      emit: () => {}
-    } as any;
+      
+      this.onDataCallback?.(mockData);
+    }, 1000);
   }
-
+  
   disconnectSensorStream() {
+    if (this.simulationInterval) {
+      clearInterval(this.simulationInterval);
+      this.simulationInterval = null;
+    }
+    
     if (this.socket) {
       this.socket.disconnect();
       this.socket = null;
     }
-  }
-
-  // Devices
-  async getDevices() {
-    const response = await api.get('/device/list');
-    return response.data;
-  }
-
-  async registerDevice(deviceData: any) {
-    const response = await api.post('/device/register', deviceData);
-    return response.data;
-  }
-
-  async updateDevice(deviceId: string, data: any) {
-    const response = await api.put(`/device/${deviceId}`, data);
-    return response.data;
-  }
-
-  async getDeviceStatus(deviceId: string) {
-    const response = await api.get(`/device/${deviceId}/status`);
-    return response.data;
+    
+    this.onDataCallback = null;
   }
 
   // Network

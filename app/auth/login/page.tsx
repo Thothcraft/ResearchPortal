@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import { apiService } from "../../services/api";
 
 export default function LoginPage() {
   const [username, setUsername] = useState("");
@@ -18,30 +19,20 @@ export default function LoginPage() {
     setIsLoading(true);
 
     try {
-      const res = await fetch(
-        "https://web-production-d7d37.up.railway.app/token",
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/x-www-form-urlencoded" },
-          body: new URLSearchParams({ username, password }),
-        }
-      );
-
-      if (!res.ok) {
-        setError("Invalid username or password");
-        setIsLoading(false);
-        return;
-      }
-
-      const data = await res.json();
-      localStorage.setItem(
-        "user",
-        JSON.stringify({ username, token: data.access_token })
-      );
+      const data = await apiService.login(username, password);
+      
+      // Store user data in localStorage
+      localStorage.setItem("user", JSON.stringify({ 
+        username, 
+        token: data.access_token 
+      }));
       localStorage.setItem("token", data.access_token);
+      
+      // Redirect to home page
       router.push("/home");
-    } catch (err) {
-      setError("An unexpected error occurred. Please try again later.");
+    } catch (err: any) {
+      console.error("Login error:", err);
+      setError(err.response?.data?.detail || "Invalid username or password");
     } finally {
       setIsLoading(false);
     }
