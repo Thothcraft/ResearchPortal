@@ -34,3 +34,9 @@ nohup: ignoring input
  GET / 200 in 29ms
  GET /devices 404 in 13ms
  GET /devices 404 in 19ms
+ GET / 200 in 23ms
+ GET /devices 404 in 13ms
+ GET /devices 404 in 20ms
+ GET / 200 in 28ms
+ GET /devices 404 in 10ms
+ GET /devices 404 in 17ms

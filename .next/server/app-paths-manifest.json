@@ -1,4 +1,8 @@
 {
+  "/(protected)/data/page": "app/(protected)/data/page.js",
+  "/(protected)/devices/page": "app/(protected)/devices/page.js",
+  "/(protected)/training/page": "app/(protected)/training/page.js",
   "/_not-found/page": "app/_not-found/page.js",
+  "/chat/page": "app/chat/page.js",
   "/page": "app/page.js"
 }
