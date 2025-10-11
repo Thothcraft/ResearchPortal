@@ -26,11 +26,25 @@ export default function DeviceCard({ device, onToggleSensors, onDelete }: Device
 
   const getStatusColor = (status: string) => {
     switch (status) {
-      case 'online': return 'bg-green-500';
+      case 'online': return 'bg-green-500 shadow-[0_0_10px_rgba(74,222,128,0.7)]';
       case 'offline': return 'bg-red-500';
       case 'idle': return 'bg-yellow-500';
       default: return 'bg-gray-500';
     }
+  };
+
+  // Calculate time since last seen
+  const getLastSeen = (lastSeen: string) => {
+    if (!lastSeen) return 'Never';
+    
+    const lastSeenDate = new Date(lastSeen);
+    const now = new Date();
+    const diffInSeconds = Math.floor((now.getTime() - lastSeenDate.getTime()) / 1000);
+    
+    if (diffInSeconds < 60) return 'Just now';
+    if (diffInSeconds < 3600) return `${Math.floor(diffInSeconds / 60)}m ago`;
+    if (diffInSeconds < 86400) return `${Math.floor(diffInSeconds / 3600)}h ago`;
+    return lastSeenDate.toLocaleDateString();
   };
 
   const motionProps: HTMLMotionProps<'div'> & { className?: string } = {
@@ -49,8 +63,13 @@ export default function DeviceCard({ device, onToggleSensors, onDelete }: Device
             <p className="text-sm text-gray-300">{device.device_id}</p>
           </div>
           <div className="flex items-center gap-2">
-            <div className={`w-3 h-3 rounded-full ${getStatusColor(device.status)} animate-pulse`} />
-            <span className="text-sm text-gray-300 capitalize">{device.status}</span>
+            <div 
+              className={`w-3 h-3 rounded-full ${getStatusColor(device.status)} ${device.status === 'online' ? 'animate-pulse' : ''}`} 
+              title={`Last seen: ${new Date(device.last_seen).toLocaleString()}`}
+            />
+            <span className="text-sm text-gray-300 capitalize">
+              {device.status} • {getLastSeen(device.last_seen)}
+            </span>
             <button
               onClick={() => onDelete(device.device_id)}
               className="p-2 text-red-500 hover:text-red-400 transition-colors"
