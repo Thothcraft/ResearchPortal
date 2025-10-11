@@ -494,18 +494,19 @@ api.interceptors.request.use((config)=>{
 // Add response interceptor for error handling
 api.interceptors.response.use((response)=>response, (error)=>{
     if (error.code === 'ERR_NETWORK') {
-        console.warn('Network error - using mock data');
-        // Return mock data for network errors
-        return Promise.resolve({
-            data: {
-                success: true,
-                message: 'Using mock data (network unavailable)',
-                data: {}
-            }
-        });
+        console.error('Network error - unable to fetch device data');
+        return Promise.reject(new Error('Unable to connect to the server. Please check your connection.'));
     }
     return Promise.reject(error);
 });
+// Helper function to check if a device is online
+const isDeviceOnline = (lastSeen)=>{
+    if (!lastSeen) return false;
+    const lastSeenTime = new Date(lastSeen).getTime();
+    const now = new Date().getTime();
+    // Consider device online if seen in the last 5 minutes
+    return now - lastSeenTime < 5 * 60 * 1000;
+};
 // API Service
 class ApiService {
     socket = null;

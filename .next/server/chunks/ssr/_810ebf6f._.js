@@ -22,7 +22,7 @@ const Button = ({ children, onClick, className = '', ...props })=>/*#__PURE__*/ 
         children: children
     }, void 0, false, {
         fileName: "[project]/components/DeviceList.tsx",
-        lineNumber: 14,
+        lineNumber: 19,
         columnNumber: 3
     }, this);
 function DeviceList() {
@@ -32,29 +32,55 @@ function DeviceList() {
     (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["useEffect"])(()=>{
         const fetchDevices = async ()=>{
             try {
-                const response = await fetch('/api/devices', {
-                    headers: {
-                        'Authorization': `Bearer ${localStorage.getItem('auth_token')}`
-                    }
-                });
-                if (!response.ok) {
-                    throw new Error('Failed to fetch devices');
+                const token = localStorage.getItem('auth_token');
+                console.log('Auth token found:', token ? 'Yes' : 'No');
+                if (!token) {
+                    throw new Error('No authentication token found. Please log in again.');
                 }
-                const data = await response.json();
-                setDevices(data);
-            } catch (err) {
-                console.error('Error fetching devices:', err);
-                setError('Failed to load devices. Using demo data.');
-                // Mock data for demo purposes
-                setDevices([
-                    {
-                        id: '1',
-                        name: 'PiSugar 1',
-                        status: 'online',
-                        battery: 85,
-                        lastSeen: new Date().toISOString()
+                const apiUrl = 'https://web-production-d7d37.up.railway.app/device/list?include_offline=true';
+                console.log('Fetching devices from:', apiUrl);
+                const response = await fetch(apiUrl, {
+                    method: 'GET',
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'Content-Type': 'application/json',
+                        'Accept': 'application/json'
+                    },
+                    credentials: 'include'
+                });
+                console.log('Response status:', response.status);
+                if (!response.ok) {
+                    let errorMessage = `HTTP error! Status: ${response.status}`;
+                    try {
+                        const errorData = await response.json();
+                        console.error('Error response:', errorData);
+                        errorMessage = errorData.detail || errorData.message || JSON.stringify(errorData);
+                    } catch (e) {
+                        const text = await response.text();
+                        console.error('Failed to parse error response:', text);
+                        errorMessage = `Failed to parse error response: ${text.substring(0, 100)}`;
                     }
-                ]);
+                    throw new Error(errorMessage);
+                }
+                const responseData = await response.json();
+                console.log('Response data:', responseData);
+                if (responseData && Array.isArray(responseData.devices)) {
+                    console.log(`Found ${responseData.devices.length} devices`);
+                    setDevices(responseData.devices);
+                } else {
+                    console.error('Invalid response format:', responseData);
+                    throw new Error('Invalid response format from server');
+                }
+            } catch (err) {
+                const errorMessage = err instanceof Error ? err.message : 'Unknown error occurred';
+                console.error('Error fetching devices:', errorMessage, err);
+                setError(`Failed to load devices: ${errorMessage}`);
+                // Fallback to empty array if we can't fetch devices
+                setDevices([]);
+                // If it's an authentication error, suggest logging in again
+                if (errorMessage.includes('token') || errorMessage.includes('401')) {
+                    console.log('Authentication issue detected. Consider redirecting to login.');
+                }
             } finally{
                 setIsLoading(false);
             }
@@ -84,7 +110,7 @@ function DeviceList() {
                     className: "jsx-d525c98fb358669b"
                 }, void 0, false, {
                     fileName: "[project]/components/DeviceList.tsx",
-                    lineNumber: 67,
+                    lineNumber: 105,
                     columnNumber: 9
                 }, this),
                 /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])(__TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$styled$2d$jsx$2f$style$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["default"], {
@@ -94,7 +120,7 @@ function DeviceList() {
             ]
         }, void 0, true, {
             fileName: "[project]/components/DeviceList.tsx",
-            lineNumber: 66,
+            lineNumber: 104,
             columnNumber: 7
         }, this);
     }
@@ -112,12 +138,12 @@ function DeviceList() {
                 children: error
             }, void 0, false, {
                 fileName: "[project]/components/DeviceList.tsx",
-                lineNumber: 96,
+                lineNumber: 134,
                 columnNumber: 9
             }, this)
         }, void 0, false, {
             fileName: "[project]/components/DeviceList.tsx",
-            lineNumber: 88,
+            lineNumber: 126,
             columnNumber: 7
         }, this);
     }
@@ -139,243 +165,166 @@ function DeviceList() {
                     children: "No devices found. Connect a device to get started."
                 }, void 0, false, {
                     fileName: "[project]/components/DeviceList.tsx",
-                    lineNumber: 105,
+                    lineNumber: 143,
                     columnNumber: 11
                 }, this),
                 /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])(Button, {
                     children: "Add Device"
                 }, void 0, false, {
                     fileName: "[project]/components/DeviceList.tsx",
-                    lineNumber: 106,
+                    lineNumber: 144,
                     columnNumber: 11
                 }, this)
             ]
         }, void 0, true, {
             fileName: "[project]/components/DeviceList.tsx",
-            lineNumber: 104,
+            lineNumber: 142,
             columnNumber: 9
         }, this) : /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("div", {
             style: {
-                display: 'grid',
                 gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))',
                 gap: '1rem',
                 marginTop: '1rem'
             },
             children: devices.map((device)=>{
-                const statusStyles = {
-                    online: {
-                        bg: '#dcfce7',
-                        text: '#166534'
-                    },
-                    offline: {
-                        bg: '#f3f4f6',
-                        text: '#4b5563'
-                    },
-                    error: {
-                        bg: '#fee2e2',
-                        text: '#991b1b'
+                const getStatusInfo = (device)=>{
+                    if (!device.online) {
+                        return {
+                            bg: 'bg-gray-100 text-gray-800',
+                            text: 'Offline'
+                        };
                     }
+                    return {
+                        bg: 'bg-green-100 text-green-800',
+                        text: 'Online'
+                    };
                 };
-                const statusStyle = statusStyles[device.status] || statusStyles.offline;
                 return /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("div", {
-                    style: {
-                        border: '1px solid #e5e7eb',
-                        borderRadius: '0.5rem',
-                        padding: '1.5rem',
-                        transition: 'box-shadow 0.2s',
-                        backgroundColor: 'white'
-                    },
-                    onMouseOver: (e)=>e.currentTarget.style.boxShadow = '0 10px 15px -3px rgba(0, 0, 0, 0.1)',
-                    onMouseOut: (e)=>e.currentTarget.style.boxShadow = 'none',
+                    className: "flex items-center justify-between p-4 bg-white rounded-lg shadow hover:shadow-md transition-shadow",
                     children: [
                         /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("div", {
-                            style: {
-                                display: 'flex',
-                                justifyContent: 'space-between',
-                                alignItems: 'flex-start',
-                                marginBottom: '1rem'
-                            },
-                            children: [
-                                /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("h3", {
-                                    style: {
-                                        fontSize: '1.25rem',
-                                        fontWeight: 600,
-                                        margin: 0
-                                    },
-                                    children: device.name
-                                }, void 0, false, {
-                                    fileName: "[project]/components/DeviceList.tsx",
-                                    lineNumber: 143,
-                                    columnNumber: 19
-                                }, this),
-                                /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("span", {
-                                    style: {
-                                        backgroundColor: statusStyle.bg,
-                                        color: statusStyle.text,
-                                        padding: '0.25rem 0.5rem',
-                                        borderRadius: '9999px',
-                                        fontSize: '0.75rem',
-                                        fontWeight: 500,
-                                        textTransform: 'capitalize'
-                                    },
-                                    children: device.status
-                                }, void 0, false, {
-                                    fileName: "[project]/components/DeviceList.tsx",
-                                    lineNumber: 150,
-                                    columnNumber: 19
-                                }, this)
-                            ]
-                        }, void 0, true, {
-                            fileName: "[project]/components/DeviceList.tsx",
-                            lineNumber: 137,
-                            columnNumber: 17
-                        }, this),
-                        /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("div", {
-                            style: {
-                                marginBottom: '1rem'
-                            },
+                            className: "flex items-center space-x-4",
                             children: [
                                 /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("div", {
-                                    style: {
-                                        display: 'flex',
-                                        justifyContent: 'space-between',
-                                        marginBottom: '0.5rem'
-                                    },
-                                    children: [
-                                        /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("span", {
-                                            style: {
-                                                color: '#6b7280',
-                                                fontSize: '0.875rem'
-                                            },
-                                            children: "Battery:"
+                                    className: "p-3 rounded-full bg-blue-50",
+                                    children: /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("svg", {
+                                        className: "w-6 h-6 text-blue-600",
+                                        fill: "none",
+                                        stroke: "currentColor",
+                                        viewBox: "0 0 24 24",
+                                        xmlns: "http://www.w3.org/2000/svg",
+                                        children: /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("path", {
+                                            strokeLinecap: "round",
+                                            strokeLinejoin: "round",
+                                            strokeWidth: 2,
+                                            d: "M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"
                                         }, void 0, false, {
                                             fileName: "[project]/components/DeviceList.tsx",
-                                            lineNumber: 169,
+                                            lineNumber: 174,
+                                            columnNumber: 23
+                                        }, this)
+                                    }, void 0, false, {
+                                        fileName: "[project]/components/DeviceList.tsx",
+                                        lineNumber: 167,
+                                        columnNumber: 21
+                                    }, this)
+                                }, void 0, false, {
+                                    fileName: "[project]/components/DeviceList.tsx",
+                                    lineNumber: 166,
+                                    columnNumber: 19
+                                }, this),
+                                /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("div", {
+                                    children: [
+                                        /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("h3", {
+                                            className: "font-medium text-gray-900",
+                                            children: device.device_name
+                                        }, void 0, false, {
+                                            fileName: "[project]/components/DeviceList.tsx",
+                                            lineNumber: 183,
                                             columnNumber: 21
                                         }, this),
-                                        /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("span", {
-                                            style: {
-                                                fontWeight: 500
-                                            },
+                                        /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("div", {
+                                            className: "flex items-center mt-1",
                                             children: [
-                                                device.battery,
-                                                "%"
+                                                /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("span", {
+                                                    className: `inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getStatusInfo(device).bg}`,
+                                                    children: getStatusInfo(device).text
+                                                }, void 0, false, {
+                                                    fileName: "[project]/components/DeviceList.tsx",
+                                                    lineNumber: 185,
+                                                    columnNumber: 23
+                                                }, this),
+                                                device.battery_level !== null && /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("span", {
+                                                    className: "ml-2 text-sm text-gray-500",
+                                                    children: [
+                                                        device.battery_level,
+                                                        "% battery"
+                                                    ]
+                                                }, void 0, true, {
+                                                    fileName: "[project]/components/DeviceList.tsx",
+                                                    lineNumber: 191,
+                                                    columnNumber: 25
+                                                }, this)
                                             ]
                                         }, void 0, true, {
                                             fileName: "[project]/components/DeviceList.tsx",
-                                            lineNumber: 170,
+                                            lineNumber: 184,
                                             columnNumber: 21
                                         }, this)
                                     ]
                                 }, void 0, true, {
                                     fileName: "[project]/components/DeviceList.tsx",
-                                    lineNumber: 164,
-                                    columnNumber: 19
-                                }, this),
-                                /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("div", {
-                                    style: {
-                                        display: 'flex',
-                                        justifyContent: 'space-between',
-                                        marginBottom: '0.5rem'
-                                    },
-                                    children: [
-                                        /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("span", {
-                                            style: {
-                                                color: '#6b7280',
-                                                fontSize: '0.875rem'
-                                            },
-                                            children: "Last Seen:"
-                                        }, void 0, false, {
-                                            fileName: "[project]/components/DeviceList.tsx",
-                                            lineNumber: 177,
-                                            columnNumber: 21
-                                        }, this),
-                                        /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("span", {
-                                            style: {
-                                                fontSize: '0.875rem'
-                                            },
-                                            children: new Date(device.lastSeen).toLocaleString()
-                                        }, void 0, false, {
-                                            fileName: "[project]/components/DeviceList.tsx",
-                                            lineNumber: 178,
-                                            columnNumber: 21
-                                        }, this)
-                                    ]
-                                }, void 0, true, {
-                                    fileName: "[project]/components/DeviceList.tsx",
-                                    lineNumber: 172,
+                                    lineNumber: 182,
                                     columnNumber: 19
                                 }, this)
                             ]
                         }, void 0, true, {
                             fileName: "[project]/components/DeviceList.tsx",
-                            lineNumber: 163,
+                            lineNumber: 165,
                             columnNumber: 17
                         }, this),
                         /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("div", {
-                            style: {
-                                display: 'flex',
-                                gap: '0.5rem',
-                                marginTop: '1rem'
-                            },
+                            className: "flex space-x-2",
                             children: [
                                 /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("button", {
-                                    style: {
-                                        padding: '0.5rem 1rem',
-                                        border: '1px solid #d1d5db',
-                                        borderRadius: '0.375rem',
-                                        fontSize: '0.875rem',
-                                        backgroundColor: 'white',
-                                        cursor: 'pointer',
-                                        transition: 'background-color 0.2s'
-                                    },
-                                    onMouseOver: (e)=>e.currentTarget.style.backgroundColor = '#f9fafb',
-                                    onMouseOut: (e)=>e.currentTarget.style.backgroundColor = 'white',
+                                    className: "px-3 py-1 text-sm text-gray-700 border border-gray-300 rounded hover:bg-gray-50 transition-colors",
+                                    onClick: ()=>{},
                                     children: "View Details"
                                 }, void 0, false, {
                                     fileName: "[project]/components/DeviceList.tsx",
-                                    lineNumber: 189,
+                                    lineNumber: 199,
                                     columnNumber: 19
                                 }, this),
                                 /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("button", {
-                                    style: {
-                                        padding: '0.5rem 1rem',
-                                        border: '1px solid #d1d5db',
-                                        borderRadius: '0.375rem',
-                                        fontSize: '0.875rem',
-                                        backgroundColor: 'white',
-                                        cursor: 'pointer',
-                                        transition: 'background-color 0.2s'
-                                    },
-                                    onMouseOver: (e)=>e.currentTarget.style.backgroundColor = '#f9fafb',
-                                    onMouseOut: (e)=>e.currentTarget.style.backgroundColor = 'white',
+                                    className: "px-3 py-1 text-sm text-gray-700 border border-gray-300 rounded hover:bg-gray-50 transition-colors",
+                                    onClick: ()=>{},
                                     children: "Settings"
                                 }, void 0, false, {
                                     fileName: "[project]/components/DeviceList.tsx",
-                                    lineNumber: 203,
+                                    lineNumber: 205,
                                     columnNumber: 19
                                 }, this)
                             ]
                         }, void 0, true, {
                             fileName: "[project]/components/DeviceList.tsx",
-                            lineNumber: 184,
+                            lineNumber: 198,
                             columnNumber: 17
                         }, this)
                     ]
-                }, device.id, true, {
+                }, device.device_id, true, {
                     fileName: "[project]/components/DeviceList.tsx",
-                    lineNumber: 125,
+                    lineNumber: 161,
                     columnNumber: 15
                 }, this);
             })
         }, void 0, false, {
             fileName: "[project]/components/DeviceList.tsx",
-            lineNumber: 109,
+            lineNumber: 147,
             columnNumber: 9
         }, this)
     }, void 0, false, {
         fileName: "[project]/components/DeviceList.tsx",
-        lineNumber: 102,
+        lineNumber: 140,
         columnNumber: 5
     }, this);
 }

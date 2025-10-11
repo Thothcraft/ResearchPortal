@@ -1,8 +1,9 @@
 'use client';
 
-import { ReactNode, useEffect } from 'react';
+import { ReactNode, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Header from '../components/Header';
+import { useAuth } from '../../contexts/AuthContext';
 
 export default function ProtectedLayout({
   children,
@@ -10,14 +11,30 @@ export default function ProtectedLayout({
   children: ReactNode;
 }) {
   const router = useRouter();
+  const { isAuthenticated, isLoading } = useAuth();
+  const [isClient, setIsClient] = useState(false);
 
   useEffect(() => {
-    // Check if user is authenticated
-    const token = localStorage.getItem('auth_token');
-    if (!token) {
-      router.push('/auth');
+    setIsClient(true);
+  }, []);
+
+  useEffect(() => {
+    if (!isLoading && !isAuthenticated && isClient) {
+      router.push('/auth/login');
     }
-  }, [router]);
+  }, [isAuthenticated, isLoading, router, isClient]);
+
+  if (isLoading || !isClient) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-indigo-500"></div>
+      </div>
+    );
+  }
+
+  if (!isAuthenticated) {
+    return null; // Will redirect in useEffect
+  }
 
   return (
     <div className="min-h-screen bg-gray-50">
