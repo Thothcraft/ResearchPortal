@@ -42,11 +42,8 @@ export default function Home() {
               </div>
             </div>
             <div className="flex items-center">
-              <Link href="/auth/login" className="text-white bg-indigo-600 hover:bg-indigo-700 px-4 py-2 rounded-md text-sm font-medium mr-2">
-                Sign In
-              </Link>
-              <Link href="/auth/signup" className="text-white bg-purple-600 hover:bg-purple-700 px-4 py-2 rounded-md text-sm font-medium">
-                Sign Up
+              <Link href="/auth" className="text-white bg-indigo-600 hover:bg-indigo-700 px-4 py-2 rounded-md text-sm font-medium">
+                Sign In / Sign Up
               </Link>
             </div>
           </div>
