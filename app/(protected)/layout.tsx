@@ -2,8 +2,8 @@
 
 import { ReactNode, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import Header from '../components/Header';
-import { useAuth } from '../../contexts/AuthContext';
+import { useAuth } from '@/contexts/AuthContext';
+import Header from '../../components/Header';
 
 export default function ProtectedLayout({
   children,
