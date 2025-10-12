@@ -1,8 +1,0 @@
-{
-  "/(protected)/data/page": "app/(protected)/data/page.js",
-  "/(protected)/devices/page": "app/(protected)/devices/page.js",
-  "/_not-found/page": "app/_not-found/page.js",
-  "/auth/page": "app/auth/page.js",
-  "/auth/signup/page": "app/auth/signup/page.js",
-  "/page": "app/page.js"
-}
