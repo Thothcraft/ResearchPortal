@@ -1,5 +1,0 @@
-{
-  "/(protected)/devices/page": "app/(protected)/devices/page.js",
-  "/api/devices/route": "app/api/devices/route.js",
-  "/page": "app/page.js"
-}

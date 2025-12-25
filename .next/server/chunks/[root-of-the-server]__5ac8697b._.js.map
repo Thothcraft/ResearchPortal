@@ -1,7 +1,0 @@
-{
-  "version": 3,
-  "sources": [],
-  "sections": [
-    {"offset": {"line": 6, "column": 0}, "map": {"version":3,"sources":[],"names":[],"mappings":"","debugId":null}},
-    {"offset": {"line": 60, "column": 0}, "map": {"version":3,"sources":["file:///home/gad/Desktop/Thothcraft/ResearchPortal/app/api/devices/route.ts"],"sourcesContent":["import { NextResponse } from 'next/server';\n\nexport async function GET() {\n  try {\n    // Mock device data - in a real app, this would come from your database\n    const mockDevices = [\n      {\n        id: '1',\n        name: 'PiSugar 1',\n        status: 'online',\n        battery: 85,\n        lastSeen: new Date().toISOString(),\n      },\n      {\n        id: '2',\n        name: 'PiSugar 2',\n        status: 'offline',\n        battery: 42,\n        lastSeen: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(), // 1 day ago\n      },\n    ];\n\n    return NextResponse.json(mockDevices);\n  } catch (error) {\n    console.error('Error fetching devices:', error);\n    return new NextResponse('Internal Server Error', { status: 500 });\n  }\n}\n"],"names":[],"mappings":";;;AAAA;;AAEO,eAAe;IACpB,IAAI;QACF,uEAAuE;QACvE,MAAM,cAAc;YAClB;gBACE,IAAI;gBACJ,MAAM;gBACN,QAAQ;gBACR,SAAS;gBACT,UAAU,IAAI,OAAO,WAAW;YAClC;YACA;gBACE,IAAI;gBACJ,MAAM;gBACN,QAAQ;gBACR,SAAS;gBACT,UAAU,IAAI,KAAK,KAAK,GAAG,KAAK,KAAK,KAAK,KAAK,MAAM,WAAW;YAClE;SACD;QAED,OAAO,gIAAA,CAAA,eAAY,CAAC,IAAI,CAAC;IAC3B,EAAE,OAAO,OAAO;QACd,QAAQ,KAAK,CAAC,2BAA2B;QACzC,OAAO,IAAI,gIAAA,CAAA,eAAY,CAAC,yBAAyB;YAAE,QAAQ;QAAI;IACjE;AACF","debugId":null}}]
-}

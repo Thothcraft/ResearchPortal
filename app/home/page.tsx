@@ -12,9 +12,9 @@ import {
   FiBookOpen,
   FiActivity,
 } from "react-icons/fi";
-import StatCard from "@/components/StatCard";
-import QuickActionButton from "@/components/QuickActionButton";
-import ResourceLinks from "@/components/ResourceLinks";
+import { StatCard } from "@/components/StatCard";
+import { QuickActionButton } from "@/components/QuickActionButton";
+import { ResourceLinks } from "@/components/ResourceLinks";
 
 export default function DashboardHome() {
   const [username, setUsername] = useState<string>("");
@@ -201,21 +201,21 @@ export default function DashboardHome() {
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
             <QuickActionButton
               icon={<FiMessageSquare size={20} />}
-              title="New Chat"
+              label="New Chat"
               href="/chat"
-              color="bg-blue-200 text-blue-800 hover:bg-blue-300"
+              color="blue"
             />
             <QuickActionButton
               icon={<FiBookOpen size={20} />}
-              title="Enroll in Course"
+              label="Enroll in Course"
               href="/courses"
-              color="bg-green-200 text-green-800 hover:bg-green-300"
+              color="green"
             />
             <QuickActionButton
               icon={<FiUpload size={20} />}
-              title={uploading ? "Uploading..." : "Upload File"}
-              color="bg-purple-200 text-purple-800 hover:bg-purple-300"
-              onClick={() => fileInputRef.current?.click()} // Only this one has onClick!
+              label={uploading ? "Uploading..." : "Upload File"}
+              color="purple"
+              onClick={() => fileInputRef.current?.click()}
               disabled={uploading}
             />
             <input
@@ -227,9 +227,9 @@ export default function DashboardHome() {
             />
             <QuickActionButton
               icon={<FiUsers size={20} />}
-              title="Join Community"
+              label="Join Community"
               href="/community"
-              color="bg-amber-200 text-amber-800 hover:bg-amber-300"
+              color="yellow"
             />
           </div>
         </div>
@@ -254,7 +254,25 @@ export default function DashboardHome() {
             </div>
           </div>
 
-          <ResourceLinks />
+          <ResourceLinks 
+            links={[
+              {
+                title: "Documentation",
+                href: "/docs",
+                description: "Browse our comprehensive documentation"
+              },
+              {
+                title: "API Reference",
+                href: "/api-docs",
+                description: "Explore our API endpoints"
+              },
+              {
+                title: "Help Center",
+                href: "/help",
+                description: "Get help and support"
+              }
+            ]}
+          />
         </div>
       </div>
     </div>
