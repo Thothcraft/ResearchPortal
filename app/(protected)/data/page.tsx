@@ -30,6 +30,7 @@ type Device = {
 };
 
 type DataFile = {
+  id?: number;  // DeviceFile ID from Brain server
   name: string;
   type: 'imu' | 'csi' | 'mfcw' | 'img' | 'vid' | 'other';
   size: number;
@@ -41,6 +42,7 @@ type DataFile = {
   onCloud: boolean;
   cloudFileId?: number;
   downloading?: boolean;
+  uploading?: boolean;
 };
 
 const FILE_TYPE_CONFIG = {
@@ -95,64 +97,62 @@ export default function DataPage() {
   const [filterDevice, setFilterDevice] = useState<string>('all');
   const { get, post } = useApi();
 
-  // Fetch devices first, then files from each device
+  // Fetch devices and files from Brain server
   const fetchData = async () => {
     try {
       setIsLoading(true);
       setError(null);
 
-      // Fetch devices
-      const devicesResponse = await fetch('/api/devices');
-      const devicesData = await devicesResponse.json();
-      const deviceList: Device[] = devicesData || [];
-      setDevices(deviceList);
-
-      // Fetch files from local thoth/data directory (simulating device files)
-      const localFilesResponse = await fetch('/api/data/files');
-      const localFilesData = await localFilesResponse.json();
-
-      // Fetch cloud files to check which are already uploaded
-      let cloudFiles: any[] = [];
+      // Fetch devices from Brain server (include offline devices)
+      let deviceList: Device[] = [];
       try {
-        const cloudData = await get('/file/files');
-        if (cloudData && Array.isArray(cloudData.files)) {
-          cloudFiles = cloudData.files;
+        const devicesData = await get('/device/list?include_offline=true');
+        if (devicesData && Array.isArray(devicesData.devices)) {
+          deviceList = devicesData.devices.map((d: any) => ({
+            id: d.device_uuid || d.device_id,
+            name: d.device_name || d.name,
+            status: d.online ? 'online' : 'offline',
+            ip_address: d.ip_address,
+          }));
         }
       } catch (e) {
-        console.log('Could not fetch cloud files:', e);
+        console.log('Could not fetch devices from Brain:', e);
+      }
+      setDevices(deviceList);
+
+      // Fetch files for each device from Brain server
+      // Brain server tracks files that exist on each device (fetched during registration)
+      const allFiles: DataFile[] = [];
+
+      for (const device of deviceList) {
+        try {
+          const deviceFilesData = await get(`/device/${device.id}/files`);
+          if (deviceFilesData && Array.isArray(deviceFilesData.files)) {
+            deviceFilesData.files.forEach((f: any) => {
+              const { type, timestamp } = parseFileName(f.filename);
+              allFiles.push({
+                id: f.id,  // DeviceFile ID for upload-from-device
+                name: f.filename,
+                type,
+                size: f.size || 0,
+                timestamp,
+                extension: f.filename.split('.').pop() || '',
+                deviceId: device.id,
+                deviceName: device.name,
+                deviceOnline: device.status === 'online',
+                onCloud: f.on_cloud || false,
+                cloudFileId: f.cloud_file_id,
+                downloading: false,
+                uploading: false,
+              });
+            });
+          }
+        } catch (e) {
+          console.log(`Could not fetch files for device ${device.id}:`, e);
+        }
       }
 
-      // Create a map of cloud files by filename for quick lookup
-      const cloudFileMap = new Map<string, any>();
-      cloudFiles.forEach((cf: any) => {
-        cloudFileMap.set(cf.filename, cf);
-      });
-
-      // Parse local files and associate with first device (for demo)
-      // In production, each device would report its own files
-      const defaultDevice = deviceList[0] || { id: 'device-1', name: 'PiSugar 1', status: 'online' };
-      
-      if (localFilesData && Array.isArray(localFilesData.files)) {
-        const parsedFiles: DataFile[] = localFilesData.files.map((file: any) => {
-          const { type, timestamp } = parseFileName(file.name);
-          const cloudFile = cloudFileMap.get(file.name);
-          
-          return {
-            name: file.name,
-            type,
-            size: file.size || 0,
-            timestamp,
-            extension: file.name.split('.').pop() || '',
-            deviceId: defaultDevice.id,
-            deviceName: defaultDevice.name,
-            deviceOnline: defaultDevice.status === 'online',
-            onCloud: !!cloudFile,
-            cloudFileId: cloudFile?.file_id,
-            downloading: false,
-          };
-        });
-        setFiles(parsedFiles);
-      }
+      setFiles(allFiles);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to fetch data');
       setFiles([]);
@@ -161,19 +161,101 @@ export default function DataPage() {
     }
   };
 
+  // Upload file from device to cloud
+  const handleUploadToCloud = async (file: DataFile) => {
+    if (!file.id) {
+      setError('Cannot upload: File ID not found');
+      return;
+    }
+    
+    if (file.onCloud) {
+      return; // Already on cloud
+    }
+    
+    if (!file.deviceOnline) {
+      setError(`Cannot upload: Device "${file.deviceName}" is offline`);
+      return;
+    }
+
+    setFiles(prev => prev.map(f => 
+      f.name === file.name ? { ...f, uploading: true } : f
+    ));
+
+    try {
+      const response = await post(`/file/upload-from-device?device_file_id=${file.id}`, {});
+      
+      if (response && response.success) {
+        setFiles(prev => prev.map(f => 
+          f.name === file.name ? { 
+            ...f, 
+            onCloud: true, 
+            cloudFileId: response.cloud_file_id,
+            uploading: false 
+          } : f
+        ));
+      } else {
+        throw new Error(response?.message || 'Upload failed');
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Upload to cloud failed');
+      setFiles(prev => prev.map(f => 
+        f.name === file.name ? { ...f, uploading: false } : f
+      ));
+    }
+  };
+
   // Download file - uploads to cloud first if not already there
   const handleDownload = async (file: DataFile) => {
-    // Update file to show downloading state
     setFiles(prev => prev.map(f => 
       f.name === file.name ? { ...f, downloading: true } : f
     ));
 
     try {
-      if (file.onCloud && file.cloudFileId) {
-        // File is on cloud - download directly
-        const response = await get(`/file/${file.cloudFileId}`);
-        // Trigger browser download
-        const blob = new Blob([response], { type: 'application/octet-stream' });
+      let cloudFileId = file.cloudFileId;
+      
+      // If not on cloud, upload first
+      if (!file.onCloud) {
+        if (!file.id) {
+          throw new Error('Cannot download: File ID not found');
+        }
+        if (!file.deviceOnline) {
+          throw new Error(`Device "${file.deviceName}" is offline. Cannot upload file to cloud.`);
+        }
+        
+        // Upload to cloud first
+        const uploadResponse = await post(`/file/upload-from-device?device_file_id=${file.id}`, {});
+        if (!uploadResponse || !uploadResponse.success) {
+          throw new Error(uploadResponse?.message || 'Failed to upload file to cloud');
+        }
+        cloudFileId = uploadResponse.cloud_file_id;
+        
+        // Update file state
+        setFiles(prev => prev.map(f => 
+          f.name === file.name ? { ...f, onCloud: true, cloudFileId } : f
+        ));
+      }
+      
+      // Download from cloud
+      if (cloudFileId) {
+        // Open download URL in new tab/trigger download
+        const apiBaseUrl = process.env.NEXT_PUBLIC_API_URL || 'https://web-production-d7d37.up.railway.app';
+        const token = localStorage.getItem('token');
+        
+        // Create a download link with auth
+        const downloadUrl = `${apiBaseUrl}/file/${cloudFileId}?download=true`;
+        
+        // Fetch with auth header
+        const response = await fetch(downloadUrl, {
+          headers: {
+            'Authorization': `Bearer ${token}`
+          }
+        });
+        
+        if (!response.ok) {
+          throw new Error('Failed to download file');
+        }
+        
+        const blob = await response.blob();
         const url = window.URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
@@ -182,49 +264,6 @@ export default function DataPage() {
         a.click();
         window.URL.revokeObjectURL(url);
         document.body.removeChild(a);
-      } else if (file.deviceOnline) {
-        // Device is online - fetch from device, upload to cloud, then download
-        // First, get file content from device via local API
-        const fileResponse = await fetch(`/api/data/files/${encodeURIComponent(file.name)}`);
-        if (!fileResponse.ok) {
-          throw new Error('Failed to fetch file from device');
-        }
-        const fileBlob = await fileResponse.blob();
-        const fileContent = await fileBlob.text();
-        
-        // Upload to cloud
-        const uploadResponse = await post('/file/upload', {
-          filename: file.name,
-          content: btoa(fileContent),
-          is_base64: true,
-          device_id: file.deviceId,
-          content_type: file.extension === 'json' ? 'application/json' : 'text/csv',
-        });
-
-        if (uploadResponse && uploadResponse.success) {
-          // Update file state to show it's now on cloud
-          setFiles(prev => prev.map(f => 
-            f.name === file.name ? { 
-              ...f, 
-              onCloud: true, 
-              cloudFileId: uploadResponse.file_id,
-              downloading: false 
-            } : f
-          ));
-
-          // Trigger browser download
-          const url = window.URL.createObjectURL(fileBlob);
-          const a = document.createElement('a');
-          a.href = url;
-          a.download = file.name;
-          document.body.appendChild(a);
-          a.click();
-          window.URL.revokeObjectURL(url);
-          document.body.removeChild(a);
-        }
-      } else {
-        // Device is offline and file not on cloud
-        setError(`Cannot download: Device "${file.deviceName}" is offline and file is not on cloud`);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Download failed');
