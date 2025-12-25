@@ -3,7 +3,7 @@
 import { ReactNode, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
-import Header from '../../components/Header';
+import Sidebar from '@/components/Sidebar';
 
 export default function ProtectedLayout({
   children,
@@ -26,20 +26,20 @@ export default function ProtectedLayout({
 
   if (isLoading || !isClient) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+      <div className="min-h-screen bg-slate-900 flex items-center justify-center">
         <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-indigo-500"></div>
       </div>
     );
   }
 
   if (!isAuthenticated) {
-    return null; // Will redirect in useEffect
+    return null;
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <Header />
-      <main className="pt-16">
+    <div className="min-h-screen bg-slate-900">
+      <Sidebar />
+      <main className="ml-64 min-h-screen transition-all duration-300">
         {children}
       </main>
     </div>

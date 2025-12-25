@@ -11,7 +11,7 @@ export default function Home() {
   useEffect(() => {
     const token = localStorage.getItem('auth_token');
     if (token) {
-      router.push('/devices');
+      router.push('/home');
     } else {
       setIsLoading(false);
     }

@@ -100,7 +100,7 @@ export default function TrainingPage() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-900 via-purple-900 to-indigo-900 p-6">
+    <div className="p-8">
       <div className="max-w-7xl mx-auto">
         {/* Header */}
         <motion.div
