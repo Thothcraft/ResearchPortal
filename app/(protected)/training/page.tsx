@@ -2,9 +2,80 @@
 
 import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { Brain, Play, RefreshCw, Settings, TrendingUp } from 'lucide-react';
-import TrainingMonitor from '../../components/TrainingMonitor';
+import { Brain, Play, RefreshCw, Pause, XCircle } from 'lucide-react';
 import apiService from '../../services/api';
+
+function TrainingMonitor({ job, onControl }: { job: any; onControl: (jobId: string, action: 'pause' | 'resume' | 'cancel') => void }) {
+  const progress = job.current_epoch && job.total_epochs 
+    ? (job.current_epoch / job.total_epochs) * 100 
+    : 0;
+
+  return (
+    <div className="bg-slate-800/50 backdrop-blur-sm rounded-xl p-6 border border-slate-700">
+      <div className="flex items-center justify-between mb-4">
+        <h3 className="text-white font-semibold">{job.job_id}</h3>
+        <span className={`px-2 py-1 rounded text-xs font-medium ${
+          job.status === 'running' ? 'bg-green-500/20 text-green-400' :
+          job.status === 'paused' ? 'bg-yellow-500/20 text-yellow-400' :
+          'bg-slate-500/20 text-slate-400'
+        }`}>
+          {job.status}
+        </span>
+      </div>
+      
+      <div className="mb-4">
+        <div className="flex justify-between text-sm text-slate-400 mb-1">
+          <span>Progress</span>
+          <span>{job.current_epoch || 0}/{job.total_epochs || 0} epochs</span>
+        </div>
+        <div className="w-full bg-slate-700 rounded-full h-2">
+          <div 
+            className="bg-indigo-500 h-2 rounded-full transition-all" 
+            style={{ width: `${progress}%` }}
+          />
+        </div>
+      </div>
+
+      {job.metrics && (
+        <div className="grid grid-cols-2 gap-4 mb-4 text-sm">
+          <div>
+            <span className="text-slate-500">Loss:</span>
+            <span className="text-white ml-2">{job.metrics.loss?.[job.metrics.loss.length - 1]?.toFixed(4) || 'N/A'}</span>
+          </div>
+          <div>
+            <span className="text-slate-500">Accuracy:</span>
+            <span className="text-white ml-2">{job.metrics.accuracy?.[job.metrics.accuracy.length - 1]?.toFixed(2) || 'N/A'}</span>
+          </div>
+        </div>
+      )}
+
+      <div className="flex gap-2">
+        {job.status === 'running' && (
+          <button
+            onClick={() => onControl(job.job_id, 'pause')}
+            className="flex items-center gap-1 px-3 py-1.5 bg-yellow-500/20 text-yellow-400 rounded-lg text-sm hover:bg-yellow-500/30"
+          >
+            <Pause className="w-4 h-4" /> Pause
+          </button>
+        )}
+        {job.status === 'paused' && (
+          <button
+            onClick={() => onControl(job.job_id, 'resume')}
+            className="flex items-center gap-1 px-3 py-1.5 bg-green-500/20 text-green-400 rounded-lg text-sm hover:bg-green-500/30"
+          >
+            <Play className="w-4 h-4" /> Resume
+          </button>
+        )}
+        <button
+          onClick={() => onControl(job.job_id, 'cancel')}
+          className="flex items-center gap-1 px-3 py-1.5 bg-red-500/20 text-red-400 rounded-lg text-sm hover:bg-red-500/30"
+        >
+          <XCircle className="w-4 h-4" /> Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
 
 export default function TrainingPage() {
   const [activeJobs, setActiveJobs] = useState<any[]>([]);
