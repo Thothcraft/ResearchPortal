@@ -12,21 +12,29 @@ export default function DeviceList() {
   const fetchDevices = async () => {
     try {
       setIsLoading(true);
+      setError(null);
       const response = await apiService.getDevices();
       
-      if (response && response.data) {
+      // API returns { success, count, devices, message }
+      if (response && response.devices) {
         // Filter out any null or undefined devices and ensure we have an array
-        const validDevices = Array.isArray(response.data) 
-          ? response.data.filter(device => device && device.device_id)
+        const validDevices = Array.isArray(response.devices) 
+          ? response.devices.filter((device: any) => device && (device.device_id || device.device_uuid))
           : [];
           
+        setDevices(validDevices);
+      } else if (response && response.data) {
+        // Fallback for legacy response format
+        const validDevices = Array.isArray(response.data) 
+          ? response.data.filter((device: any) => device && (device.device_id || device.device_uuid))
+          : [];
         setDevices(validDevices);
       } else {
         setDevices([]);
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error fetching devices:', err);
-      setError('Failed to load devices. Please try again later.');
+      setError(err.message || 'Failed to load devices. Please try again later.');
       setDevices([]);
     } finally {
       setIsLoading(false);
@@ -95,11 +103,13 @@ export default function DeviceList() {
     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
       {devices.map((device) => (
         <DeviceCard
-          key={device.device_id}
+          key={device.device_id || device.device_uuid}
           device={{
-            ...device,
-            status: device.status || 'offline',
-            sensors_enabled: device.sensors_enabled || false,
+            device_id: device.device_id || device.device_uuid,
+            name: device.device_name || device.name || 'Unknown Device',
+            status: device.online ? 'online' : (device.status || 'offline'),
+            battery_level: device.battery_level,
+            sensors_enabled: device.sensors_enabled || device.collection_active || false,
             last_seen: device.last_seen || new Date().toISOString(),
           }}
           onToggleSensors={handleToggleSensors}
