@@ -5,7 +5,6 @@ import { useApi } from '@/hooks/useApi';
 import {
   Database,
   FileText,
-  FileJson,
   Film,
   Image,
   Activity,
@@ -16,7 +15,19 @@ import {
   Search,
   Calendar,
   HardDrive,
+  Cloud,
+  CloudOff,
+  Loader2,
+  Server,
+  Upload,
+  Check,
 } from 'lucide-react';
+
+type Device = {
+  id: string;
+  name: string;
+  status: 'online' | 'offline';
+};
 
 type DataFile = {
   name: string;
@@ -24,6 +35,12 @@ type DataFile = {
   size: number;
   timestamp: string;
   extension: string;
+  deviceId: string;
+  deviceName: string;
+  deviceOnline: boolean;
+  onCloud: boolean;
+  cloudFileId?: number;
+  downloading?: boolean;
 };
 
 const FILE_TYPE_CONFIG = {
@@ -70,41 +87,156 @@ function parseFileName(name: string): { type: DataFile['type']; timestamp: strin
 
 export default function DataPage() {
   const [files, setFiles] = useState<DataFile[]>([]);
+  const [devices, setDevices] = useState<Device[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [filterType, setFilterType] = useState<DataFile['type'] | 'all'>('all');
-  const { get } = useApi();
+  const [filterDevice, setFilterDevice] = useState<string>('all');
+  const { get, post } = useApi();
 
-  const fetchFiles = async () => {
+  // Fetch devices first, then files from each device
+  const fetchData = async () => {
     try {
       setIsLoading(true);
       setError(null);
-      const data = await get('/data/files');
+
+      // Fetch devices
+      const devicesResponse = await fetch('/api/devices');
+      const devicesData = await devicesResponse.json();
+      const deviceList: Device[] = devicesData || [];
+      setDevices(deviceList);
+
+      // Fetch files from local thoth/data directory (simulating device files)
+      const localFilesResponse = await fetch('/api/data/files');
+      const localFilesData = await localFilesResponse.json();
+
+      // Fetch cloud files to check which are already uploaded
+      let cloudFiles: any[] = [];
+      try {
+        const cloudData = await get('/file/files');
+        if (cloudData && Array.isArray(cloudData.files)) {
+          cloudFiles = cloudData.files;
+        }
+      } catch (e) {
+        console.log('Could not fetch cloud files:', e);
+      }
+
+      // Create a map of cloud files by filename for quick lookup
+      const cloudFileMap = new Map<string, any>();
+      cloudFiles.forEach((cf: any) => {
+        cloudFileMap.set(cf.filename, cf);
+      });
+
+      // Parse local files and associate with first device (for demo)
+      // In production, each device would report its own files
+      const defaultDevice = deviceList[0] || { id: 'device-1', name: 'PiSugar 1', status: 'online' };
       
-      if (data && Array.isArray(data.files)) {
-        const parsedFiles: DataFile[] = data.files.map((file: any) => {
+      if (localFilesData && Array.isArray(localFilesData.files)) {
+        const parsedFiles: DataFile[] = localFilesData.files.map((file: any) => {
           const { type, timestamp } = parseFileName(file.name);
+          const cloudFile = cloudFileMap.get(file.name);
+          
           return {
             name: file.name,
             type,
             size: file.size || 0,
             timestamp,
             extension: file.name.split('.').pop() || '',
+            deviceId: defaultDevice.id,
+            deviceName: defaultDevice.name,
+            deviceOnline: defaultDevice.status === 'online',
+            onCloud: !!cloudFile,
+            cloudFileId: cloudFile?.file_id,
+            downloading: false,
           };
         });
         setFiles(parsedFiles);
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to fetch files');
+      setError(err instanceof Error ? err.message : 'Failed to fetch data');
       setFiles([]);
     } finally {
       setIsLoading(false);
     }
   };
 
+  // Download file - uploads to cloud first if not already there
+  const handleDownload = async (file: DataFile) => {
+    // Update file to show downloading state
+    setFiles(prev => prev.map(f => 
+      f.name === file.name ? { ...f, downloading: true } : f
+    ));
+
+    try {
+      if (file.onCloud && file.cloudFileId) {
+        // File is on cloud - download directly
+        const response = await get(`/file/${file.cloudFileId}`);
+        // Trigger browser download
+        const blob = new Blob([response], { type: 'application/octet-stream' });
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = file.name;
+        document.body.appendChild(a);
+        a.click();
+        window.URL.revokeObjectURL(url);
+        document.body.removeChild(a);
+      } else if (file.deviceOnline) {
+        // Device is online - fetch from device, upload to cloud, then download
+        // First, get file content from device via local API
+        const fileResponse = await fetch(`/api/data/files/${encodeURIComponent(file.name)}`);
+        if (!fileResponse.ok) {
+          throw new Error('Failed to fetch file from device');
+        }
+        const fileBlob = await fileResponse.blob();
+        const fileContent = await fileBlob.text();
+        
+        // Upload to cloud
+        const uploadResponse = await post('/file/upload', {
+          filename: file.name,
+          content: btoa(fileContent),
+          is_base64: true,
+          device_id: file.deviceId,
+          content_type: file.extension === 'json' ? 'application/json' : 'text/csv',
+        });
+
+        if (uploadResponse && uploadResponse.success) {
+          // Update file state to show it's now on cloud
+          setFiles(prev => prev.map(f => 
+            f.name === file.name ? { 
+              ...f, 
+              onCloud: true, 
+              cloudFileId: uploadResponse.file_id,
+              downloading: false 
+            } : f
+          ));
+
+          // Trigger browser download
+          const url = window.URL.createObjectURL(fileBlob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = file.name;
+          document.body.appendChild(a);
+          a.click();
+          window.URL.revokeObjectURL(url);
+          document.body.removeChild(a);
+        }
+      } else {
+        // Device is offline and file not on cloud
+        setError(`Cannot download: Device "${file.deviceName}" is offline and file is not on cloud`);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Download failed');
+    } finally {
+      setFiles(prev => prev.map(f => 
+        f.name === file.name ? { ...f, downloading: false } : f
+      ));
+    }
+  };
+
   useEffect(() => {
-    fetchFiles();
+    fetchData();
   }, []);
 
   const filteredFiles = files.filter((file) => {
@@ -135,7 +267,7 @@ export default function DataPage() {
           <p className="text-slate-400">Browse and manage collected sensor data</p>
         </div>
         <button
-          onClick={fetchFiles}
+          onClick={fetchData}
           className="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg transition-colors"
         >
           <RefreshCw className="w-4 h-4" />
@@ -215,6 +347,8 @@ export default function DataPage() {
           {filteredFiles.map((file, index) => {
             const config = FILE_TYPE_CONFIG[file.type];
             const Icon = config.icon;
+            const canDownload = file.onCloud || file.deviceOnline;
+            
             return (
               <div
                 key={index}
@@ -224,14 +358,32 @@ export default function DataPage() {
                   <div className={`p-3 rounded-lg ${config.bg}`}>
                     <Icon className={`w-6 h-6 ${config.color}`} />
                   </div>
-                  <span className={`px-2 py-1 rounded text-xs font-medium ${config.bg} ${config.color}`}>
-                    {config.label}
-                  </span>
+                  <div className="flex items-center gap-2">
+                    {/* Cloud status indicator */}
+                    {file.onCloud ? (
+                      <span className="flex items-center gap-1 px-2 py-1 rounded text-xs font-medium bg-green-500/10 text-green-400">
+                        <Cloud className="w-3 h-3" />
+                        On Cloud
+                      </span>
+                    ) : (
+                      <span className="flex items-center gap-1 px-2 py-1 rounded text-xs font-medium bg-slate-500/10 text-slate-400">
+                        <CloudOff className="w-3 h-3" />
+                        Device Only
+                      </span>
+                    )}
+                  </div>
                 </div>
 
                 <h3 className="text-white font-medium mb-2 truncate" title={file.name}>
                   {file.name}
                 </h3>
+
+                {/* Device info */}
+                <div className="flex items-center gap-2 mb-3">
+                  <Server className="w-4 h-4 text-slate-500" />
+                  <span className="text-slate-400 text-sm">{file.deviceName}</span>
+                  <span className={`w-2 h-2 rounded-full ${file.deviceOnline ? 'bg-green-400' : 'bg-slate-500'}`} />
+                </div>
 
                 <div className="space-y-2 text-sm">
                   <div className="flex items-center gap-2 text-slate-400">
@@ -250,9 +402,38 @@ export default function DataPage() {
                   </div>
                 </div>
 
-                <button className="mt-4 w-full flex items-center justify-center gap-2 px-4 py-2 bg-slate-700/50 hover:bg-indigo-600 text-slate-300 hover:text-white rounded-lg transition-colors">
-                  <Download className="w-4 h-4" />
-                  Download
+                <button 
+                  onClick={() => handleDownload(file)}
+                  disabled={!canDownload || file.downloading}
+                  className={`mt-4 w-full flex items-center justify-center gap-2 px-4 py-2 rounded-lg transition-colors ${
+                    !canDownload 
+                      ? 'bg-slate-700/30 text-slate-500 cursor-not-allowed'
+                      : file.downloading
+                        ? 'bg-indigo-600/50 text-white cursor-wait'
+                        : 'bg-slate-700/50 hover:bg-indigo-600 text-slate-300 hover:text-white'
+                  }`}
+                >
+                  {file.downloading ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      {file.onCloud ? 'Downloading...' : 'Uploading to Cloud...'}
+                    </>
+                  ) : file.onCloud ? (
+                    <>
+                      <Download className="w-4 h-4" />
+                      Download from Cloud
+                    </>
+                  ) : file.deviceOnline ? (
+                    <>
+                      <Upload className="w-4 h-4" />
+                      Download & Upload to Cloud
+                    </>
+                  ) : (
+                    <>
+                      <CloudOff className="w-4 h-4" />
+                      Device Offline
+                    </>
+                  )}
                 </button>
               </div>
             );
