@@ -289,7 +289,7 @@ export default function DataPage() {
       // Download from cloud
       if (cloudFileId) {
         const apiBaseUrl = process.env.NEXT_PUBLIC_API_URL || 'https://web-production-d7d37.up.railway.app';
-        const token = localStorage.getItem('token');
+        const token = localStorage.getItem('auth_token');
         
         const downloadUrl = `${apiBaseUrl}/file/${cloudFileId}?download=true`;
         
