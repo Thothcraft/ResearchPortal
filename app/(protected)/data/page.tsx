@@ -165,7 +165,7 @@ export default function DataPage() {
   };
 
   // Upload file from device to cloud
-  // Calls Thoth directly (since Brain can't reach Thoth due to NAT)
+  // Requests Brain to mark file for upload, Thoth will upload on next registration
   const handleUploadToCloud = async (file: DataFile) => {
     if (file.onCloud) {
       return; // Already on cloud
@@ -176,12 +176,8 @@ export default function DataPage() {
       return;
     }
 
-    // Find the device to get its local IP
-    const device = devices.find(d => d.id === file.deviceId);
-    const deviceIp = device?.local_ip || device?.ip_address;
-    
-    if (!deviceIp) {
-      setError('Cannot upload: Device IP address not available');
+    if (!file.id) {
+      setError('Cannot upload: File ID not found');
       return;
     }
 
@@ -190,33 +186,51 @@ export default function DataPage() {
     ));
 
     try {
-      // Call Thoth directly to trigger upload to Brain
-      // User's browser can reach Thoth on local network
-      const thothUrl = `http://${deviceIp}:5000/api/files/upload-to-cloud/${encodeURIComponent(file.name)}`;
+      // Request Brain to mark file for upload
+      // Thoth will see this in its next registration response and upload the file
+      const response = await post(`/device/file/${file.id}/request-upload`, {});
       
-      const response = await fetch(thothUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' }
-      });
-      
-      const result = await response.json();
-      
-      if (result.status === 'success') {
+      if (response && response.success) {
+        // File is queued for upload - will be uploaded on next device sync (within 10 seconds)
         setFiles(prev => prev.map(f => 
-          f.name === file.name ? { 
-            ...f, 
-            onCloud: true, 
-            cloudFileId: result.cloud_file_id,
-            uploading: false 
-          } : f
+          f.name === file.name ? { ...f, uploading: true } : f
         ));
-        // Refresh to get updated cloud_file_id from Brain
-        setTimeout(() => fetchData(), 1000);
+        
+        // Poll for completion (check every 3 seconds for up to 30 seconds)
+        let attempts = 0;
+        const maxAttempts = 10;
+        const pollInterval = setInterval(async () => {
+          attempts++;
+          try {
+            const filesData = await get(`/device/${file.deviceId}/files`);
+            const updatedFile = filesData?.files?.find((f: any) => f.filename === file.name);
+            
+            if (updatedFile?.on_cloud) {
+              clearInterval(pollInterval);
+              setFiles(prev => prev.map(f => 
+                f.name === file.name ? { 
+                  ...f, 
+                  onCloud: true, 
+                  cloudFileId: updatedFile.cloud_file_id,
+                  uploading: false 
+                } : f
+              ));
+            } else if (attempts >= maxAttempts) {
+              clearInterval(pollInterval);
+              setFiles(prev => prev.map(f => 
+                f.name === file.name ? { ...f, uploading: false } : f
+              ));
+              setError('Upload is taking longer than expected. Please check device status.');
+            }
+          } catch (e) {
+            // Continue polling
+          }
+        }, 3000);
       } else {
-        throw new Error(result.message || 'Upload failed');
+        throw new Error(response?.message || 'Failed to request upload');
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Upload to cloud failed. Make sure you are on the same network as the device.');
+      setError(err instanceof Error ? err.message : 'Upload to cloud failed');
       setFiles(prev => prev.map(f => 
         f.name === file.name ? { ...f, uploading: false } : f
       ));
@@ -232,40 +246,44 @@ export default function DataPage() {
     try {
       let cloudFileId = file.cloudFileId;
       
-      // If not on cloud, upload first via Thoth
+      // If not on cloud, request upload first
       if (!file.onCloud) {
         if (!file.deviceOnline) {
           throw new Error(`Device "${file.deviceName}" is offline. Cannot upload file to cloud.`);
         }
         
-        // Find the device to get its local IP
-        const device = devices.find(d => d.id === file.deviceId);
-        const deviceIp = device?.local_ip || device?.ip_address;
-        
-        if (!deviceIp) {
-          throw new Error('Cannot upload: Device IP address not available');
+        if (!file.id) {
+          throw new Error('Cannot download: File ID not found');
         }
         
-        // Call Thoth directly to trigger upload to Brain
-        const thothUrl = `http://${deviceIp}:5000/api/files/upload-to-cloud/${encodeURIComponent(file.name)}`;
-        
-        const uploadResponse = await fetch(thothUrl, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' }
-        });
-        
-        const uploadResult = await uploadResponse.json();
-        
-        if (uploadResult.status !== 'success') {
-          throw new Error(uploadResult.message || 'Failed to upload file to cloud');
+        // Request upload via Brain API
+        const uploadResponse = await post(`/device/file/${file.id}/request-upload`, {});
+        if (!uploadResponse || !uploadResponse.success) {
+          throw new Error(uploadResponse?.message || 'Failed to request upload');
         }
         
-        cloudFileId = uploadResult.cloud_file_id;
+        // Wait for upload to complete (poll every 2 seconds for up to 30 seconds)
+        let attempts = 0;
+        const maxAttempts = 15;
+        while (attempts < maxAttempts) {
+          await new Promise(resolve => setTimeout(resolve, 2000));
+          attempts++;
+          
+          const filesData = await get(`/device/${file.deviceId}/files`);
+          const updatedFile = filesData?.files?.find((f: any) => f.filename === file.name);
+          
+          if (updatedFile?.on_cloud) {
+            cloudFileId = updatedFile.cloud_file_id;
+            setFiles(prev => prev.map(f => 
+              f.name === file.name ? { ...f, onCloud: true, cloudFileId } : f
+            ));
+            break;
+          }
+        }
         
-        // Update file state
-        setFiles(prev => prev.map(f => 
-          f.name === file.name ? { ...f, onCloud: true, cloudFileId } : f
-        ));
+        if (!cloudFileId) {
+          throw new Error('Upload timed out. Please try again.');
+        }
       }
       
       // Download from cloud
@@ -296,7 +314,7 @@ export default function DataPage() {
         document.body.removeChild(a);
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Download failed. Make sure you are on the same network as the device.');
+      setError(err instanceof Error ? err.message : 'Download failed');
     } finally {
       setFiles(prev => prev.map(f => 
         f.name === file.name ? { ...f, downloading: false } : f
