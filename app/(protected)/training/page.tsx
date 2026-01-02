@@ -88,7 +88,7 @@ export default function TrainingPage() {
   const [trainingJobs, setTrainingJobs] = useState<TrainingJob[]>([]);
   const [trainedModels, setTrainedModels] = useState<TrainedModel[]>([]);
   const [showTrainingConfig, setShowTrainingConfig] = useState(false);
-  const [trainingConfig, setTrainingConfig] = useState({ model_type: 'cnn', epochs: 10, batch_size: 32, learning_rate: 0.001, validation_split: 0.2, model_name: '' });
+  const [trainingConfig, setTrainingConfig] = useState({ model_type: 'cnn', epochs: 10, batch_size: 32, learning_rate: 0.001, validation_split: 0.2, model_name: '', test_dataset_id: null as number | null });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'datasets' | 'jobs' | 'models'>('datasets');
@@ -514,6 +514,24 @@ export default function TrainingPage() {
                 <div><label className="block text-sm text-slate-300 mb-1">Batch Size</label><input type="number" value={trainingConfig.batch_size} onChange={(e) => setTrainingConfig({ ...trainingConfig, batch_size: parseInt(e.target.value) || 32 })} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white" /></div>
               </div>
               <div><label className="block text-sm text-slate-300 mb-1">Learning Rate</label><input type="number" step="0.0001" value={trainingConfig.learning_rate} onChange={(e) => setTrainingConfig({ ...trainingConfig, learning_rate: parseFloat(e.target.value) || 0.001 })} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white" /></div>
+              <div>
+                <label className="block text-sm text-slate-300 mb-1">Test Dataset (optional)</label>
+                <select 
+                  value={trainingConfig.test_dataset_id || ''} 
+                  onChange={(e) => setTrainingConfig({ ...trainingConfig, test_dataset_id: e.target.value ? parseInt(e.target.value) : null })} 
+                  className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white"
+                >
+                  <option value="">None (use validation split)</option>
+                  {datasets.filter(d => d.id !== selectedDataset?.id).map(dataset => (
+                    <option key={dataset.id} value={dataset.id}>
+                      {dataset.name} ({dataset.file_count} files)
+                    </option>
+                  ))}
+                </select>
+                <p className="text-xs text-slate-500 mt-1">
+                  Separate dataset for final evaluation
+                </p>
+              </div>
               <div><label className="block text-sm text-slate-300 mb-1">Model Name (optional)</label><input type="text" value={trainingConfig.model_name} onChange={(e) => setTrainingConfig({ ...trainingConfig, model_name: e.target.value })} placeholder="Auto-generated if empty" className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white placeholder-slate-500" /></div>
             </div>
             <div className="flex gap-3 mt-6">
