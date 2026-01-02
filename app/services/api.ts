@@ -426,6 +426,85 @@ class ApiService {
     const response = await api.get('/file/list');
     return response.data;
   }
+
+  // ============================================
+  // Dataset Management (Cloud Training)
+  // ============================================
+
+  async createDataset(name: string, description?: string) {
+    const response = await api.post('/datasets/create', { name, description });
+    return response.data;
+  }
+
+  async listDatasets() {
+    const response = await api.get('/datasets/list');
+    return response.data;
+  }
+
+  async getDataset(datasetId: number) {
+    const response = await api.get(`/datasets/${datasetId}`);
+    return response.data;
+  }
+
+  async deleteDataset(datasetId: number) {
+    const response = await api.delete(`/datasets/${datasetId}`);
+    return response.data;
+  }
+
+  async addFilesToDataset(datasetId: number, files: { file_id: number; label: string }[]) {
+    const response = await api.post(`/datasets/${datasetId}/files`, { files });
+    return response.data;
+  }
+
+  async removeFileFromDataset(datasetId: number, fileId: number) {
+    const response = await api.delete(`/datasets/${datasetId}/files/${fileId}`);
+    return response.data;
+  }
+
+  async updateFileLabel(datasetId: number, fileId: number, label: string) {
+    const response = await api.put(`/datasets/${datasetId}/files/${fileId}/label`, { label });
+    return response.data;
+  }
+
+  // Cloud Training
+  async startCloudTraining(config: {
+    dataset_id: number;
+    model_type: string;
+    epochs: number;
+    batch_size: number;
+    learning_rate: number;
+    validation_split: number;
+    model_name?: string;
+  }) {
+    const response = await api.post('/datasets/train/cloud', config);
+    return response.data;
+  }
+
+  async listCloudTrainingJobs(status?: string) {
+    const url = status ? `/datasets/train/jobs?status=${status}` : '/datasets/train/jobs';
+    const response = await api.get(url);
+    return response.data;
+  }
+
+  async getCloudTrainingJob(jobId: string) {
+    const response = await api.get(`/datasets/train/jobs/${jobId}`);
+    return response.data;
+  }
+
+  async cancelCloudTrainingJob(jobId: string) {
+    const response = await api.post(`/datasets/train/jobs/${jobId}/cancel`, {});
+    return response.data;
+  }
+
+  async listCloudTrainedModels() {
+    const response = await api.get('/datasets/models');
+    return response.data;
+  }
+
+  async deleteCloudModel(modelId: number) {
+    const response = await api.delete(`/datasets/models/${modelId}`);
+    return response.data;
+  }
 }
 
 // Export singleton instance

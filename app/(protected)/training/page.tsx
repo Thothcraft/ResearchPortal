@@ -1,420 +1,403 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
-import { motion } from 'framer-motion';
-import { Brain, Play, RefreshCw, Pause, XCircle } from 'lucide-react';
-import apiService from '../../services/api';
+import React, { useState, useEffect, useCallback } from 'react';
+import { useApi } from '@/hooks/useApi';
+import {
+  Brain, Cloud, Smartphone, Network, Play, RefreshCw, Plus, Tag, Database,
+  FileText, Trash2, ChevronRight, BarChart3, CheckCircle, Clock, AlertCircle,
+  Download, Rocket, Loader2, X, XCircle,
+} from 'lucide-react';
 
-function TrainingMonitor({ job, onControl }: { job: any; onControl: (jobId: string, action: 'pause' | 'resume' | 'cancel') => void }) {
-  const progress = job.current_epoch && job.total_epochs 
-    ? (job.current_epoch / job.total_epochs) * 100 
-    : 0;
+type TrainingMode = 'cloud' | 'on-device' | 'federated';
+type Dataset = {
+  id: number;
+  name: string;
+  description: string | null;
+  file_count: number;
+  labels: string[];
+  label_distribution?: Record<string, number>;
+  created_at: string;
+  files?: DatasetFile[];
+};
+type DatasetFile = { id: number; file_id: number; filename: string; label: string; size?: number };
+type CloudFile = { fileId: number; filename: string; size: number; content_type: string; uploaded_at: string };
+type TrainingJob = {
+  job_id: string; dataset_id: number; dataset_name: string; model_type: string;
+  training_mode: string; status: string; current_epoch: number; total_epochs: number;
+  metrics: { loss?: number[]; accuracy?: number[]; val_loss?: number[]; val_accuracy?: number[] };
+  best_metrics: { val_accuracy?: number; best_epoch?: number };
+  created_at: string; started_at?: string; completed_at?: string;
+};
+type TrainedModel = { id: number; job_id: string; name: string; architecture: string; accuracy: number | null; size_mb: number | null; created_at: string };
+
+const STATUS_CONFIG: Record<string, { color: string; bg: string; icon: React.ElementType }> = {
+  pending: { color: 'text-yellow-400', bg: 'bg-yellow-500/20', icon: Clock },
+  running: { color: 'text-blue-400', bg: 'bg-blue-500/20', icon: Loader2 },
+  completed: { color: 'text-green-400', bg: 'bg-green-500/20', icon: CheckCircle },
+  failed: { color: 'text-red-400', bg: 'bg-red-500/20', icon: AlertCircle },
+  cancelled: { color: 'text-slate-400', bg: 'bg-slate-500/20', icon: XCircle },
+};
+
+export default function TrainingPage() {
+  const { get, post, del, put } = useApi();
+  const [selectedMode, setSelectedMode] = useState<TrainingMode>('cloud');
+  const [datasets, setDatasets] = useState<Dataset[]>([]);
+  const [selectedDataset, setSelectedDataset] = useState<Dataset | null>(null);
+  const [showCreateDataset, setShowCreateDataset] = useState(false);
+  const [newDatasetName, setNewDatasetName] = useState('');
+  const [newDatasetDesc, setNewDatasetDesc] = useState('');
+  const [cloudFiles, setCloudFiles] = useState<CloudFile[]>([]);
+  const [showAddFiles, setShowAddFiles] = useState(false);
+  const [selectedFiles, setSelectedFiles] = useState<Map<number, string>>(new Map());
+  const [availableLabels, setAvailableLabels] = useState<string[]>(['walking', 'sitting', 'standing', 'running']);
+  const [newLabel, setNewLabel] = useState('');
+  const [trainingJobs, setTrainingJobs] = useState<TrainingJob[]>([]);
+  const [trainedModels, setTrainedModels] = useState<TrainedModel[]>([]);
+  const [showTrainingConfig, setShowTrainingConfig] = useState(false);
+  const [trainingConfig, setTrainingConfig] = useState({ model_type: 'cnn', epochs: 10, batch_size: 32, learning_rate: 0.001, validation_split: 0.2, model_name: '' });
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<'datasets' | 'jobs' | 'models'>('datasets');
+
+  const fetchData = useCallback(async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      const [datasetsRes, jobsRes, modelsRes, filesRes] = await Promise.all([
+        get('/datasets/list').catch(() => null),
+        get('/datasets/train/jobs').catch(() => null),
+        get('/datasets/models').catch(() => null),
+        get('/file/list').catch(() => null),
+      ]);
+      if (datasetsRes?.datasets) setDatasets(datasetsRes.datasets);
+      if (jobsRes?.jobs) setTrainingJobs(jobsRes.jobs);
+      if (modelsRes?.models) setTrainedModels(modelsRes.models);
+      if (filesRes?.files) setCloudFiles(filesRes.files);
+    } catch (err) {
+      setError('Failed to load training data');
+    } finally {
+      setLoading(false);
+    }
+  }, [get]);
+
+  useEffect(() => {
+    fetchData();
+    const interval = setInterval(async () => {
+      const jobsRes = await get('/datasets/train/jobs').catch(() => null);
+      if (jobsRes?.jobs) setTrainingJobs(jobsRes.jobs);
+    }, 3000);
+    return () => clearInterval(interval);
+  }, [fetchData, get]);
+
+  const handleCreateDataset = async () => {
+    if (!newDatasetName.trim()) return;
+    try {
+      const res = await post('/datasets/create', { name: newDatasetName, description: newDatasetDesc || null });
+      if (res?.success) { setShowCreateDataset(false); setNewDatasetName(''); setNewDatasetDesc(''); fetchData(); }
+    } catch { setError('Failed to create dataset'); }
+  };
+
+  const handleSelectDataset = async (dataset: Dataset) => {
+    try {
+      const res = await get(`/datasets/${dataset.id}`);
+      if (res?.dataset) setSelectedDataset(res.dataset);
+    } catch { setError('Failed to load dataset'); }
+  };
+
+  const handleAddFilesToDataset = async () => {
+    if (!selectedDataset || selectedFiles.size === 0) return;
+    const files = Array.from(selectedFiles.entries()).map(([file_id, label]) => ({ file_id, label }));
+    try {
+      const res = await post(`/datasets/${selectedDataset.id}/files`, { files });
+      if (res?.success) { setShowAddFiles(false); setSelectedFiles(new Map()); handleSelectDataset(selectedDataset); }
+    } catch { setError('Failed to add files'); }
+  };
+
+  const handleRemoveFile = async (fileId: number) => {
+    if (!selectedDataset) return;
+    try { await del(`/datasets/${selectedDataset.id}/files/${fileId}`); handleSelectDataset(selectedDataset); } catch { setError('Failed to remove file'); }
+  };
+
+  const handleUpdateLabel = async (fileId: number, newLbl: string) => {
+    if (!selectedDataset) return;
+    try { await put(`/datasets/${selectedDataset.id}/files/${fileId}/label`, { label: newLbl }); handleSelectDataset(selectedDataset); } catch { setError('Failed to update label'); }
+  };
+
+  const handleStartTraining = async () => {
+    if (!selectedDataset) return;
+    try {
+      const res = await post('/datasets/train/cloud', { dataset_id: selectedDataset.id, ...trainingConfig, model_name: trainingConfig.model_name || null });
+      if (res?.success) { setShowTrainingConfig(false); setActiveTab('jobs'); fetchData(); }
+    } catch (err: any) { setError(err?.response?.data?.detail || 'Failed to start training'); }
+  };
+
+  const handleCancelJob = async (jobId: string) => {
+    try { await post(`/datasets/train/jobs/${jobId}/cancel`, {}); fetchData(); } catch { setError('Failed to cancel job'); }
+  };
+
+  const handleDeleteDataset = async (datasetId: number) => {
+    try { await del(`/datasets/${datasetId}`); setSelectedDataset(null); fetchData(); } catch { setError('Failed to delete dataset'); }
+  };
+
+  const handleAddLabel = () => {
+    if (newLabel.trim() && !availableLabels.includes(newLabel.trim())) { setAvailableLabels([...availableLabels, newLabel.trim()]); setNewLabel(''); }
+  };
+
+  const toggleFileSelection = (fileId: number, label: string) => {
+    const newSelected = new Map(selectedFiles);
+    if (newSelected.has(fileId)) newSelected.delete(fileId); else newSelected.set(fileId, label);
+    setSelectedFiles(newSelected);
+  };
+
+  const activeJobsCount = trainingJobs.filter(j => ['pending', 'running'].includes(j.status)).length;
+
+  if (loading && datasets.length === 0) return <div className="min-h-screen flex items-center justify-center"><Loader2 className="w-8 h-8 text-indigo-500 animate-spin" /></div>;
 
   return (
-    <div className="bg-slate-800/50 backdrop-blur-sm rounded-xl p-6 border border-slate-700">
-      <div className="flex items-center justify-between mb-4">
-        <h3 className="text-white font-semibold">{job.job_id}</h3>
-        <span className={`px-2 py-1 rounded text-xs font-medium ${
-          job.status === 'running' ? 'bg-green-500/20 text-green-400' :
-          job.status === 'paused' ? 'bg-yellow-500/20 text-yellow-400' :
-          'bg-slate-500/20 text-slate-400'
-        }`}>
-          {job.status}
-        </span>
-      </div>
-      
-      <div className="mb-4">
-        <div className="flex justify-between text-sm text-slate-400 mb-1">
-          <span>Progress</span>
-          <span>{job.current_epoch || 0}/{job.total_epochs || 0} epochs</span>
-        </div>
-        <div className="w-full bg-slate-700 rounded-full h-2">
-          <div 
-            className="bg-indigo-500 h-2 rounded-full transition-all" 
-            style={{ width: `${progress}%` }}
-          />
-        </div>
+    <div className="p-8">
+      <div className="mb-8">
+        <h1 className="text-3xl font-bold text-white mb-2">Model Training</h1>
+        <p className="text-slate-400">Train ML models using your collected data</p>
       </div>
 
-      {job.metrics && (
-        <div className="grid grid-cols-2 gap-4 mb-4 text-sm">
-          <div>
-            <span className="text-slate-500">Loss:</span>
-            <span className="text-white ml-2">{job.metrics.loss?.[job.metrics.loss.length - 1]?.toFixed(4) || 'N/A'}</span>
+      {/* Training Mode Selection */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
+        <button onClick={() => setSelectedMode('cloud')} className={`p-6 rounded-xl border-2 transition-all text-left ${selectedMode === 'cloud' ? 'border-indigo-500 bg-indigo-500/10' : 'border-slate-700 bg-slate-800/50 hover:border-slate-600'}`}>
+          <Cloud className={`w-8 h-8 mb-3 ${selectedMode === 'cloud' ? 'text-indigo-400' : 'text-slate-400'}`} />
+          <h3 className="text-lg font-semibold text-white mb-1">Cloud Training</h3>
+          <p className="text-sm text-slate-400">Train models on cloud infrastructure with labeled datasets</p>
+        </button>
+        <button onClick={() => setSelectedMode('on-device')} className={`p-6 rounded-xl border-2 transition-all text-left ${selectedMode === 'on-device' ? 'border-green-500 bg-green-500/10' : 'border-slate-700 bg-slate-800/50 hover:border-slate-600'}`}>
+          <Smartphone className={`w-8 h-8 mb-3 ${selectedMode === 'on-device' ? 'text-green-400' : 'text-slate-400'}`} />
+          <h3 className="text-lg font-semibold text-white mb-1">On-Device Training</h3>
+          <p className="text-sm text-slate-400">Train directly on Thoth devices (requires online device)</p>
+          <span className="inline-block mt-2 px-2 py-1 bg-yellow-500/20 text-yellow-400 text-xs rounded">Coming Soon</span>
+        </button>
+        <button onClick={() => setSelectedMode('federated')} className={`p-6 rounded-xl border-2 transition-all text-left ${selectedMode === 'federated' ? 'border-purple-500 bg-purple-500/10' : 'border-slate-700 bg-slate-800/50 hover:border-slate-600'}`}>
+          <Network className={`w-8 h-8 mb-3 ${selectedMode === 'federated' ? 'text-purple-400' : 'text-slate-400'}`} />
+          <h3 className="text-lg font-semibold text-white mb-1">Federated Learning</h3>
+          <p className="text-sm text-slate-400">Privacy-preserving training using Flower framework</p>
+          <span className="inline-block mt-2 px-2 py-1 bg-yellow-500/20 text-yellow-400 text-xs rounded">Coming Soon</span>
+        </button>
+      </div>
+
+      {error && (
+        <div className="mb-6 p-4 bg-red-500/10 border border-red-500/50 rounded-lg flex items-center justify-between">
+          <span className="text-red-400">{error}</span>
+          <button onClick={() => setError(null)} className="text-red-400 hover:text-red-300"><X className="w-5 h-5" /></button>
+        </div>
+      )}
+
+      {/* Stats */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+        <div className="bg-slate-800/50 rounded-xl p-4 border border-slate-700"><p className="text-slate-400 text-sm mb-1">Datasets</p><p className="text-2xl font-bold text-white">{datasets.length}</p></div>
+        <div className="bg-slate-800/50 rounded-xl p-4 border border-slate-700"><p className="text-slate-400 text-sm mb-1">Active Jobs</p><p className="text-2xl font-bold text-blue-400">{activeJobsCount}</p></div>
+        <div className="bg-slate-800/50 rounded-xl p-4 border border-slate-700"><p className="text-slate-400 text-sm mb-1">Trained Models</p><p className="text-2xl font-bold text-green-400">{trainedModels.length}</p></div>
+        <div className="bg-slate-800/50 rounded-xl p-4 border border-slate-700"><p className="text-slate-400 text-sm mb-1">Best Accuracy</p><p className="text-2xl font-bold text-purple-400">{trainedModels.length > 0 ? `${(Math.max(...trainedModels.map(m => m.accuracy || 0)) * 100).toFixed(1)}%` : 'N/A'}</p></div>
+      </div>
+
+      {selectedMode === 'cloud' && (
+        <>
+          {/* Tabs */}
+          <div className="flex gap-2 mb-6 border-b border-slate-700">
+            <button onClick={() => setActiveTab('datasets')} className={`px-4 py-2 font-medium transition-colors ${activeTab === 'datasets' ? 'text-indigo-400 border-b-2 border-indigo-400' : 'text-slate-400 hover:text-white'}`}><Database className="w-4 h-4 inline mr-2" />Datasets</button>
+            <button onClick={() => setActiveTab('jobs')} className={`px-4 py-2 font-medium transition-colors ${activeTab === 'jobs' ? 'text-indigo-400 border-b-2 border-indigo-400' : 'text-slate-400 hover:text-white'}`}><BarChart3 className="w-4 h-4 inline mr-2" />Training Jobs{activeJobsCount > 0 && <span className="ml-2 px-2 py-0.5 bg-blue-500/20 text-blue-400 text-xs rounded-full">{activeJobsCount}</span>}</button>
+            <button onClick={() => setActiveTab('models')} className={`px-4 py-2 font-medium transition-colors ${activeTab === 'models' ? 'text-indigo-400 border-b-2 border-indigo-400' : 'text-slate-400 hover:text-white'}`}><Brain className="w-4 h-4 inline mr-2" />Trained Models</button>
           </div>
-          <div>
-            <span className="text-slate-500">Accuracy:</span>
-            <span className="text-white ml-2">{job.metrics.accuracy?.[job.metrics.accuracy.length - 1]?.toFixed(2) || 'N/A'}</span>
+
+          {/* Datasets Tab */}
+          {activeTab === 'datasets' && (
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              <div className="lg:col-span-1">
+                <div className="flex items-center justify-between mb-4">
+                  <h2 className="text-xl font-semibold text-white">Datasets</h2>
+                  <button onClick={() => setShowCreateDataset(true)} className="flex items-center gap-1 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm"><Plus className="w-4 h-4" /> New</button>
+                </div>
+                <div className="space-y-2">
+                  {datasets.length === 0 ? (
+                    <div className="text-center py-8 bg-slate-800/50 rounded-xl border border-slate-700">
+                      <Database className="w-12 h-12 text-slate-500 mx-auto mb-3" />
+                      <p className="text-slate-400">No datasets yet</p>
+                      <button onClick={() => setShowCreateDataset(true)} className="mt-3 text-indigo-400 hover:text-indigo-300 text-sm">Create your first dataset</button>
+                    </div>
+                  ) : datasets.map(dataset => (
+                    <button key={dataset.id} onClick={() => handleSelectDataset(dataset)} className={`w-full p-4 rounded-xl border text-left transition-all ${selectedDataset?.id === dataset.id ? 'border-indigo-500 bg-indigo-500/10' : 'border-slate-700 bg-slate-800/50 hover:border-slate-600'}`}>
+                      <div className="flex items-center justify-between mb-2"><h3 className="font-medium text-white">{dataset.name}</h3><ChevronRight className="w-4 h-4 text-slate-400" /></div>
+                      <div className="flex items-center gap-3 text-sm text-slate-400"><span className="flex items-center gap-1"><FileText className="w-3 h-3" />{dataset.file_count} files</span><span className="flex items-center gap-1"><Tag className="w-3 h-3" />{dataset.labels.length} labels</span></div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="lg:col-span-2">
+                {selectedDataset ? (
+                  <div className="bg-slate-800/50 rounded-xl border border-slate-700 p-6">
+                    <div className="flex items-center justify-between mb-6">
+                      <div><h2 className="text-xl font-semibold text-white">{selectedDataset.name}</h2>{selectedDataset.description && <p className="text-slate-400 text-sm mt-1">{selectedDataset.description}</p>}</div>
+                      <div className="flex gap-2">
+                        <button onClick={() => setShowAddFiles(true)} className="flex items-center gap-1 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm"><Plus className="w-4 h-4" /> Add Files</button>
+                        <button onClick={() => setShowTrainingConfig(true)} disabled={!selectedDataset.files || selectedDataset.files.length < 2} className="flex items-center gap-1 px-3 py-1.5 bg-green-600 hover:bg-green-700 disabled:bg-slate-600 disabled:cursor-not-allowed text-white rounded-lg text-sm"><Play className="w-4 h-4" /> Train</button>
+                        <button onClick={() => handleDeleteDataset(selectedDataset.id)} className="flex items-center gap-1 px-3 py-1.5 bg-red-600/20 hover:bg-red-600/30 text-red-400 rounded-lg text-sm"><Trash2 className="w-4 h-4" /></button>
+                      </div>
+                    </div>
+                    {selectedDataset.label_distribution && Object.keys(selectedDataset.label_distribution).length > 0 && (
+                      <div className="mb-6"><h3 className="text-sm font-medium text-slate-300 mb-3">Label Distribution</h3><div className="flex flex-wrap gap-2">{Object.entries(selectedDataset.label_distribution).map(([label, count]) => <span key={label} className="px-3 py-1 bg-indigo-500/20 text-indigo-300 rounded-full text-sm">{label}: {count}</span>)}</div></div>
+                    )}
+                    <div>
+                      <h3 className="text-sm font-medium text-slate-300 mb-3">Files ({selectedDataset.files?.length || 0})</h3>
+                      {!selectedDataset.files || selectedDataset.files.length === 0 ? (
+                        <div className="text-center py-8 bg-slate-900/50 rounded-lg border border-slate-700"><FileText className="w-10 h-10 text-slate-500 mx-auto mb-2" /><p className="text-slate-400 text-sm">No files in this dataset</p><button onClick={() => setShowAddFiles(true)} className="mt-2 text-indigo-400 hover:text-indigo-300 text-sm">Add files from cloud storage</button></div>
+                      ) : (
+                        <div className="space-y-2 max-h-96 overflow-y-auto">
+                          {selectedDataset.files.map(file => (
+                            <div key={file.id} className="flex items-center justify-between p-3 bg-slate-900/50 rounded-lg border border-slate-700">
+                              <div className="flex items-center gap-3"><FileText className="w-5 h-5 text-slate-400" /><div><p className="text-white text-sm font-medium">{file.filename}</p><p className="text-slate-500 text-xs">{file.size ? `${(file.size / 1024).toFixed(1)} KB` : ''}</p></div></div>
+                              <div className="flex items-center gap-2">
+                                <select value={file.label} onChange={(e) => handleUpdateLabel(file.file_id, e.target.value)} className="px-2 py-1 bg-slate-800 border border-slate-600 rounded text-sm text-white">{availableLabels.map(l => <option key={l} value={l}>{l}</option>)}</select>
+                                <button onClick={() => handleRemoveFile(file.file_id)} className="p-1 text-red-400 hover:text-red-300"><Trash2 className="w-4 h-4" /></button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="bg-slate-800/50 rounded-xl border border-slate-700 p-12 text-center"><Database className="w-16 h-16 text-slate-500 mx-auto mb-4" /><h3 className="text-xl font-medium text-white mb-2">Select a Dataset</h3><p className="text-slate-400">Choose a dataset from the list to view and manage its files</p></div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Jobs Tab */}
+          {activeTab === 'jobs' && (
+            <div className="space-y-4">
+              {trainingJobs.length === 0 ? (
+                <div className="text-center py-12 bg-slate-800/50 rounded-xl border border-slate-700"><BarChart3 className="w-16 h-16 text-slate-500 mx-auto mb-4" /><h3 className="text-xl font-medium text-white mb-2">No Training Jobs</h3><p className="text-slate-400">Start a training job from a dataset</p></div>
+              ) : trainingJobs.map(job => {
+                const sc = STATUS_CONFIG[job.status] || STATUS_CONFIG.pending;
+                const Icon = sc.icon;
+                const prog = job.total_epochs > 0 ? (job.current_epoch / job.total_epochs) * 100 : 0;
+                return (
+                  <div key={job.job_id} className="bg-slate-800/50 rounded-xl border border-slate-700 p-6">
+                    <div className="flex items-center justify-between mb-4">
+                      <div><h3 className="text-lg font-semibold text-white">{job.dataset_name || 'Training Job'}</h3><p className="text-slate-400 text-sm">{job.model_type.toUpperCase()} • {job.started_at ? new Date(job.started_at).toLocaleString() : 'Pending'}</p></div>
+                      <div className="flex items-center gap-3">
+                        <span className={`flex items-center gap-1 px-3 py-1 rounded-full text-sm ${sc.bg} ${sc.color}`}><Icon className={`w-4 h-4 ${job.status === 'running' ? 'animate-spin' : ''}`} />{job.status}</span>
+                        {['pending', 'running'].includes(job.status) && <button onClick={() => handleCancelJob(job.job_id)} className="p-2 text-red-400 hover:bg-red-500/10 rounded-lg"><XCircle className="w-5 h-5" /></button>}
+                      </div>
+                    </div>
+                    <div className="mb-4"><div className="flex justify-between text-sm text-slate-400 mb-1"><span>Epoch {job.current_epoch}/{job.total_epochs}</span><span>{prog.toFixed(0)}%</span></div><div className="w-full bg-slate-700 rounded-full h-2"><div className="bg-indigo-500 h-2 rounded-full transition-all" style={{ width: `${prog}%` }} /></div></div>
+                    <div className="grid grid-cols-4 gap-4">
+                      <div className="bg-slate-900/50 rounded-lg p-3"><p className="text-slate-500 text-xs mb-1">Loss</p><p className="text-white font-medium">{job.metrics?.loss?.[job.metrics.loss.length - 1]?.toFixed(4) || 'N/A'}</p></div>
+                      <div className="bg-slate-900/50 rounded-lg p-3"><p className="text-slate-500 text-xs mb-1">Accuracy</p><p className="text-white font-medium">{job.metrics?.accuracy?.[job.metrics.accuracy.length - 1] ? `${(job.metrics.accuracy[job.metrics.accuracy.length - 1] * 100).toFixed(2)}%` : 'N/A'}</p></div>
+                      <div className="bg-slate-900/50 rounded-lg p-3"><p className="text-slate-500 text-xs mb-1">Best Val Acc</p><p className="text-green-400 font-medium">{job.best_metrics?.val_accuracy ? `${(job.best_metrics.val_accuracy * 100).toFixed(2)}%` : 'N/A'}</p></div>
+                      <div className="bg-slate-900/50 rounded-lg p-3"><p className="text-slate-500 text-xs mb-1">Best Epoch</p><p className="text-white font-medium">{job.best_metrics?.best_epoch || 'N/A'}</p></div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Models Tab */}
+          {activeTab === 'models' && (
+            <div>
+              {trainedModels.length === 0 ? (
+                <div className="text-center py-12 bg-slate-800/50 rounded-xl border border-slate-700"><Brain className="w-16 h-16 text-slate-500 mx-auto mb-4" /><h3 className="text-xl font-medium text-white mb-2">No Trained Models</h3><p className="text-slate-400">Complete a training job to see models here</p></div>
+              ) : (
+                <div className="bg-slate-800/50 rounded-xl border border-slate-700 overflow-hidden">
+                  <table className="w-full">
+                    <thead className="bg-slate-900/50"><tr><th className="px-6 py-3 text-left text-xs font-medium text-slate-400 uppercase">Model</th><th className="px-6 py-3 text-left text-xs font-medium text-slate-400 uppercase">Architecture</th><th className="px-6 py-3 text-left text-xs font-medium text-slate-400 uppercase">Accuracy</th><th className="px-6 py-3 text-left text-xs font-medium text-slate-400 uppercase">Size</th><th className="px-6 py-3 text-left text-xs font-medium text-slate-400 uppercase">Created</th><th className="px-6 py-3 text-left text-xs font-medium text-slate-400 uppercase">Actions</th></tr></thead>
+                    <tbody className="divide-y divide-slate-700">
+                      {trainedModels.map(m => (
+                        <tr key={m.id} className="hover:bg-slate-700/30">
+                          <td className="px-6 py-4"><span className="text-white font-medium">{m.name}</span></td>
+                          <td className="px-6 py-4"><span className="text-slate-300 uppercase">{m.architecture}</span></td>
+                          <td className="px-6 py-4"><span className="text-green-400 font-medium">{m.accuracy !== null ? `${(m.accuracy * 100).toFixed(2)}%` : 'N/A'}</span></td>
+                          <td className="px-6 py-4"><span className="text-slate-300">{m.size_mb !== null ? `${m.size_mb.toFixed(1)} MB` : 'N/A'}</span></td>
+                          <td className="px-6 py-4"><span className="text-slate-400 text-sm">{new Date(m.created_at).toLocaleDateString()}</span></td>
+                          <td className="px-6 py-4"><div className="flex gap-2"><button className="flex items-center gap-1 px-2 py-1 text-blue-400 hover:bg-blue-500/10 rounded text-sm"><Rocket className="w-4 h-4" /> Deploy</button><button className="flex items-center gap-1 px-2 py-1 text-purple-400 hover:bg-purple-500/10 rounded text-sm"><Download className="w-4 h-4" /> Download</button></div></td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          )}
+        </>
+      )}
+
+      {/* Create Dataset Modal */}
+      {showCreateDataset && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
+          <div className="bg-slate-900 rounded-xl p-6 w-full max-w-md border border-slate-700">
+            <h3 className="text-xl font-semibold text-white mb-4">Create Dataset</h3>
+            <div className="space-y-4">
+              <div><label className="block text-sm text-slate-300 mb-1">Dataset Name</label><input type="text" value={newDatasetName} onChange={(e) => setNewDatasetName(e.target.value)} placeholder="e.g., Activity Recognition" className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white placeholder-slate-500" /></div>
+              <div><label className="block text-sm text-slate-300 mb-1">Description</label><textarea value={newDatasetDesc} onChange={(e) => setNewDatasetDesc(e.target.value)} placeholder="Describe your dataset..." rows={3} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white placeholder-slate-500" /></div>
+            </div>
+            <div className="flex gap-3 mt-6">
+              <button onClick={handleCreateDataset} disabled={!newDatasetName.trim()} className="flex-1 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-600 text-white rounded-lg font-medium">Create</button>
+              <button onClick={() => setShowCreateDataset(false)} className="flex-1 px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg font-medium">Cancel</button>
+            </div>
           </div>
         </div>
       )}
 
-      <div className="flex gap-2">
-        {job.status === 'running' && (
-          <button
-            onClick={() => onControl(job.job_id, 'pause')}
-            className="flex items-center gap-1 px-3 py-1.5 bg-yellow-500/20 text-yellow-400 rounded-lg text-sm hover:bg-yellow-500/30"
-          >
-            <Pause className="w-4 h-4" /> Pause
-          </button>
-        )}
-        {job.status === 'paused' && (
-          <button
-            onClick={() => onControl(job.job_id, 'resume')}
-            className="flex items-center gap-1 px-3 py-1.5 bg-green-500/20 text-green-400 rounded-lg text-sm hover:bg-green-500/30"
-          >
-            <Play className="w-4 h-4" /> Resume
-          </button>
-        )}
-        <button
-          onClick={() => onControl(job.job_id, 'cancel')}
-          className="flex items-center gap-1 px-3 py-1.5 bg-red-500/20 text-red-400 rounded-lg text-sm hover:bg-red-500/30"
-        >
-          <XCircle className="w-4 h-4" /> Cancel
-        </button>
-      </div>
-    </div>
-  );
-}
-
-export default function TrainingPage() {
-  const [activeJobs, setActiveJobs] = useState<any[]>([]);
-  const [completedModels, setCompletedModels] = useState<any[]>([]);
-  const [showSetupModal, setShowSetupModal] = useState(false);
-  const [loading, setLoading] = useState(true);
-  
-  // Training setup form
-  const [trainingConfig, setTrainingConfig] = useState({
-    model: 'cnn',
-    data: 'sensors',
-    mode: 'on-device',
-    epochs: 10,
-    batch_size: 32,
-    learning_rate: 0.001,
-    validation_split: 0.2,
-    device_id: 'thoth-001'
-  });
-
-  useEffect(() => {
-    fetchTrainingJobs();
-    fetchModels();
-    
-    // Poll for updates every 5 seconds
-    const interval = setInterval(() => {
-      fetchTrainingJobs();
-    }, 5000);
-    
-    return () => clearInterval(interval);
-  }, []);
-
-  const fetchTrainingJobs = async () => {
-    try {
-      const response = await apiService.getTrainingStatus();
-      if ('jobs' in response) {
-        // Add mock metrics for demo
-        const jobsWithMetrics = response.jobs.map((job: any) => ({
-          ...job,
-          current_epoch: parseInt(job.progress?.split('/')[0] || '0'),
-          total_epochs: parseInt(job.progress?.split('/')[1] || '10'),
-          metrics: {
-            loss: [0.5, 0.4, 0.35, 0.3, 0.28],
-            accuracy: [0.6, 0.7, 0.75, 0.78, 0.8],
-            val_loss: [0.55, 0.45, 0.4, 0.38, 0.35],
-            val_accuracy: [0.58, 0.68, 0.72, 0.74, 0.76]
-          },
-          best_metrics: {
-            val_accuracy: 0.76,
-            best_epoch: 5
-          }
-        }));
-        setActiveJobs(jobsWithMetrics.filter((j: any) => 
-          ['running', 'paused', 'pending'].includes(j.status)
-        ));
-      }
-    } catch (error) {
-      console.error('Failed to fetch training jobs:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const fetchModels = async () => {
-    try {
-      const response = await apiService.getTrainedModels();
-      if (response.models) {
-        setCompletedModels(response.models);
-      }
-    } catch (error) {
-      console.error('Failed to fetch models:', error);
-    }
-  };
-
-  const handleStartTraining = async () => {
-    try {
-      const response = await apiService.setupTraining(trainingConfig);
-      if (response.success) {
-        setShowSetupModal(false);
-        fetchTrainingJobs();
-      }
-    } catch (error) {
-      console.error('Failed to start training:', error);
-    }
-  };
-
-  const handleControlJob = async (jobId: string, action: 'pause' | 'resume' | 'cancel') => {
-    try {
-      await apiService.controlTraining(jobId, action);
-      fetchTrainingJobs();
-    } catch (error) {
-      console.error(`Failed to ${action} job:`, error);
-    }
-  };
-
-  return (
-    <div className="p-8">
-      <div className="max-w-7xl mx-auto">
-        {/* Header */}
-        <motion.div
-          initial={{ opacity: 0, y: -20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="mb-8"
-        >
-          <h1 className="text-4xl font-bold text-white mb-2">Model Training</h1>
-          <p className="text-gray-300">Train and deploy AI models on Thoth devices</p>
-        </motion.div>
-
-        {/* Stats */}
-        <motion.div
-          initial={{ opacity: 0, y: -10 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.1 }}
-          className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6"
-        >
-          <div className="bg-white/10 backdrop-blur-md rounded-xl p-4 border border-white/20">
-            <p className="text-gray-400 text-sm mb-1">Active Jobs</p>
-            <p className="text-2xl font-bold text-green-400">{activeJobs.length}</p>
-          </div>
-          <div className="bg-white/10 backdrop-blur-md rounded-xl p-4 border border-white/20">
-            <p className="text-gray-400 text-sm mb-1">Trained Models</p>
-            <p className="text-2xl font-bold text-blue-400">{completedModels.length}</p>
-          </div>
-          <div className="bg-white/10 backdrop-blur-md rounded-xl p-4 border border-white/20">
-            <p className="text-gray-400 text-sm mb-1">Best Accuracy</p>
-            <p className="text-2xl font-bold text-purple-400">
-              {completedModels.length > 0 
-                ? `${Math.max(...completedModels.map(m => m.accuracy || 0)).toFixed(1)}%`
-                : 'N/A'}
-            </p>
-          </div>
-          <div className="bg-white/10 backdrop-blur-md rounded-xl p-4 border border-white/20">
-            <p className="text-gray-400 text-sm mb-1">Total GPU Hours</p>
-            <p className="text-2xl font-bold text-orange-400">24.5</p>
-          </div>
-        </motion.div>
-
-        {/* Actions */}
-        <motion.div
-          initial={{ opacity: 0, y: -10 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.2 }}
-          className="flex gap-4 mb-6"
-        >
-          <button
-            onClick={() => setShowSetupModal(true)}
-            className="px-6 py-3 bg-gradient-to-r from-blue-500 to-purple-500 hover:from-blue-600 hover:to-purple-600 text-white rounded-lg font-medium transition-all flex items-center gap-2 shadow-lg"
-          >
-            <Brain className="w-5 h-5" />
-            New Training Job
-          </button>
-          <button
-            onClick={fetchTrainingJobs}
-            className="px-6 py-3 bg-white/10 hover:bg-white/20 text-white rounded-lg font-medium transition-colors flex items-center gap-2 border border-white/20"
-          >
-            <RefreshCw className="w-5 h-5" />
-            Refresh
-          </button>
-        </motion.div>
-
-        {/* Active Training Jobs */}
-        {activeJobs.length > 0 && (
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.3 }}
-            className="mb-8"
-          >
-            <h2 className="text-2xl font-semibold text-white mb-4">Active Training Jobs</h2>
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              {activeJobs.map((job, index) => (
-                <motion.div
-                  key={job.job_id}
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: 0.1 * index }}
-                >
-                  <TrainingMonitor job={job} onControl={handleControlJob} />
-                </motion.div>
-              ))}
+      {/* Add Files Modal */}
+      {showAddFiles && selectedDataset && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
+          <div className="bg-slate-900 rounded-xl p-6 w-full max-w-2xl border border-slate-700 max-h-[80vh] overflow-hidden flex flex-col">
+            <h3 className="text-xl font-semibold text-white mb-4">Add Files to Dataset</h3>
+            <div className="mb-4">
+              <label className="block text-sm text-slate-300 mb-2">Add New Label</label>
+              <div className="flex gap-2"><input type="text" value={newLabel} onChange={(e) => setNewLabel(e.target.value)} placeholder="New label name" className="flex-1 px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white placeholder-slate-500" /><button onClick={handleAddLabel} className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg">Add</button></div>
+              <div className="flex flex-wrap gap-2 mt-2">{availableLabels.map(l => <span key={l} className="px-2 py-1 bg-indigo-500/20 text-indigo-300 rounded text-sm">{l}</span>)}</div>
             </div>
-          </motion.div>
-        )}
-
-        {/* Completed Models */}
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.4 }}
-        >
-          <h2 className="text-2xl font-semibold text-white mb-4">Trained Models</h2>
-          <div className="bg-white/10 backdrop-blur-md rounded-xl border border-white/20 overflow-hidden">
-            <table className="w-full text-sm text-left text-gray-300">
-              <thead className="text-xs uppercase bg-black/20">
-                <tr>
-                  <th className="px-6 py-3">Model Name</th>
-                  <th className="px-6 py-3">Architecture</th>
-                  <th className="px-6 py-3">Accuracy</th>
-                  <th className="px-6 py-3">Size</th>
-                  <th className="px-6 py-3">Device</th>
-                  <th className="px-6 py-3">Created</th>
-                  <th className="px-6 py-3">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {completedModels.map((model, index) => (
-                  <tr key={model.model_id} className="border-b border-white/10">
-                    <td className="px-6 py-4 font-medium text-white">{model.model_name}</td>
-                    <td className="px-6 py-4">{model.architecture}</td>
-                    <td className="px-6 py-4">
-                      <span className="text-green-400 font-medium">
-                        {model.accuracy ? `${(model.accuracy * 100).toFixed(2)}%` : 'N/A'}
-                      </span>
-                    </td>
-                    <td className="px-6 py-4">{model.size_mb?.toFixed(1)} MB</td>
-                    <td className="px-6 py-4">{model.device_id || model.num_clients ? `${model.num_clients} devices` : 'N/A'}</td>
-                    <td className="px-6 py-4">
-                      {model.created_at ? new Date(model.created_at).toLocaleDateString() : 'N/A'}
-                    </td>
-                    <td className="px-6 py-4">
-                      <button className="text-blue-400 hover:text-blue-300 mr-3">Deploy</button>
-                      <button className="text-purple-400 hover:text-purple-300">Download</button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            {completedModels.length === 0 && (
-              <div className="text-center py-8 text-gray-400">
-                No trained models yet. Start a training job to create your first model.
-              </div>
-            )}
+            <div className="flex-1 overflow-y-auto mb-4">
+              <label className="block text-sm text-slate-300 mb-2">Select Files & Assign Labels</label>
+              {cloudFiles.length === 0 ? <p className="text-slate-400 text-center py-4">No files in cloud storage</p> : (
+                <div className="space-y-2">
+                  {cloudFiles.map(file => (
+                    <div key={file.fileId} className={`flex items-center justify-between p-3 rounded-lg border ${selectedFiles.has(file.fileId) ? 'border-indigo-500 bg-indigo-500/10' : 'border-slate-700 bg-slate-800/50'}`}>
+                      <div className="flex items-center gap-3"><input type="checkbox" checked={selectedFiles.has(file.fileId)} onChange={() => toggleFileSelection(file.fileId, availableLabels[0])} className="w-4 h-4" /><div><p className="text-white text-sm">{file.filename}</p><p className="text-slate-500 text-xs">{(file.size / 1024).toFixed(1)} KB</p></div></div>
+                      {selectedFiles.has(file.fileId) && <select value={selectedFiles.get(file.fileId)} onChange={(e) => { const m = new Map(selectedFiles); m.set(file.fileId, e.target.value); setSelectedFiles(m); }} className="px-2 py-1 bg-slate-800 border border-slate-600 rounded text-sm text-white">{availableLabels.map(l => <option key={l} value={l}>{l}</option>)}</select>}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div className="flex gap-3">
+              <button onClick={handleAddFilesToDataset} disabled={selectedFiles.size === 0} className="flex-1 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-600 text-white rounded-lg font-medium">Add {selectedFiles.size} Files</button>
+              <button onClick={() => { setShowAddFiles(false); setSelectedFiles(new Map()); }} className="flex-1 px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg font-medium">Cancel</button>
+            </div>
           </div>
-        </motion.div>
+        </div>
+      )}
 
-        {/* Training Setup Modal */}
-        {showSetupModal && (
-          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
-            <motion.div
-              initial={{ opacity: 0, scale: 0.9 }}
-              animate={{ opacity: 1, scale: 1 }}
-              className="bg-gray-900 rounded-xl p-6 max-w-md w-full mx-4 border border-white/20"
-            >
-              <h3 className="text-xl font-semibold text-white mb-4">Setup Training Job</h3>
-              
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-sm text-gray-300 mb-1">Model Architecture</label>
-                  <select
-                    value={trainingConfig.model}
-                    onChange={(e) => setTrainingConfig({...trainingConfig, model: e.target.value})}
-                    className="w-full px-3 py-2 bg-white/10 border border-white/20 rounded-lg text-white"
-                  >
-                    <option value="cnn">CNN</option>
-                    <option value="rnn">RNN</option>
-                    <option value="lstm">LSTM</option>
-                    <option value="transformer">Transformer</option>
-                    <option value="linear">Linear</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-sm text-gray-300 mb-1">Data Source</label>
-                  <select
-                    value={trainingConfig.data}
-                    onChange={(e) => setTrainingConfig({...trainingConfig, data: e.target.value})}
-                    className="w-full px-3 py-2 bg-white/10 border border-white/20 rounded-lg text-white"
-                  >
-                    <option value="sensors">Sensor Data</option>
-                    <option value="images">Images</option>
-                    <option value="audio">Audio</option>
-                    <option value="text">Text</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-sm text-gray-300 mb-1">Training Mode</label>
-                  <select
-                    value={trainingConfig.mode}
-                    onChange={(e) => setTrainingConfig({...trainingConfig, mode: e.target.value})}
-                    className="w-full px-3 py-2 bg-white/10 border border-white/20 rounded-lg text-white"
-                  >
-                    <option value="on-device">On Device</option>
-                    <option value="cloud">Cloud</option>
-                    <option value="edge">Edge</option>
-                    <option value="federated">Federated</option>
-                  </select>
-                </div>
-
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm text-gray-300 mb-1">Epochs</label>
-                    <input
-                      type="number"
-                      value={trainingConfig.epochs}
-                      onChange={(e) => setTrainingConfig({...trainingConfig, epochs: parseInt(e.target.value)})}
-                      className="w-full px-3 py-2 bg-white/10 border border-white/20 rounded-lg text-white"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm text-gray-300 mb-1">Batch Size</label>
-                    <input
-                      type="number"
-                      value={trainingConfig.batch_size}
-                      onChange={(e) => setTrainingConfig({...trainingConfig, batch_size: parseInt(e.target.value)})}
-                      className="w-full px-3 py-2 bg-white/10 border border-white/20 rounded-lg text-white"
-                    />
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-sm text-gray-300 mb-1">Learning Rate</label>
-                  <input
-                    type="number"
-                    step="0.0001"
-                    value={trainingConfig.learning_rate}
-                    onChange={(e) => setTrainingConfig({...trainingConfig, learning_rate: parseFloat(e.target.value)})}
-                    className="w-full px-3 py-2 bg-white/10 border border-white/20 rounded-lg text-white"
-                  />
-                </div>
+      {/* Training Config Modal */}
+      {showTrainingConfig && selectedDataset && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
+          <div className="bg-slate-900 rounded-xl p-6 w-full max-w-md border border-slate-700">
+            <h3 className="text-xl font-semibold text-white mb-4">Configure Training</h3>
+            <p className="text-slate-400 text-sm mb-4">Dataset: <span className="text-white">{selectedDataset.name}</span> ({selectedDataset.files?.length} files)</p>
+            <div className="space-y-4">
+              <div><label className="block text-sm text-slate-300 mb-1">Model Architecture</label><select value={trainingConfig.model_type} onChange={(e) => setTrainingConfig({ ...trainingConfig, model_type: e.target.value })} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white"><option value="cnn">CNN</option><option value="lstm">LSTM</option><option value="transformer">Transformer</option><option value="linear">Linear</option></select></div>
+              <div className="grid grid-cols-2 gap-4">
+                <div><label className="block text-sm text-slate-300 mb-1">Epochs</label><input type="number" value={trainingConfig.epochs} onChange={(e) => setTrainingConfig({ ...trainingConfig, epochs: parseInt(e.target.value) || 10 })} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white" /></div>
+                <div><label className="block text-sm text-slate-300 mb-1">Batch Size</label><input type="number" value={trainingConfig.batch_size} onChange={(e) => setTrainingConfig({ ...trainingConfig, batch_size: parseInt(e.target.value) || 32 })} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white" /></div>
               </div>
-
-              <div className="flex gap-3 mt-6">
-                <button
-                  onClick={handleStartTraining}
-                  className="flex-1 px-4 py-2 bg-gradient-to-r from-blue-500 to-purple-500 hover:from-blue-600 hover:to-purple-600 text-white rounded-lg font-medium transition-all"
-                >
-                  Start Training
-                </button>
-                <button
-                  onClick={() => setShowSetupModal(false)}
-                  className="flex-1 px-4 py-2 bg-white/10 hover:bg-white/20 text-white rounded-lg font-medium transition-colors border border-white/20"
-                >
-                  Cancel
-                </button>
-              </div>
-            </motion.div>
+              <div><label className="block text-sm text-slate-300 mb-1">Learning Rate</label><input type="number" step="0.0001" value={trainingConfig.learning_rate} onChange={(e) => setTrainingConfig({ ...trainingConfig, learning_rate: parseFloat(e.target.value) || 0.001 })} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white" /></div>
+              <div><label className="block text-sm text-slate-300 mb-1">Model Name (optional)</label><input type="text" value={trainingConfig.model_name} onChange={(e) => setTrainingConfig({ ...trainingConfig, model_name: e.target.value })} placeholder="Auto-generated if empty" className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white placeholder-slate-500" /></div>
+            </div>
+            <div className="flex gap-3 mt-6">
+              <button onClick={handleStartTraining} className="flex-1 px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg font-medium flex items-center justify-center gap-2"><Play className="w-4 h-4" /> Start Training</button>
+              <button onClick={() => setShowTrainingConfig(false)} className="flex-1 px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg font-medium">Cancel</button>
+            </div>
           </div>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 }
