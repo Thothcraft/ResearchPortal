@@ -39,7 +39,7 @@ const STATUS_CONFIG: Record<string, { color: string; bg: string; icon: React.Ele
 };
 
 export default function TrainingPage() {
-  const { get, post, del, put } = useApi();
+  const { get, post, delete: del, put } = useApi();
   const [selectedMode, setSelectedMode] = useState<TrainingMode>('cloud');
   const [datasets, setDatasets] = useState<Dataset[]>([]);
   const [selectedDataset, setSelectedDataset] = useState<Dataset | null>(null);
@@ -59,7 +59,7 @@ export default function TrainingPage() {
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'datasets' | 'jobs' | 'models'>('datasets');
 
-  const fetchData = useCallback(async () => {
+  const fetchData = async () => {
     try {
       setLoading(true);
       setError(null);
@@ -78,16 +78,19 @@ export default function TrainingPage() {
     } finally {
       setLoading(false);
     }
-  }, [get]);
+  };
 
   useEffect(() => {
     fetchData();
     const interval = setInterval(async () => {
-      const jobsRes = await get('/datasets/train/jobs').catch(() => null);
-      if (jobsRes?.jobs) setTrainingJobs(jobsRes.jobs);
-    }, 3000);
+      try {
+        const jobsRes = await get('/datasets/train/jobs').catch(() => null);
+        if (jobsRes?.jobs) setTrainingJobs(jobsRes.jobs);
+      } catch {}
+    }, 5000);
     return () => clearInterval(interval);
-  }, [fetchData, get]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleCreateDataset = async () => {
     if (!newDatasetName.trim()) return;
