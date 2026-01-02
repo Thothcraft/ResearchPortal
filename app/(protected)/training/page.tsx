@@ -67,7 +67,7 @@ export default function TrainingPage() {
         get('/datasets/list').catch(() => null),
         get('/datasets/train/jobs').catch(() => null),
         get('/datasets/models').catch(() => null),
-        get('/file/list').catch(() => null),
+        get('/file/files').catch(() => null),
       ]);
       if (datasetsRes?.datasets) setDatasets(datasetsRes.datasets);
       if (jobsRes?.jobs) setTrainingJobs(jobsRes.jobs);

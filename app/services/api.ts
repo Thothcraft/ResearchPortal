@@ -423,7 +423,7 @@ class ApiService {
   }
 
   async listFiles() {
-    const response = await api.get('/file/list');
+    const response = await api.get('/file/files');
     return response.data;
   }
 
