@@ -251,15 +251,46 @@ export default function TrainingPage() {
                         <div className="text-center py-8 bg-slate-900/50 rounded-lg border border-slate-700"><FileText className="w-10 h-10 text-slate-500 mx-auto mb-2" /><p className="text-slate-400 text-sm">No files in this dataset</p><button onClick={() => setShowAddFiles(true)} className="mt-2 text-indigo-400 hover:text-indigo-300 text-sm">Add files from cloud storage</button></div>
                       ) : (
                         <div className="space-y-2 max-h-96 overflow-y-auto">
-                          {selectedDataset.files.map(file => (
-                            <div key={file.id} className="flex items-center justify-between p-3 bg-slate-900/50 rounded-lg border border-slate-700">
-                              <div className="flex items-center gap-3"><FileText className="w-5 h-5 text-slate-400" /><div><p className="text-white text-sm font-medium">{file.filename}</p><p className="text-slate-500 text-xs">{file.size ? `${(file.size / 1024).toFixed(1)} KB` : ''}</p></div></div>
-                              <div className="flex items-center gap-2">
-                                <select value={file.label} onChange={(e) => handleUpdateLabel(file.file_id, e.target.value)} className="px-2 py-1 bg-slate-800 border border-slate-600 rounded text-sm text-white">{availableLabels.map(l => <option key={l} value={l}>{l}</option>)}</select>
-                                <button onClick={() => handleRemoveFile(file.file_id)} className="p-1 text-red-400 hover:text-red-300"><Trash2 className="w-4 h-4" /></button>
+                          {(() => {
+                            // Group files by filename
+                            const groupedFiles: Record<string, DatasetFile[]> = selectedDataset.files.reduce((acc, file: DatasetFile) => {
+                              if (!acc[file.filename]) acc[file.filename] = [];
+                              acc[file.filename].push(file);
+                              return acc;
+                            }, {} as Record<string, DatasetFile[]>);
+                            
+                            return Object.entries(groupedFiles).map(([filename, files]: [string, DatasetFile[]]) => (
+                              <div key={filename} className="p-3 bg-slate-900/50 rounded-lg border border-slate-700">
+                                <div className="flex items-center justify-between mb-2">
+                                  <div className="flex items-center gap-3">
+                                    <FileText className="w-5 h-5 text-slate-400" />
+                                    <div>
+                                      <p className="text-white text-sm font-medium">{filename}</p>
+                                      <p className="text-slate-500 text-xs">
+                                        {files[0].size ? `${(files[0].size / 1024).toFixed(1)} KB` : ''}
+                                        {files.length > 1 && <span className="ml-2 text-indigo-400">({files.length} entries with different labels)</span>}
+                                      </p>
+                                    </div>
+                                  </div>
+                                </div>
+                                <div className="space-y-1">
+                                  {files.map((file: DatasetFile) => (
+                                    <div key={file.id} className="flex items-center justify-between pl-8">
+                                      <span className="text-slate-400 text-xs">Label:</span>
+                                      <div className="flex items-center gap-2">
+                                        <select value={file.label} onChange={(e) => handleUpdateLabel(file.file_id, e.target.value)} className="px-2 py-1 bg-slate-800 border border-slate-600 rounded text-xs text-white">
+                                          {availableLabels.map(l => <option key={l} value={l}>{l}</option>)}
+                                        </select>
+                                        <button onClick={() => handleRemoveFile(file.file_id)} className="p-1 text-red-400 hover:text-red-300">
+                                          <Trash2 className="w-3 h-3" />
+                                        </button>
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
                               </div>
-                            </div>
-                          ))}
+                            ));
+                          })()}
                         </div>
                       )}
                     </div>
