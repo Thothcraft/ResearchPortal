@@ -21,6 +21,7 @@ type Dataset = {
 };
 type DatasetFile = { id: number; file_id: number; filename: string; label: string; size?: number };
 type CloudFile = { file_id: number; filename: string; size: number; content_type: string; uploaded_at: string };
+type ModelOption = { value: string; label: string; description: string; supported_data: string[] };
 type TrainingJob = {
   job_id: string; dataset_id: number; dataset_name: string; model_type: string;
   training_mode: string; status: string; current_epoch: number; total_epochs: number;
@@ -33,6 +34,63 @@ type TrainedModel = { id: number; job_id: string; name: string; architecture: st
 const STATUS_CONFIG: Record<string, { color: string; bg: string; icon: React.ElementType }> = {
   pending: { color: 'text-yellow-400', bg: 'bg-yellow-500/20', icon: Clock },
   running: { color: 'text-blue-400', bg: 'bg-blue-500/20', icon: Loader2 },
+};
+
+// Model configurations for different data types
+const MODEL_OPTIONS: ModelOption[] = [
+  {
+    value: 'imu_classifier',
+    label: 'IMU Classifier',
+    description: 'CNN+LSTM hybrid for IMU time-series data (accel, gyro, mag)',
+    supported_data: ['imu']
+  },
+  {
+    value: 'cnn',
+    label: 'CNN',
+    description: 'Convolutional Neural Network for image data',
+    supported_data: ['img', 'vid']
+  },
+  {
+    value: 'lstm',
+    label: 'LSTM',
+    description: 'Long Short-Term Memory for sequential data',
+    supported_data: ['imu', 'csi', 'mfcw']
+  },
+  {
+    value: 'transformer',
+    label: 'Transformer',
+    description: 'Attention-based model for sequential data',
+    supported_data: ['imu', 'csi', 'mfcw']
+  },
+  {
+    value: 'linear',
+    label: 'Linear',
+    description: 'Simple linear model for basic classification',
+    supported_data: ['imu', 'csi', 'mfcw', 'img', 'vid']
+  }
+];
+
+// Detect data type from filename
+function detectDataType(filename: string): string {
+  const ext = filename.split('.').pop()?.toLowerCase();
+  const name = filename.toLowerCase();
+  
+  // Check extension first
+  if (ext === 'json') {
+    if (name.includes('imu')) return 'imu';
+    if (name.includes('csi')) return 'csi';
+    if (name.includes('mfcw')) return 'mfcw';
+  }
+  
+  // Check common image/video extensions
+  if (['jpg', 'jpeg', 'png', 'gif', 'bmp', 'tiff', 'webp'].includes(ext || '')) return 'img';
+  if (['mp4', 'avi', 'mov', 'mkv', 'webm'].includes(ext || '')) return 'vid';
+  
+  // Default to other
+  return 'other';
+};
+
+const TRAINING_STATUS_CONFIG: Record<string, { color: string; bg: string; icon: React.ElementType }> = {
   completed: { color: 'text-green-400', bg: 'bg-green-500/20', icon: CheckCircle },
   failed: { color: 'text-red-400', bg: 'bg-red-500/20', icon: AlertCircle },
   cancelled: { color: 'text-slate-400', bg: 'bg-slate-500/20', icon: XCircle },
@@ -92,6 +150,32 @@ export default function TrainingPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Get available models based on dataset file types
+  const getAvailableModels = useCallback((dataset: Dataset | null): ModelOption[] => {
+    if (!dataset || !dataset.files || dataset.files.length === 0) {
+      return MODEL_OPTIONS.filter(m => m.supported_data.includes('other'));
+    }
+
+    // Detect data types from files
+    const dataTypes = new Set<string>();
+    dataset.files.forEach(file => {
+      const dataType = detectDataType(file.filename);
+      dataTypes.add(dataType);
+    });
+
+    // Filter models that support any of the detected data types
+    const availableModels = MODEL_OPTIONS.filter(model => 
+      model.supported_data.some(type => dataTypes.has(type))
+    );
+
+    // If no specific models found, return general ones
+    if (availableModels.length === 0) {
+      return MODEL_OPTIONS.filter(m => m.supported_data.includes('other'));
+    }
+
+    return availableModels;
+  }, []);
+
   const handleCreateDataset = async () => {
     if (!newDatasetName.trim()) return;
     try {
@@ -103,7 +187,22 @@ export default function TrainingPage() {
   const handleSelectDataset = async (dataset: Dataset) => {
     try {
       const res = await get(`/datasets/${dataset.id}`);
-      if (res?.dataset) setSelectedDataset(res.dataset);
+      if (res?.dataset) {
+        setSelectedDataset(res.dataset);
+        // Update available labels based on dataset
+        const datasetLabels = res.dataset.labels || [];
+        if (datasetLabels.length > 0) {
+          setAvailableLabels(datasetLabels);
+        }
+        // Update training config with first available model
+        const availableModels = getAvailableModels(res.dataset);
+        if (availableModels.length > 0) {
+          setTrainingConfig(prev => ({ 
+            ...prev, 
+            model_type: availableModels[0].value 
+          }));
+        }
+      }
     } catch { setError('Failed to load dataset'); }
   };
 
@@ -417,7 +516,23 @@ export default function TrainingPage() {
             <h3 className="text-xl font-semibold text-white mb-4">Configure Training</h3>
             <p className="text-slate-400 text-sm mb-4">Dataset: <span className="text-white">{selectedDataset.name}</span> ({selectedDataset.files?.length} files)</p>
             <div className="space-y-4">
-              <div><label className="block text-sm text-slate-300 mb-1">Model Architecture</label><select value={trainingConfig.model_type} onChange={(e) => setTrainingConfig({ ...trainingConfig, model_type: e.target.value })} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white"><option value="cnn">CNN</option><option value="lstm">LSTM</option><option value="transformer">Transformer</option><option value="linear">Linear</option></select></div>
+              <div>
+                <label className="block text-sm text-slate-300 mb-1">Model Architecture</label>
+                <select 
+                  value={trainingConfig.model_type} 
+                  onChange={(e) => setTrainingConfig({ ...trainingConfig, model_type: e.target.value })} 
+                  className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white"
+                >
+                  {getAvailableModels(selectedDataset).map(model => (
+                    <option key={model.value} value={model.value}>
+                      {model.label}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-xs text-slate-500 mt-1">
+                  {getAvailableModels(selectedDataset).find(m => m.value === trainingConfig.model_type)?.description}
+                </p>
+              </div>
               <div className="grid grid-cols-2 gap-4">
                 <div><label className="block text-sm text-slate-300 mb-1">Epochs</label><input type="number" value={trainingConfig.epochs} onChange={(e) => setTrainingConfig({ ...trainingConfig, epochs: parseInt(e.target.value) || 10 })} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white" /></div>
                 <div><label className="block text-sm text-slate-300 mb-1">Batch Size</label><input type="number" value={trainingConfig.batch_size} onChange={(e) => setTrainingConfig({ ...trainingConfig, batch_size: parseInt(e.target.value) || 32 })} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white" /></div>
