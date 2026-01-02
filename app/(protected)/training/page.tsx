@@ -43,30 +43,6 @@ const MODEL_OPTIONS: ModelOption[] = [
     label: 'IMU Classifier',
     description: 'CNN+LSTM hybrid for IMU time-series data (accel, gyro, mag)',
     supported_data: ['imu']
-  },
-  {
-    value: 'cnn',
-    label: 'CNN',
-    description: 'Convolutional Neural Network for image data',
-    supported_data: ['img', 'vid']
-  },
-  {
-    value: 'lstm',
-    label: 'LSTM',
-    description: 'Long Short-Term Memory for sequential data',
-    supported_data: ['imu', 'csi', 'mfcw']
-  },
-  {
-    value: 'transformer',
-    label: 'Transformer',
-    description: 'Attention-based model for sequential data',
-    supported_data: ['imu', 'csi', 'mfcw']
-  },
-  {
-    value: 'linear',
-    label: 'Linear',
-    description: 'Simple linear model for basic classification',
-    supported_data: ['imu', 'csi', 'mfcw', 'img', 'vid']
   }
 ];
 
