@@ -87,7 +87,7 @@ export default function TrainingPage() {
         const jobsRes = await get('/datasets/train/jobs').catch(() => null);
         if (jobsRes?.jobs) setTrainingJobs(jobsRes.jobs);
       } catch {}
-    }, 5000);
+    }, 10000); // Poll every 10 seconds instead of 5
     return () => clearInterval(interval);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
