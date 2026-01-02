@@ -20,7 +20,7 @@ type Dataset = {
   files?: DatasetFile[];
 };
 type DatasetFile = { id: number; file_id: number; filename: string; label: string; size?: number };
-type CloudFile = { fileId: number; filename: string; size: number; content_type: string; uploaded_at: string };
+type CloudFile = { file_id: number; filename: string; size: number; content_type: string; uploaded_at: string };
 type TrainingJob = {
   job_id: string; dataset_id: number; dataset_name: string; model_type: string;
   training_mode: string; status: string; current_epoch: number; total_epochs: number;
@@ -363,9 +363,9 @@ export default function TrainingPage() {
               {cloudFiles.length === 0 ? <p className="text-slate-400 text-center py-4">No files in cloud storage</p> : (
                 <div className="space-y-2">
                   {cloudFiles.map(file => (
-                    <div key={file.fileId} className={`flex items-center justify-between p-3 rounded-lg border ${selectedFiles.has(file.fileId) ? 'border-indigo-500 bg-indigo-500/10' : 'border-slate-700 bg-slate-800/50'}`}>
-                      <div className="flex items-center gap-3"><input type="checkbox" checked={selectedFiles.has(file.fileId)} onChange={() => toggleFileSelection(file.fileId, availableLabels[0])} className="w-4 h-4" /><div><p className="text-white text-sm">{file.filename}</p><p className="text-slate-500 text-xs">{(file.size / 1024).toFixed(1)} KB</p></div></div>
-                      {selectedFiles.has(file.fileId) && <select value={selectedFiles.get(file.fileId)} onChange={(e) => { const m = new Map(selectedFiles); m.set(file.fileId, e.target.value); setSelectedFiles(m); }} className="px-2 py-1 bg-slate-800 border border-slate-600 rounded text-sm text-white">{availableLabels.map(l => <option key={l} value={l}>{l}</option>)}</select>}
+                    <div key={file.file_id} className={`flex items-center justify-between p-3 rounded-lg border ${selectedFiles.has(file.file_id) ? 'border-indigo-500 bg-indigo-500/10' : 'border-slate-700 bg-slate-800/50'}`}>
+                      <div className="flex items-center gap-3"><input type="checkbox" checked={selectedFiles.has(file.file_id)} onChange={() => toggleFileSelection(file.file_id, availableLabels[0])} className="w-4 h-4" /><div><p className="text-white text-sm">{file.filename}</p><p className="text-slate-500 text-xs">{(file.size / 1024).toFixed(1)} KB</p></div></div>
+                      {selectedFiles.has(file.file_id) && <select value={selectedFiles.get(file.file_id)} onChange={(e) => { const m = new Map(selectedFiles); m.set(file.file_id, e.target.value); setSelectedFiles(m); }} className="px-2 py-1 bg-slate-800 border border-slate-600 rounded text-sm text-white">{availableLabels.map(l => <option key={l} value={l}>{l}</option>)}</select>}
                     </div>
                   ))}
                 </div>
