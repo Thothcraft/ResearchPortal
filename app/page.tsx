@@ -62,7 +62,7 @@ export default function Home() {
           </p>
           <div className="mt-10 flex justify-center space-x-4">
             <Link 
-              href="/auth/signup" 
+              href="/auth" 
               className="px-8 py-3 border border-transparent text-base font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 md:py-4 md:text-lg md:px-10 transition duration-150 ease-in-out"
             >
               Get Started
@@ -141,7 +141,7 @@ export default function Home() {
             Join researchers and data scientists who are already using our platform.
           </p>
           <Link
-            href="/auth/signup"
+            href="/auth"
             className="mt-8 w-full inline-flex items-center justify-center px-5 py-3 border border-transparent text-base font-medium rounded-md text-indigo-600 bg-white hover:bg-indigo-50 sm:w-auto"
           >
             Sign up for free
