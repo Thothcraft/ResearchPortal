@@ -496,6 +496,11 @@ class ApiService {
     return response.data;
   }
 
+  async deleteCloudTrainingJob(jobId: string) {
+    const response = await api.delete(`/datasets/train/jobs/${jobId}`);
+    return response.data;
+  }
+
   async listCloudTrainedModels() {
     const response = await api.get('/datasets/models');
     return response.data;

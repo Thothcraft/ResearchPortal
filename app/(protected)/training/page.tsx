@@ -213,6 +213,15 @@ export default function TrainingPage() {
     try { await post(`/datasets/train/jobs/${jobId}/cancel`, {}); fetchData(); } catch { setError('Failed to cancel job'); }
   };
 
+  const handleDeleteJob = async (jobId: string) => {
+    try {
+      await del(`/datasets/train/jobs/${jobId}`);
+      fetchData();
+    } catch {
+      setError('Failed to delete job');
+    }
+  };
+
   const handleDeleteDataset = async (datasetId: number) => {
     try { await del(`/datasets/${datasetId}`); setSelectedDataset(null); fetchData(); } catch { setError('Failed to delete dataset'); }
   };
@@ -353,7 +362,7 @@ export default function TrainingPage() {
                                     <div key={file.id} className="flex items-center justify-between pl-8">
                                       <span className="text-slate-400 text-xs">Label:</span>
                                       <div className="flex items-center gap-2">
-                                        <select value={file.label} onChange={(e) => handleUpdateLabel(file.file_id, e.target.value)} className="px-2 py-1 bg-slate-800 border border-slate-600 rounded text-xs text-white">
+                                        <select value={file.label} onChange={(e) => handleUpdateLabel(file.file_id, e.target.value)} className="px-2 py-1 bg-slate-800 border border-slate-600 rounded text-sm text-white">
                                           {availableLabels.map(l => <option key={l} value={l}>{l}</option>)}
                                         </select>
                                         <button onClick={() => handleRemoveFile(file.file_id)} className="p-1 text-red-400 hover:text-red-300">
@@ -392,7 +401,14 @@ export default function TrainingPage() {
                       <div><h3 className="text-lg font-semibold text-white">{job.dataset_name || 'Training Job'}</h3><p className="text-slate-400 text-sm">{job.model_type.toUpperCase()} • {job.started_at ? new Date(job.started_at).toLocaleString() : 'Pending'}</p></div>
                       <div className="flex items-center gap-3">
                         <span className={`flex items-center gap-1 px-3 py-1 rounded-full text-sm ${sc.bg} ${sc.color}`}><Icon className={`w-4 h-4 ${job.status === 'running' ? 'animate-spin' : ''}`} />{job.status}</span>
-                        {['pending', 'running'].includes(job.status) && <button onClick={() => handleCancelJob(job.job_id)} className="p-2 text-red-400 hover:bg-red-500/10 rounded-lg"><XCircle className="w-5 h-5" /></button>}
+                        {['pending', 'running'].includes(job.status) && (
+                          <button onClick={() => handleCancelJob(job.job_id)} className="p-2 text-red-400 hover:bg-red-500/10 rounded-lg">
+                            <XCircle className="w-5 h-5" />
+                          </button>
+                        )}
+                        <button onClick={() => handleDeleteJob(job.job_id)} className="p-2 text-red-400 hover:bg-red-500/10 rounded-lg">
+                          <Trash2 className="w-5 h-5" />
+                        </button>
                       </div>
                     </div>
                     <div className="mb-4"><div className="flex justify-between text-sm text-slate-400 mb-1"><span>Epoch {job.current_epoch}/{job.total_epochs}</span><span>{prog.toFixed(0)}%</span></div><div className="w-full bg-slate-700 rounded-full h-2"><div className="bg-indigo-500 h-2 rounded-full transition-all" style={{ width: `${prog}%` }} /></div></div>
