@@ -248,6 +248,27 @@ export default function TrainingPage() {
     } catch { setError('Failed to rename model'); }
   };
 
+  const handleDownloadModel = async (modelId: number, modelName: string) => {
+    try {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/datasets/models/${modelId}/download`, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        }
+      });
+      if (!response.ok) throw new Error('Download failed');
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${modelName}.pth`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+    } catch { setError('Failed to download model'); }
+  };
+
   const handleAddLabel = () => {
     if (newLabel.trim() && !availableLabels.includes(newLabel.trim())) { setAvailableLabels([...availableLabels, newLabel.trim()]); setNewLabel(''); }
   };
@@ -468,7 +489,7 @@ export default function TrainingPage() {
                           <td className="px-6 py-4"><span className="text-green-400 font-medium">{m.accuracy !== null ? `${(m.accuracy * 100).toFixed(2)}%` : 'N/A'}</span></td>
                           <td className="px-6 py-4"><span className="text-slate-300">{m.size_mb !== null ? `${m.size_mb.toFixed(1)} MB` : 'N/A'}</span></td>
                           <td className="px-6 py-4"><span className="text-slate-400 text-sm">{new Date(m.created_at).toLocaleDateString()}</span></td>
-                          <td className="px-6 py-4"><div className="flex gap-2"><button onClick={() => { setRenamingModel(m); setNewModelName(m.name); }} className="flex items-center gap-1 px-2 py-1 text-blue-400 hover:bg-blue-500/10 rounded text-sm"><Edit2 className="w-4 h-4" /> Rename</button><button onClick={() => handleDeleteModel(m.id)} className="flex items-center gap-1 px-2 py-1 text-red-400 hover:bg-red-500/10 rounded text-sm"><Trash2 className="w-4 h-4" /> Delete</button></div></td>
+                          <td className="px-6 py-4"><div className="flex gap-2"><button onClick={() => handleDownloadModel(m.id, m.name)} className="flex items-center gap-1 px-2 py-1 text-purple-400 hover:bg-purple-500/10 rounded text-sm"><Download className="w-4 h-4" /> Download</button><button onClick={() => { setRenamingModel(m); setNewModelName(m.name); }} className="flex items-center gap-1 px-2 py-1 text-blue-400 hover:bg-blue-500/10 rounded text-sm"><Edit2 className="w-4 h-4" /> Rename</button><button onClick={() => handleDeleteModel(m.id)} className="flex items-center gap-1 px-2 py-1 text-red-400 hover:bg-red-500/10 rounded text-sm"><Trash2 className="w-4 h-4" /> Delete</button></div></td>
                         </tr>
                       ))}
                     </tbody>
