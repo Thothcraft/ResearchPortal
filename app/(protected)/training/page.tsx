@@ -5,7 +5,7 @@ import { useApi } from '@/hooks/useApi';
 import {
   Brain, Cloud, Smartphone, Network, Play, RefreshCw, Plus, Tag, Database,
   FileText, Trash2, ChevronRight, BarChart3, CheckCircle, Clock, AlertCircle,
-  Download, Rocket, Loader2, X, XCircle,
+  Download, Rocket, Loader2, X, XCircle, Edit2, TrendingUp,
 } from 'lucide-react';
 
 type TrainingMode = 'cloud' | 'on-device' | 'federated';
@@ -92,6 +92,9 @@ export default function TrainingPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'datasets' | 'jobs' | 'models'>('datasets');
+  const [renamingModel, setRenamingModel] = useState<TrainedModel | null>(null);
+  const [newModelName, setNewModelName] = useState('');
+  const [selectedJob, setSelectedJob] = useState<TrainingJob | null>(null);
 
   const fetchData = async () => {
     try {
@@ -228,6 +231,21 @@ export default function TrainingPage() {
 
   const handleDeleteDataset = async (datasetId: number) => {
     try { await del(`/datasets/${datasetId}`); setSelectedDataset(null); fetchData(); } catch { setError('Failed to delete dataset'); }
+  };
+
+  const handleDeleteModel = async (modelId: number) => {
+    if (!confirm('Are you sure you want to delete this model?')) return;
+    try { await del(`/datasets/models/${modelId}`); fetchData(); } catch { setError('Failed to delete model'); }
+  };
+
+  const handleRenameModel = async () => {
+    if (!renamingModel || !newModelName.trim()) return;
+    try {
+      await put(`/datasets/models/${renamingModel.id}/rename`, { name: newModelName.trim() });
+      setRenamingModel(null);
+      setNewModelName('');
+      fetchData();
+    } catch { setError('Failed to rename model'); }
   };
 
   const handleAddLabel = () => {
@@ -405,6 +423,11 @@ export default function TrainingPage() {
                       <div><h3 className="text-lg font-semibold text-white">{job.dataset_name || 'Training Job'}</h3><p className="text-slate-400 text-sm">{job.model_type.toUpperCase()} • {job.started_at ? new Date(job.started_at).toLocaleString() : 'Pending'}</p></div>
                       <div className="flex items-center gap-3">
                         <span className={`flex items-center gap-1 px-3 py-1 rounded-full text-sm ${sc.bg} ${sc.color}`}><Icon className={`w-4 h-4 ${job.status === 'running' ? 'animate-spin' : ''}`} />{job.status}</span>
+                        {job.status === 'completed' && (
+                          <button onClick={() => setSelectedJob(job)} className="p-2 text-blue-400 hover:bg-blue-500/10 rounded-lg">
+                            <TrendingUp className="w-5 h-5" />
+                          </button>
+                        )}
                         {['pending', 'running'].includes(job.status) && (
                           <button onClick={() => handleCancelJob(job.job_id)} className="p-2 text-red-400 hover:bg-red-500/10 rounded-lg">
                             <XCircle className="w-5 h-5" />
@@ -445,7 +468,7 @@ export default function TrainingPage() {
                           <td className="px-6 py-4"><span className="text-green-400 font-medium">{m.accuracy !== null ? `${(m.accuracy * 100).toFixed(2)}%` : 'N/A'}</span></td>
                           <td className="px-6 py-4"><span className="text-slate-300">{m.size_mb !== null ? `${m.size_mb.toFixed(1)} MB` : 'N/A'}</span></td>
                           <td className="px-6 py-4"><span className="text-slate-400 text-sm">{new Date(m.created_at).toLocaleDateString()}</span></td>
-                          <td className="px-6 py-4"><div className="flex gap-2"><button className="flex items-center gap-1 px-2 py-1 text-blue-400 hover:bg-blue-500/10 rounded text-sm"><Rocket className="w-4 h-4" /> Deploy</button><button className="flex items-center gap-1 px-2 py-1 text-purple-400 hover:bg-purple-500/10 rounded text-sm"><Download className="w-4 h-4" /> Download</button></div></td>
+                          <td className="px-6 py-4"><div className="flex gap-2"><button onClick={() => { setRenamingModel(m); setNewModelName(m.name); }} className="flex items-center gap-1 px-2 py-1 text-blue-400 hover:bg-blue-500/10 rounded text-sm"><Edit2 className="w-4 h-4" /> Rename</button><button onClick={() => handleDeleteModel(m.id)} className="flex items-center gap-1 px-2 py-1 text-red-400 hover:bg-red-500/10 rounded text-sm"><Trash2 className="w-4 h-4" /> Delete</button></div></td>
                         </tr>
                       ))}
                     </tbody>
@@ -542,14 +565,14 @@ export default function TrainingPage() {
                   className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white"
                 >
                   <option value="">None (use validation split)</option>
-                  {datasets.filter(d => d.id !== selectedDataset?.id).map(dataset => (
+                  {datasets.map(dataset => (
                     <option key={dataset.id} value={dataset.id}>
                       {dataset.name} ({dataset.file_count} files)
                     </option>
                   ))}
                 </select>
                 <p className="text-xs text-slate-500 mt-1">
-                  Separate dataset for final evaluation
+                  Separate dataset for final evaluation (can be same as training dataset)
                 </p>
               </div>
               <div><label className="block text-sm text-slate-300 mb-1">Model Name (optional)</label><input type="text" value={trainingConfig.model_name} onChange={(e) => setTrainingConfig({ ...trainingConfig, model_name: e.target.value })} placeholder="Auto-generated if empty" className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white placeholder-slate-500" /></div>
@@ -557,6 +580,113 @@ export default function TrainingPage() {
             <div className="flex gap-3 mt-6">
               <button onClick={handleStartTraining} className="flex-1 px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg font-medium flex items-center justify-center gap-2"><Play className="w-4 h-4" /> Start Training</button>
               <button onClick={() => setShowTrainingConfig(false)} className="flex-1 px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg font-medium">Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Rename Model Modal */}
+      {renamingModel && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
+          <div className="bg-slate-900 rounded-xl p-6 w-full max-w-md border border-slate-700">
+            <h3 className="text-xl font-semibold text-white mb-4">Rename Model</h3>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm text-slate-300 mb-1">Model Name</label>
+                <input type="text" value={newModelName} onChange={(e) => setNewModelName(e.target.value)} placeholder="Enter new name" className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white placeholder-slate-500" />
+              </div>
+            </div>
+            <div className="flex gap-3 mt-6">
+              <button onClick={handleRenameModel} disabled={!newModelName.trim()} className="flex-1 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-600 text-white rounded-lg font-medium">Rename</button>
+              <button onClick={() => { setRenamingModel(null); setNewModelName(''); }} className="flex-1 px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg font-medium">Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Job Details Modal */}
+      {selectedJob && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
+          <div className="bg-slate-900 rounded-xl p-6 w-full max-w-4xl border border-slate-700 max-h-[80vh] overflow-y-auto">
+            <div className="flex items-center justify-between mb-6">
+              <h3 className="text-xl font-semibold text-white">Training Job Details</h3>
+              <button onClick={() => setSelectedJob(null)} className="p-2 text-slate-400 hover:text-white">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="space-y-6">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="bg-slate-800/50 rounded-lg p-4">
+                  <p className="text-slate-400 text-sm mb-1">Dataset</p>
+                  <p className="text-white font-medium">{selectedJob.dataset_name}</p>
+                </div>
+                <div className="bg-slate-800/50 rounded-lg p-4">
+                  <p className="text-slate-400 text-sm mb-1">Model Type</p>
+                  <p className="text-white font-medium uppercase">{selectedJob.model_type}</p>
+                </div>
+                <div className="bg-slate-800/50 rounded-lg p-4">
+                  <p className="text-slate-400 text-sm mb-1">Total Epochs</p>
+                  <p className="text-white font-medium">{selectedJob.total_epochs}</p>
+                </div>
+                <div className="bg-slate-800/50 rounded-lg p-4">
+                  <p className="text-slate-400 text-sm mb-1">Best Validation Accuracy</p>
+                  <p className="text-green-400 font-medium">{selectedJob.best_metrics?.val_accuracy ? `${(selectedJob.best_metrics.val_accuracy * 100).toFixed(2)}%` : 'N/A'}</p>
+                </div>
+              </div>
+              {selectedJob.metrics && (selectedJob.metrics.accuracy || selectedJob.metrics.loss) && (
+                <div className="bg-slate-800/50 rounded-lg p-4">
+                  <h4 className="text-white font-medium mb-4">Training Progress</h4>
+                  <div className="grid grid-cols-2 gap-4">
+                    {selectedJob.metrics.accuracy && (
+                      <div>
+                        <p className="text-slate-400 text-sm mb-2">Accuracy per Epoch</p>
+                        <div className="space-y-1">
+                          {selectedJob.metrics.accuracy.map((acc, idx) => (
+                            <div key={idx} className="flex items-center justify-between text-sm">
+                              <span className="text-slate-400">Epoch {idx + 1}</span>
+                              <span className="text-white">{(acc * 100).toFixed(2)}%</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {selectedJob.metrics.loss && (
+                      <div>
+                        <p className="text-slate-400 text-sm mb-2">Loss per Epoch</p>
+                        <div className="space-y-1">
+                          {selectedJob.metrics.loss.map((loss, idx) => (
+                            <div key={idx} className="flex items-center justify-between text-sm">
+                              <span className="text-slate-400">Epoch {idx + 1}</span>
+                              <span className="text-white">{loss.toFixed(4)}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+              <div className="bg-slate-800/50 rounded-lg p-4">
+                <h4 className="text-white font-medium mb-4">Timeline</h4>
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-slate-400">Created</span>
+                    <span className="text-white">{new Date(selectedJob.created_at).toLocaleString()}</span>
+                  </div>
+                  {selectedJob.started_at && (
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-slate-400">Started</span>
+                      <span className="text-white">{new Date(selectedJob.started_at).toLocaleString()}</span>
+                    </div>
+                  )}
+                  {selectedJob.completed_at && (
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-slate-400">Completed</span>
+                      <span className="text-white">{new Date(selectedJob.completed_at).toLocaleString()}</span>
+                    </div>
+                  )}
+                </div>
+              </div>
             </div>
           </div>
         </div>
