@@ -103,6 +103,10 @@ export default function TrainingPage() {
         get('/datasets/models').catch(() => null),
         get('/file/files').catch(() => null),
       ]);
+      console.log('Datasets response:', datasetsRes);
+      console.log('Jobs response:', jobsRes);
+      console.log('Models response:', modelsRes);
+      console.log('Files response:', filesRes);
       if (datasetsRes?.datasets) setDatasets(datasetsRes.datasets);
       if (jobsRes?.jobs) setTrainingJobs(jobsRes.jobs);
       if (modelsRes?.models) setTrainedModels(modelsRes.models);
