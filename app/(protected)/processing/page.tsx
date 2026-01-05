@@ -146,6 +146,9 @@ export default function ProcessingPage() {
   const [newPipelineDesc, setNewPipelineDesc] = useState('');
   const [selectedBlock, setSelectedBlock] = useState<ProcessingBlock | null>(null);
   const [showBlockConfig, setShowBlockConfig] = useState(false);
+  const [draggedBlock, setDraggedBlock] = useState<string | null>(null);
+  const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
+  const [shapeErrors, setShapeErrors] = useState<Record<string, string>>({});
   const { get, post, put } = useApi();
 
   useEffect(() => {
@@ -179,28 +182,159 @@ export default function ProcessingPage() {
     }
   };
 
+  // Calculate input shape based on previous block in chain
+  const getInputShapeForNewBlock = (): number[] => {
+    if (blocks.length === 0) {
+      // Default input shapes by data type
+      const defaultShapes: Record<DataType, number[]> = {
+        imu: [1, 128, 6],      // batch, time_steps, channels (accel_xyz + gyro_xyz)
+        csi: [1, 256, 52],     // batch, subcarriers, antennas
+        mfcw: [1, 512, 8],     // batch, range_bins, doppler_bins
+        image: [1, 224, 224],  // batch, height, width
+        video: [1, 30, 224],   // batch, frames, height
+      };
+      return defaultShapes[selectedDataType];
+    }
+    // Use output shape of last block as input
+    return [...blocks[blocks.length - 1].outputShape];
+  };
+
+  // Validate shape compatibility between blocks
+  const validateShapes = (updatedBlocks: ProcessingBlock[]) => {
+    const errors: Record<string, string> = {};
+    
+    for (let i = 1; i < updatedBlocks.length; i++) {
+      const prevBlock = updatedBlocks[i - 1];
+      const currBlock = updatedBlocks[i];
+      
+      // Check if output shape of previous matches input shape of current
+      const prevOutput = prevBlock.outputShape;
+      const currInput = currBlock.inputShape;
+      
+      if (prevOutput.length !== currInput.length) {
+        errors[currBlock.id] = `Shape mismatch: expected ${prevOutput.length}D, got ${currInput.length}D`;
+      } else {
+        for (let j = 0; j < prevOutput.length; j++) {
+          if (prevOutput[j] !== currInput[j] && currInput[j] !== -1) { // -1 means any size
+            errors[currBlock.id] = `Shape mismatch at dim ${j}: expected ${prevOutput[j]}, got ${currInput[j]}`;
+            break;
+          }
+        }
+      }
+    }
+    
+    setShapeErrors(errors);
+    return Object.keys(errors).length === 0;
+  };
+
+  // Recalculate shapes through the pipeline
+  const recalculateShapes = (updatedBlocks: ProcessingBlock[]): ProcessingBlock[] => {
+    if (updatedBlocks.length === 0) return updatedBlocks;
+    
+    const result = [...updatedBlocks];
+    
+    // First block uses default input shape
+    const defaultShapes: Record<DataType, number[]> = {
+      imu: [1, 128, 6],
+      csi: [1, 256, 52],
+      mfcw: [1, 512, 8],
+      image: [1, 224, 224],
+      video: [1, 30, 224],
+    };
+    
+    for (let i = 0; i < result.length; i++) {
+      const block = result[i];
+      const blockDef = BLOCK_TYPES[block.type as keyof typeof BLOCK_TYPES];
+      
+      if (i === 0) {
+        block.inputShape = defaultShapes[block.dataType];
+      } else {
+        block.inputShape = [...result[i - 1].outputShape];
+      }
+      
+      // Apply transform based on block config
+      if (blockDef) {
+        block.outputShape = blockDef.transformShape(block.inputShape);
+      }
+    }
+    
+    validateShapes(result);
+    return result;
+  };
+
   const handleAddBlock = (blockType: string) => {
     const blockDef = BLOCK_TYPES[blockType as keyof typeof BLOCK_TYPES];
     if (!blockDef) return;
+
+    const inputShape = getInputShapeForNewBlock();
+    const outputShape = blockDef.transformShape(inputShape);
 
     const newBlock: ProcessingBlock = {
       id: `block_${Date.now()}`,
       type: blockType,
       name: blockDef.name,
       dataType: selectedDataType,
-      inputShape: selectedDataType === 'imu' ? [1, 128, 6] : [1, 256, 52],
-      outputShape: blockDef.transformShape(selectedDataType === 'imu' ? [1, 128, 6] : [1, 256, 52]),
+      inputShape,
+      outputShape,
       config: { ...blockDef.config },
-      position: { x: 100 + blocks.length * 50, y: 100 + blocks.length * 50 },
+      position: { x: 150 + blocks.length * 220, y: 200 },
     };
 
-    setBlocks([...blocks, newBlock]);
+    const updatedBlocks = [...blocks, newBlock];
+    setBlocks(recalculateShapes(updatedBlocks));
     setShowBlockMenu(false);
   };
 
   const handleDeleteBlock = (blockId: string) => {
-    setBlocks(blocks.filter(b => b.id !== blockId));
+    const updatedBlocks = blocks.filter(b => b.id !== blockId);
+    setBlocks(recalculateShapes(updatedBlocks));
     setConnections(connections.filter(c => c.from !== blockId && c.to !== blockId));
+  };
+
+  // Drag handlers for blocks
+  const handleBlockMouseDown = (e: React.MouseEvent, blockId: string) => {
+    const block = blocks.find(b => b.id === blockId);
+    if (!block) return;
+    
+    setDraggedBlock(blockId);
+    setDragOffset({
+      x: e.clientX - block.position.x,
+      y: e.clientY - block.position.y,
+    });
+  };
+
+  const handleMouseMove = (e: React.MouseEvent) => {
+    if (!draggedBlock) return;
+    
+    const updatedBlocks = blocks.map(block => {
+      if (block.id === draggedBlock) {
+        return {
+          ...block,
+          position: {
+            x: Math.max(0, e.clientX - dragOffset.x),
+            y: Math.max(0, e.clientY - dragOffset.y),
+          },
+        };
+      }
+      return block;
+    });
+    
+    setBlocks(updatedBlocks);
+  };
+
+  const handleMouseUp = () => {
+    setDraggedBlock(null);
+  };
+
+  // Update block config and recalculate shapes
+  const handleUpdateBlockConfig = (blockId: string, newConfig: Record<string, any>) => {
+    const updatedBlocks = blocks.map(block => {
+      if (block.id === blockId) {
+        return { ...block, config: newConfig };
+      }
+      return block;
+    });
+    setBlocks(recalculateShapes(updatedBlocks));
   };
 
   const handleSavePipeline = async () => {
@@ -343,55 +477,104 @@ export default function ProcessingPage() {
                 </div>
               </div>
 
+              {/* Shape Validation Summary */}
+              {Object.keys(shapeErrors).length > 0 && (
+                <div className="mb-4 p-3 bg-red-500/10 border border-red-500/50 rounded-lg">
+                  <p className="text-red-400 text-sm font-medium mb-1">⚠️ Shape Validation Errors</p>
+                  <p className="text-red-300 text-xs">Some blocks have incompatible shapes. Check the highlighted blocks below.</p>
+                </div>
+              )}
+
               {/* Pipeline Blocks */}
-              <div className="min-h-[400px] bg-slate-900/50 rounded-lg border border-slate-700 p-6 relative">
+              <div 
+                className="min-h-[400px] bg-slate-900/50 rounded-lg border border-slate-700 p-6 relative overflow-auto"
+                onMouseMove={handleMouseMove}
+                onMouseUp={handleMouseUp}
+                onMouseLeave={handleMouseUp}
+              >
                 {blocks.length === 0 ? (
                   <div className="absolute inset-0 flex items-center justify-center">
                     <div className="text-center">
                       <Workflow className="w-16 h-16 text-slate-500 mx-auto mb-4" />
                       <p className="text-slate-400">Add blocks to build your pipeline</p>
+                      <p className="text-slate-500 text-sm mt-2">Click "Add Block" to start building your pipeline</p>
                     </div>
                   </div>
                 ) : (
-                  <div className="flex flex-wrap gap-4">
+                  <div className="flex flex-wrap gap-4 items-start">
                     {blocks.map((block, index) => {
                       const Icon = getBlockIcon(block.type);
                       const colorClass = getBlockColor(block.type);
+                      const hasError = shapeErrors[block.id];
+                      const isDragging = draggedBlock === block.id;
+                      
                       return (
                         <div key={block.id} className="flex items-center gap-2">
-                          <div className={`relative p-4 rounded-xl border-2 ${colorClass} min-w-[200px]`}>
+                          <div 
+                            className={`relative p-4 rounded-xl border-2 min-w-[200px] transition-all cursor-move select-none ${
+                              hasError 
+                                ? 'border-red-500 bg-red-500/10' 
+                                : colorClass
+                            } ${isDragging ? 'opacity-70 scale-105 shadow-xl' : ''}`}
+                            onMouseDown={(e) => handleBlockMouseDown(e, block.id)}
+                          >
+                            {/* Block number badge */}
+                            <div className="absolute -top-3 -left-3 w-6 h-6 bg-slate-700 rounded-full flex items-center justify-center text-xs text-white font-bold">
+                              {index + 1}
+                            </div>
+                            
                             <button
-                              onClick={() => handleDeleteBlock(block.id)}
-                              className="absolute -top-2 -right-2 p-1 bg-red-500 hover:bg-red-600 text-white rounded-full"
+                              onClick={(e) => { e.stopPropagation(); handleDeleteBlock(block.id); }}
+                              className="absolute -top-2 -right-2 p-1 bg-red-500 hover:bg-red-600 text-white rounded-full z-10"
                             >
                               <X className="w-3 h-3" />
                             </button>
+                            
                             <div className="flex items-center gap-2 mb-3">
                               <Icon className="w-5 h-5" />
                               <span className="font-medium text-white">{block.name}</span>
                             </div>
+                            
                             <div className="space-y-1 text-xs">
-                              <div className="flex items-center justify-between">
+                              <div className="flex items-center justify-between gap-4">
                                 <span className="text-slate-400">Input:</span>
-                                <span className="text-white font-mono">{block.inputShape.join(' × ')}</span>
+                                <span className="text-white font-mono bg-slate-800/50 px-2 py-0.5 rounded">
+                                  ({block.inputShape.join(', ')})
+                                </span>
                               </div>
-                              <div className="flex items-center justify-between">
+                              <div className="flex items-center justify-between gap-4">
                                 <span className="text-slate-400">Output:</span>
-                                <span className="text-white font-mono">{block.outputShape.join(' × ')}</span>
+                                <span className="text-green-400 font-mono bg-slate-800/50 px-2 py-0.5 rounded">
+                                  ({block.outputShape.join(', ')})
+                                </span>
                               </div>
                             </div>
+                            
+                            {/* Shape error message */}
+                            {hasError && (
+                              <div className="mt-2 p-2 bg-red-500/20 rounded text-xs text-red-300">
+                                {hasError}
+                              </div>
+                            )}
+                            
                             <button
-                              onClick={() => {
+                              onClick={(e) => {
+                                e.stopPropagation();
                                 setSelectedBlock(block);
                                 setShowBlockConfig(true);
                               }}
-                              className="mt-3 w-full px-2 py-1 bg-slate-700 hover:bg-slate-600 text-white rounded text-xs"
+                              className="mt-3 w-full px-2 py-1.5 bg-slate-700 hover:bg-slate-600 text-white rounded text-xs font-medium"
                             >
-                              Configure
+                              ⚙️ Configure
                             </button>
                           </div>
+                          
+                          {/* Connection arrow */}
                           {index < blocks.length - 1 && (
-                            <ArrowRight className="w-6 h-6 text-slate-500" />
+                            <div className="flex flex-col items-center">
+                              <ArrowRight className="w-8 h-8 text-indigo-400" />
+                              <span className="text-xs text-slate-500 mt-1">→</span>
+                            </div>
                           )}
                         </div>
                       );
