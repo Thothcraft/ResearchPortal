@@ -107,10 +107,22 @@ export default function TrainingPage() {
   const [trainingJobs, setTrainingJobs] = useState<TrainingJob[]>([]);
   const [trainedModels, setTrainedModels] = useState<TrainedModel[]>([]);
   const [showTrainingConfig, setShowTrainingConfig] = useState(false);
-  const [trainingConfig, setTrainingConfig] = useState({ model_type: 'cnn', epochs: 10, batch_size: 32, learning_rate: 0.001, validation_split: 0.2, model_name: '', test_dataset_id: null as number | null });
+  const [trainingConfig, setTrainingConfig] = useState({ 
+    model_type: 'cnn', 
+    model_architecture: 'medium',
+    epochs: 10, 
+    batch_size: 32, 
+    learning_rate: 0.001, 
+    validation_split: 0.2, 
+    model_name: '', 
+    test_dataset_id: null as number | null,
+    use_bayesian_optimization: false,
+    bayesian_trials: 20
+  });
+  const [compareModels, setCompareModels] = useState<number[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<'datasets' | 'jobs' | 'models'>('datasets');
+  const [activeTab, setActiveTab] = useState<'datasets' | 'jobs' | 'models' | 'compare'>('datasets');
   const [renamingModel, setRenamingModel] = useState<TrainedModel | null>(null);
   const [newModelName, setNewModelName] = useState('');
   const [selectedJob, setSelectedJob] = useState<TrainingJob | null>(null);
@@ -317,38 +329,88 @@ export default function TrainingPage() {
     }
   };
 
-  const downloadGraph = (svgElement: SVGSVGElement | null, filename: string) => {
+  const downloadGraph = async (svgElement: SVGSVGElement | null, filename: string) => {
     if (!svgElement) return;
     
-    // Clone the SVG to avoid modifying the original
-    const clonedSvg = svgElement.cloneNode(true) as SVGSVGElement;
-    
-    // Set white background for publication
-    clonedSvg.style.backgroundColor = 'white';
-    
-    // Add proper dimensions for high-quality export
-    clonedSvg.setAttribute('width', '1200');
-    clonedSvg.setAttribute('height', '800');
-    
-    // Serialize SVG to string
-    const serializer = new XMLSerializer();
-    let svgString = serializer.serializeToString(clonedSvg);
-    
-    // Add XML declaration and styling for publication quality
-    svgString = `<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
-${svgString}`;
-    
-    // Create blob and download
-    const blob = new Blob([svgString], { type: 'image/svg+xml;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `${filename}.svg`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
+    try {
+      // Clone the SVG to avoid modifying the original
+      const clonedSvg = svgElement.cloneNode(true) as SVGSVGElement;
+      
+      // Publication-quality dimensions (300 DPI equivalent for 4x3 inch figure)
+      const width = 1200;
+      const height = 900;
+      
+      // Create a canvas for high-quality rendering
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      
+      if (!ctx) return;
+      
+      // White background for publication
+      ctx.fillStyle = 'white';
+      ctx.fillRect(0, 0, width, height);
+      
+      // Optimize SVG for publication: enhance contrast, increase font sizes
+      clonedSvg.setAttribute('width', width.toString());
+      clonedSvg.setAttribute('height', height.toString());
+      
+      // Enhance text for publication (make labels larger and bolder)
+      const texts = clonedSvg.querySelectorAll('text');
+      texts.forEach(text => {
+        const currentSize = parseFloat(text.getAttribute('font-size') || '12');
+        text.setAttribute('font-size', (currentSize * 1.5).toString());
+        text.setAttribute('font-weight', '600');
+        text.setAttribute('fill', '#000000');
+      });
+      
+      // Enhance lines (make them thicker for print)
+      const lines = clonedSvg.querySelectorAll('line, polyline, path');
+      lines.forEach(line => {
+        const currentWidth = parseFloat(line.getAttribute('stroke-width') || '1');
+        line.setAttribute('stroke-width', (currentWidth * 2).toString());
+      });
+      
+      // Convert SVG to data URL
+      const serializer = new XMLSerializer();
+      const svgString = serializer.serializeToString(clonedSvg);
+      const svgBlob = new Blob([svgString], { type: 'image/svg+xml;charset=utf-8' });
+      const svgUrl = URL.createObjectURL(svgBlob);
+      
+      // Load SVG into image
+      const img = new Image();
+      img.onload = async () => {
+        // Draw image to canvas
+        ctx.drawImage(img, 0, 0, width, height);
+        
+        // Convert canvas to blob
+        canvas.toBlob(async (blob) => {
+          if (!blob) return;
+          
+          // Create PDF using jsPDF (we'll use a simple approach without external library)
+          // For now, convert to high-quality PNG and wrap in PDF-like structure
+          const pngUrl = URL.createObjectURL(blob);
+          
+          // Create a simple PDF wrapper (this is a basic implementation)
+          // In production, you'd use jsPDF library
+          const link = document.createElement('a');
+          link.href = pngUrl;
+          link.download = `${filename}.png`;
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+          
+          URL.revokeObjectURL(pngUrl);
+          URL.revokeObjectURL(svgUrl);
+        }, 'image/png', 1.0);
+      };
+      
+      img.src = svgUrl;
+    } catch (err) {
+      console.error('Failed to download graph:', err);
+      setError('Failed to download graph');
+    }
   };
 
   const handleAddLabel = () => {
@@ -415,6 +477,7 @@ ${svgString}`;
             <button onClick={() => setActiveTab('datasets')} className={`px-4 py-2 font-medium transition-colors ${activeTab === 'datasets' ? 'text-indigo-400 border-b-2 border-indigo-400' : 'text-slate-400 hover:text-white'}`}><Database className="w-4 h-4 inline mr-2" />Datasets</button>
             <button onClick={() => setActiveTab('jobs')} className={`px-4 py-2 font-medium transition-colors ${activeTab === 'jobs' ? 'text-indigo-400 border-b-2 border-indigo-400' : 'text-slate-400 hover:text-white'}`}><BarChart3 className="w-4 h-4 inline mr-2" />Training Jobs{activeJobsCount > 0 && <span className="ml-2 px-2 py-0.5 bg-blue-500/20 text-blue-400 text-xs rounded-full">{activeJobsCount}</span>}</button>
             <button onClick={() => setActiveTab('models')} className={`px-4 py-2 font-medium transition-colors ${activeTab === 'models' ? 'text-indigo-400 border-b-2 border-indigo-400' : 'text-slate-400 hover:text-white'}`}><Brain className="w-4 h-4 inline mr-2" />Trained Models</button>
+            <button onClick={() => setActiveTab('compare')} className={`px-4 py-2 font-medium transition-colors ${activeTab === 'compare' ? 'text-indigo-400 border-b-2 border-indigo-400' : 'text-slate-400 hover:text-white'}`}><BarChart3 className="w-4 h-4 inline mr-2" />Compare Models{compareModels.length > 0 && <span className="ml-2 px-2 py-0.5 bg-purple-500/20 text-purple-400 text-xs rounded-full">{compareModels.length}</span>}</button>
           </div>
 
           {/* Datasets Tab */}
@@ -562,10 +625,11 @@ ${svgString}`;
               ) : (
                 <div className="bg-slate-800/50 rounded-xl border border-slate-700 overflow-hidden">
                   <table className="w-full">
-                    <thead className="bg-slate-900/50"><tr><th className="px-6 py-3 text-left text-xs font-medium text-slate-400 uppercase">Model</th><th className="px-6 py-3 text-left text-xs font-medium text-slate-400 uppercase">Architecture</th><th className="px-6 py-3 text-left text-xs font-medium text-slate-400 uppercase">Accuracy</th><th className="px-6 py-3 text-left text-xs font-medium text-slate-400 uppercase">Size</th><th className="px-6 py-3 text-left text-xs font-medium text-slate-400 uppercase">Created</th><th className="px-6 py-3 text-left text-xs font-medium text-slate-400 uppercase">Actions</th></tr></thead>
+                    <thead className="bg-slate-900/50"><tr><th className="px-6 py-3 text-left text-xs font-medium text-slate-400 uppercase">Select</th><th className="px-6 py-3 text-left text-xs font-medium text-slate-400 uppercase">Model</th><th className="px-6 py-3 text-left text-xs font-medium text-slate-400 uppercase">Architecture</th><th className="px-6 py-3 text-left text-xs font-medium text-slate-400 uppercase">Accuracy</th><th className="px-6 py-3 text-left text-xs font-medium text-slate-400 uppercase">Size</th><th className="px-6 py-3 text-left text-xs font-medium text-slate-400 uppercase">Created</th><th className="px-6 py-3 text-left text-xs font-medium text-slate-400 uppercase">Actions</th></tr></thead>
                     <tbody className="divide-y divide-slate-700">
                       {trainedModels.map(m => (
                         <tr key={m.id} className="hover:bg-slate-700/30">
+                          <td className="px-6 py-4"><input type="checkbox" checked={compareModels.includes(m.id)} onChange={(e) => {if (e.target.checked) setCompareModels([...compareModels, m.id]); else setCompareModels(compareModels.filter(id => id !== m.id));}} className="w-4 h-4" /></td>
                           <td className="px-6 py-4"><span className="text-white font-medium">{m.name}</span></td>
                           <td className="px-6 py-4"><span className="text-slate-300 uppercase">{m.architecture}</span></td>
                           <td className="px-6 py-4"><span className="text-green-400 font-medium">{m.accuracy !== null ? `${(m.accuracy * 100).toFixed(2)}%` : 'N/A'}</span></td>
@@ -576,6 +640,70 @@ ${svgString}`;
                       ))}
                     </tbody>
                   </table>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Compare Models Tab */}
+          {activeTab === 'compare' && (
+            <div>
+              {compareModels.length < 2 ? (
+                <div className="text-center py-12 bg-slate-800/50 rounded-xl border border-slate-700">
+                  <BarChart3 className="w-16 h-16 text-slate-500 mx-auto mb-4" />
+                  <h3 className="text-xl font-medium text-white mb-2">Select Models to Compare</h3>
+                  <p className="text-slate-400 mb-4">Go to the Trained Models tab and select at least 2 models</p>
+                  <button onClick={() => setActiveTab('models')} className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg">Go to Models</button>
+                </div>
+              ) : (
+                <div className="space-y-6">
+                  <div className="flex items-center justify-between">
+                    <h2 className="text-xl font-semibold text-white">Comparing {compareModels.length} Models</h2>
+                    <button onClick={() => setCompareModels([])} className="px-3 py-1.5 bg-red-600/20 hover:bg-red-600/30 text-red-400 rounded-lg text-sm">Clear Selection</button>
+                  </div>
+                  
+                  {/* Comparison Table */}
+                  <div className="bg-slate-800/50 rounded-xl border border-slate-700 overflow-hidden">
+                    <table className="w-full">
+                      <thead className="bg-slate-900/50">
+                        <tr>
+                          <th className="px-6 py-3 text-left text-xs font-medium text-slate-400 uppercase">Metric</th>
+                          {compareModels.map(modelId => {
+                            const model = trainedModels.find(m => m.id === modelId);
+                            return <th key={modelId} className="px-6 py-3 text-left text-xs font-medium text-slate-400 uppercase">{model?.name || 'Unknown'}</th>;
+                          })}
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-700">
+                        <tr><td className="px-6 py-4 text-slate-300 font-medium">Architecture</td>{compareModels.map(modelId => {const model = trainedModels.find(m => m.id === modelId); return <td key={modelId} className="px-6 py-4 text-white uppercase">{model?.architecture || 'N/A'}</td>;})}</tr>
+                        <tr><td className="px-6 py-4 text-slate-300 font-medium">Accuracy</td>{compareModels.map(modelId => {const model = trainedModels.find(m => m.id === modelId); const isMax = model && model.accuracy === Math.max(...compareModels.map(id => trainedModels.find(m => m.id === id)?.accuracy || 0)); return <td key={modelId} className={`px-6 py-4 font-medium ${isMax ? 'text-green-400' : 'text-white'}`}>{model?.accuracy !== null ? `${(model.accuracy * 100).toFixed(2)}%` : 'N/A'}</td>;})}</tr>
+                        <tr><td className="px-6 py-4 text-slate-300 font-medium">Model Size</td>{compareModels.map(modelId => {const model = trainedModels.find(m => m.id === modelId); const isMin = model && model.size_mb === Math.min(...compareModels.map(id => trainedModels.find(m => m.id === id)?.size_mb || Infinity).filter(s => s !== Infinity)); return <td key={modelId} className={`px-6 py-4 ${isMin ? 'text-green-400 font-medium' : 'text-white'}`}>{model?.size_mb !== null ? `${model.size_mb.toFixed(1)} MB` : 'N/A'}</td>;})}</tr>
+                        <tr><td className="px-6 py-4 text-slate-300 font-medium">Created Date</td>{compareModels.map(modelId => {const model = trainedModels.find(m => m.id === modelId); return <td key={modelId} className="px-6 py-4 text-slate-400 text-sm">{model ? new Date(model.created_at).toLocaleDateString() : 'N/A'}</td>;})}</tr>
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {/* Visual Comparison Chart */}
+                  <div className="bg-slate-800/50 rounded-xl border border-slate-700 p-6">
+                    <h3 className="text-lg font-semibold text-white mb-4">Accuracy Comparison</h3>
+                    <div className="space-y-4">
+                      {compareModels.map(modelId => {
+                        const model = trainedModels.find(m => m.id === modelId);
+                        const accuracy = model?.accuracy || 0;
+                        return (
+                          <div key={modelId}>
+                            <div className="flex items-center justify-between mb-2">
+                              <span className="text-slate-300 text-sm">{model?.name || 'Unknown'}</span>
+                              <span className="text-white font-medium">{(accuracy * 100).toFixed(2)}%</span>
+                            </div>
+                            <div className="w-full bg-slate-700 rounded-full h-3">
+                              <div className="bg-gradient-to-r from-indigo-500 to-purple-500 h-3 rounded-full transition-all" style={{width: `${accuracy * 100}%`}}></div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
                 </div>
               )}
             </div>
@@ -639,7 +767,7 @@ ${svgString}`;
             <p className="text-slate-400 text-sm mb-4">Dataset: <span className="text-white">{selectedDataset.name}</span> ({selectedDataset.files?.length} files)</p>
             <div className="space-y-4">
               <div>
-                <label className="block text-sm text-slate-300 mb-1">Model Architecture</label>
+                <label className="block text-sm text-slate-300 mb-1">Model Type</label>
                 <select 
                   value={trainingConfig.model_type} 
                   onChange={(e) => setTrainingConfig({ ...trainingConfig, model_type: e.target.value })} 
@@ -655,11 +783,57 @@ ${svgString}`;
                   {getAvailableModels(selectedDataset).find(m => m.value === trainingConfig.model_type)?.description}
                 </p>
               </div>
+              <div>
+                <label className="block text-sm text-slate-300 mb-1">Model Architecture Size</label>
+                <select 
+                  value={trainingConfig.model_architecture} 
+                  onChange={(e) => setTrainingConfig({ ...trainingConfig, model_architecture: e.target.value })} 
+                  className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white"
+                >
+                  <option value="small">Small (Fast, Lower Accuracy)</option>
+                  <option value="medium">Medium (Balanced)</option>
+                  <option value="large">Large (Slower, Higher Accuracy)</option>
+                </select>
+                <p className="text-xs text-slate-500 mt-1">
+                  {trainingConfig.model_architecture === 'small' && 'Fewer layers, faster training, good for simple patterns'}
+                  {trainingConfig.model_architecture === 'medium' && 'Balanced architecture for most use cases'}
+                  {trainingConfig.model_architecture === 'large' && 'Deep architecture for complex patterns'}
+                </p>
+              </div>
               <div className="grid grid-cols-2 gap-4">
                 <div><label className="block text-sm text-slate-300 mb-1">Epochs</label><input type="number" value={trainingConfig.epochs} onChange={(e) => setTrainingConfig({ ...trainingConfig, epochs: parseInt(e.target.value) || 10 })} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white" /></div>
                 <div><label className="block text-sm text-slate-300 mb-1">Batch Size</label><input type="number" value={trainingConfig.batch_size} onChange={(e) => setTrainingConfig({ ...trainingConfig, batch_size: parseInt(e.target.value) || 32 })} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white" /></div>
               </div>
               <div><label className="block text-sm text-slate-300 mb-1">Learning Rate</label><input type="number" step="0.0001" value={trainingConfig.learning_rate} onChange={(e) => setTrainingConfig({ ...trainingConfig, learning_rate: parseFloat(e.target.value) || 0.001 })} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white" /></div>
+              <div className="flex items-center justify-between p-3 bg-slate-800/50 rounded-lg border border-slate-700">
+                <div>
+                  <label className="block text-sm text-slate-300 font-medium">Bayesian Optimization</label>
+                  <p className="text-xs text-slate-500 mt-1">Auto-tune hyperparameters before training</p>
+                </div>
+                <label className="relative inline-flex items-center cursor-pointer">
+                  <input 
+                    type="checkbox" 
+                    checked={trainingConfig.use_bayesian_optimization}
+                    onChange={(e) => setTrainingConfig({ ...trainingConfig, use_bayesian_optimization: e.target.checked })}
+                    className="sr-only peer"
+                  />
+                  <div className="w-11 h-6 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
+                </label>
+              </div>
+              {trainingConfig.use_bayesian_optimization && (
+                <div>
+                  <label className="block text-sm text-slate-300 mb-1">Optimization Trials</label>
+                  <input 
+                    type="number" 
+                    value={trainingConfig.bayesian_trials} 
+                    onChange={(e) => setTrainingConfig({ ...trainingConfig, bayesian_trials: parseInt(e.target.value) || 20 })} 
+                    className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white" 
+                    min="5"
+                    max="50"
+                  />
+                  <p className="text-xs text-slate-500 mt-1">Number of hyperparameter combinations to try (5-50)</p>
+                </div>
+              )}
               <div>
                 <label className="block text-sm text-slate-300 mb-1">Test Dataset (optional)</label>
                 <select 
