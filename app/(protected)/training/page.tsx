@@ -1036,6 +1036,60 @@ export default function TrainingPage() {
                   <p className="text-emerald-400 font-medium text-sm">{selectedJob.best_metrics?.model_architecture?.total_params?.toLocaleString() || 'N/A'}</p>
                 </div>
               </div>
+              
+              {/* Bayesian Optimization Trials */}
+              {(() => {
+                try {
+                  const config = typeof selectedJob.config === 'string' ? JSON.parse(selectedJob.config) : selectedJob.config;
+                  const trials = config?.bayesian_trials_results;
+                  if (trials && trials.length > 0) {
+                    return (
+                      <div className="bg-slate-800/50 rounded-lg p-4">
+                        <h4 className="text-white font-medium mb-4">Bayesian Optimization Trials</h4>
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-sm">
+                            <thead className="bg-slate-900/50">
+                              <tr>
+                                <th className="px-4 py-2 text-left text-xs font-medium text-slate-400 uppercase">Trial</th>
+                                <th className="px-4 py-2 text-left text-xs font-medium text-slate-400 uppercase">Learning Rate</th>
+                                <th className="px-4 py-2 text-left text-xs font-medium text-slate-400 uppercase">Batch Size</th>
+                                <th className="px-4 py-2 text-left text-xs font-medium text-slate-400 uppercase">Train Acc</th>
+                                <th className="px-4 py-2 text-left text-xs font-medium text-slate-400 uppercase">Val Acc</th>
+                                <th className="px-4 py-2 text-left text-xs font-medium text-slate-400 uppercase">Status</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-700">
+                              {trials.map((trial: any) => (
+                                <tr key={trial.trial} className={trial.is_best ? 'bg-green-500/10' : ''}>
+                                  <td className="px-4 py-2 text-white font-medium">#{trial.trial}</td>
+                                  <td className="px-4 py-2 text-slate-300 font-mono text-xs">{trial.learning_rate}</td>
+                                  <td className="px-4 py-2 text-slate-300">{trial.batch_size}</td>
+                                  <td className="px-4 py-2 text-blue-400">{(trial.train_accuracy * 100).toFixed(2)}%</td>
+                                  <td className="px-4 py-2 text-green-400">{(trial.val_accuracy * 100).toFixed(2)}%</td>
+                                  <td className="px-4 py-2">
+                                    {trial.is_best ? (
+                                      <span className="px-2 py-1 bg-green-500/20 text-green-400 rounded text-xs font-medium">Best</span>
+                                    ) : (
+                                      <span className="text-slate-500 text-xs">-</span>
+                                    )}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                        <p className="text-slate-500 text-xs mt-3">
+                          Best trial was automatically selected for final training
+                        </p>
+                      </div>
+                    );
+                  }
+                } catch (e) {
+                  return null;
+                }
+                return null;
+              })()}
+
               {selectedJob.metrics && (selectedJob.metrics.accuracy || selectedJob.metrics.loss) && (
                 <div className="bg-slate-800/50 rounded-lg p-4">
                   <h4 className="text-white font-medium mb-4">Training Progress Charts</h4>
