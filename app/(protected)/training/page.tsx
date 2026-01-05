@@ -642,7 +642,7 @@ export default function TrainingPage() {
               </button>
             </div>
             <div className="space-y-6">
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-4 gap-4">
                 <div className="bg-slate-800/50 rounded-lg p-4">
                   <p className="text-slate-400 text-sm mb-1">Dataset</p>
                   <p className="text-white font-medium">{selectedJob.dataset_name}</p>
@@ -656,37 +656,115 @@ export default function TrainingPage() {
                   <p className="text-white font-medium">{selectedJob.total_epochs}</p>
                 </div>
                 <div className="bg-slate-800/50 rounded-lg p-4">
-                  <p className="text-slate-400 text-sm mb-1">Best Validation Accuracy</p>
+                  <p className="text-slate-400 text-sm mb-1">Best Val Accuracy</p>
                   <p className="text-green-400 font-medium">{selectedJob.best_metrics?.val_accuracy ? `${(selectedJob.best_metrics.val_accuracy * 100).toFixed(2)}%` : 'N/A'}</p>
+                </div>
+                <div className="bg-slate-800/50 rounded-lg p-4">
+                  <p className="text-slate-400 text-sm mb-1">Final Train Loss</p>
+                  <p className="text-blue-400 font-medium">{selectedJob.metrics?.loss?.[selectedJob.metrics.loss.length - 1]?.toFixed(4) || 'N/A'}</p>
+                </div>
+                <div className="bg-slate-800/50 rounded-lg p-4">
+                  <p className="text-slate-400 text-sm mb-1">Final Val Loss</p>
+                  <p className="text-purple-400 font-medium">{selectedJob.metrics?.val_loss?.[selectedJob.metrics.val_loss.length - 1]?.toFixed(4) || 'N/A'}</p>
+                </div>
+                <div className="bg-slate-800/50 rounded-lg p-4">
+                  <p className="text-slate-400 text-sm mb-1">Best Epoch</p>
+                  <p className="text-yellow-400 font-medium">{selectedJob.best_metrics?.best_epoch || 'N/A'}</p>
+                </div>
+                <div className="bg-slate-800/50 rounded-lg p-4">
+                  <p className="text-slate-400 text-sm mb-1">Training Duration</p>
+                  <p className="text-slate-300 font-medium">
+                    {selectedJob.started_at && selectedJob.completed_at 
+                      ? `${Math.round((new Date(selectedJob.completed_at).getTime() - new Date(selectedJob.started_at).getTime()) / 1000)}s`
+                      : 'N/A'}
+                  </p>
                 </div>
               </div>
               {selectedJob.metrics && (selectedJob.metrics.accuracy || selectedJob.metrics.loss) && (
                 <div className="bg-slate-800/50 rounded-lg p-4">
-                  <h4 className="text-white font-medium mb-4">Training Progress</h4>
-                  <div className="grid grid-cols-2 gap-4">
-                    {selectedJob.metrics.accuracy && (
+                  <h4 className="text-white font-medium mb-4">Training Progress Charts</h4>
+                  <div className="grid grid-cols-2 gap-6">
+                    {selectedJob.metrics.accuracy && selectedJob.metrics.val_accuracy && (
                       <div>
-                        <p className="text-slate-400 text-sm mb-2">Accuracy per Epoch</p>
-                        <div className="space-y-1">
-                          {selectedJob.metrics.accuracy.map((acc, idx) => (
-                            <div key={idx} className="flex items-center justify-between text-sm">
-                              <span className="text-slate-400">Epoch {idx + 1}</span>
-                              <span className="text-white">{(acc * 100).toFixed(2)}%</span>
-                            </div>
-                          ))}
+                        <p className="text-slate-400 text-sm mb-3 font-medium">Accuracy Over Epochs</p>
+                        <div className="relative h-48 bg-slate-900/50 rounded-lg p-4">
+                          <svg viewBox="0 0 400 150" className="w-full h-full">
+                            <defs>
+                              <linearGradient id="trainAccGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+                                <stop offset="0%" stopColor="rgb(34, 197, 94)" stopOpacity="0.3"/>
+                                <stop offset="100%" stopColor="rgb(34, 197, 94)" stopOpacity="0"/>
+                              </linearGradient>
+                              <linearGradient id="valAccGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+                                <stop offset="0%" stopColor="rgb(59, 130, 246)" stopOpacity="0.3"/>
+                                <stop offset="100%" stopColor="rgb(59, 130, 246)" stopOpacity="0"/>
+                              </linearGradient>
+                            </defs>
+                            {(() => {
+                              const trainAcc = selectedJob.metrics.accuracy;
+                              const valAcc = selectedJob.metrics.val_accuracy;
+                              const maxAcc = Math.max(...trainAcc, ...valAcc);
+                              const minAcc = Math.min(...trainAcc, ...valAcc);
+                              const range = maxAcc - minAcc || 0.1;
+                              const xStep = 380 / (trainAcc.length - 1 || 1);
+                              const trainPoints = trainAcc.map((acc, i) => `${10 + i * xStep},${140 - ((acc - minAcc) / range) * 120}`).join(' ');
+                              const valPoints = valAcc.map((acc, i) => `${10 + i * xStep},${140 - ((acc - minAcc) / range) * 120}`).join(' ');
+                              return (
+                                <>
+                                  <polyline points={trainPoints} fill="none" stroke="rgb(34, 197, 94)" strokeWidth="2"/>
+                                  <polygon points={`${trainPoints} 390,140 10,140`} fill="url(#trainAccGrad)"/>
+                                  <polyline points={valPoints} fill="none" stroke="rgb(59, 130, 246)" strokeWidth="2" strokeDasharray="4"/>
+                                  <text x="10" y="10" fill="rgb(148, 163, 184)" fontSize="10">Train</text>
+                                  <text x="10" y="22" fill="rgb(148, 163, 184)" fontSize="10">Val (dashed)</text>
+                                </>
+                              );
+                            })()}
+                          </svg>
+                        </div>
+                        <div className="mt-2 flex justify-between text-xs text-slate-500">
+                          <span>Epoch 1</span>
+                          <span>Epoch {selectedJob.metrics.accuracy.length}</span>
                         </div>
                       </div>
                     )}
-                    {selectedJob.metrics.loss && (
+                    {selectedJob.metrics.loss && selectedJob.metrics.val_loss && (
                       <div>
-                        <p className="text-slate-400 text-sm mb-2">Loss per Epoch</p>
-                        <div className="space-y-1">
-                          {selectedJob.metrics.loss.map((loss, idx) => (
-                            <div key={idx} className="flex items-center justify-between text-sm">
-                              <span className="text-slate-400">Epoch {idx + 1}</span>
-                              <span className="text-white">{loss.toFixed(4)}</span>
-                            </div>
-                          ))}
+                        <p className="text-slate-400 text-sm mb-3 font-medium">Loss Over Epochs</p>
+                        <div className="relative h-48 bg-slate-900/50 rounded-lg p-4">
+                          <svg viewBox="0 0 400 150" className="w-full h-full">
+                            <defs>
+                              <linearGradient id="trainLossGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+                                <stop offset="0%" stopColor="rgb(239, 68, 68)" stopOpacity="0.3"/>
+                                <stop offset="100%" stopColor="rgb(239, 68, 68)" stopOpacity="0"/>
+                              </linearGradient>
+                              <linearGradient id="valLossGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+                                <stop offset="0%" stopColor="rgb(168, 85, 247)" stopOpacity="0.3"/>
+                                <stop offset="100%" stopColor="rgb(168, 85, 247)" stopOpacity="0"/>
+                              </linearGradient>
+                            </defs>
+                            {(() => {
+                              const trainLoss = selectedJob.metrics.loss;
+                              const valLoss = selectedJob.metrics.val_loss;
+                              const maxLoss = Math.max(...trainLoss, ...valLoss);
+                              const minLoss = Math.min(...trainLoss, ...valLoss);
+                              const range = maxLoss - minLoss || 0.1;
+                              const xStep = 380 / (trainLoss.length - 1 || 1);
+                              const trainPoints = trainLoss.map((loss, i) => `${10 + i * xStep},${140 - ((loss - minLoss) / range) * 120}`).join(' ');
+                              const valPoints = valLoss.map((loss, i) => `${10 + i * xStep},${140 - ((loss - minLoss) / range) * 120}`).join(' ');
+                              return (
+                                <>
+                                  <polyline points={trainPoints} fill="none" stroke="rgb(239, 68, 68)" strokeWidth="2"/>
+                                  <polygon points={`${trainPoints} 390,140 10,140`} fill="url(#trainLossGrad)"/>
+                                  <polyline points={valPoints} fill="none" stroke="rgb(168, 85, 247)" strokeWidth="2" strokeDasharray="4"/>
+                                  <text x="10" y="10" fill="rgb(148, 163, 184)" fontSize="10">Train</text>
+                                  <text x="10" y="22" fill="rgb(148, 163, 184)" fontSize="10">Val (dashed)</text>
+                                </>
+                              );
+                            })()}
+                          </svg>
+                        </div>
+                        <div className="mt-2 flex justify-between text-xs text-slate-500">
+                          <span>Epoch 1</span>
+                          <span>Epoch {selectedJob.metrics.loss.length}</span>
                         </div>
                       </div>
                     )}
