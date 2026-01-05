@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useCallback } from 'react';
+import jsPDF from 'jspdf';
 import { useApi } from '@/hooks/useApi';
 import {
   Brain, Cloud, Smartphone, Network, Play, RefreshCw, Plus, Tag, Database,
@@ -460,19 +461,25 @@ export default function TrainingPage() {
       ctx.fillStyle = '#000000';
       ctx.fillText('Validation', legendX + 40, legendY + 35);
       
-      // Convert to PDF-compatible format
+      // Convert canvas to image and create PDF
       canvas.toBlob(async (blob) => {
         if (!blob) return;
         
-        // Create a simple PDF using canvas
-        // For a real PDF, we'd use jsPDF library, but this creates a high-quality image
-        const link = document.createElement('a');
-        link.href = URL.createObjectURL(blob);
-        link.download = `${filename}_publication.pdf`;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        URL.revokeObjectURL(link.href);
+        // Create proper PDF using jsPDF
+        const pdf = new jsPDF({
+          orientation: 'landscape',
+          unit: 'px',
+          format: [width, height]
+        });
+        
+        // Convert blob to data URL
+        const reader = new FileReader();
+        reader.onload = () => {
+          const imgData = reader.result as string;
+          pdf.addImage(imgData, 'PNG', 0, 0, width, height);
+          pdf.save(`${filename}_publication.pdf`);
+        };
+        reader.readAsDataURL(blob);
       }, 'image/png', 1.0);
       
     } catch (err) {
@@ -829,8 +836,8 @@ export default function TrainingPage() {
 
       {/* Training Config Modal */}
       {showTrainingConfig && selectedDataset && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
-          <div className="bg-slate-900 rounded-xl p-6 w-full max-w-md border border-slate-700">
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-slate-900 rounded-xl p-6 w-full max-w-md border border-slate-700 max-h-[90vh] overflow-y-auto">
             <h3 className="text-xl font-semibold text-white mb-4">Configure Training</h3>
             <p className="text-slate-400 text-sm mb-4">Dataset: <span className="text-white">{selectedDataset.name}</span> ({selectedDataset.files?.length} files)</p>
             <div className="space-y-4">
