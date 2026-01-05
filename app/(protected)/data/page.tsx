@@ -97,6 +97,8 @@ export default function DataPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [filterType, setFilterType] = useState<DataFile['type'] | 'all'>('all');
   const [filterDevice, setFilterDevice] = useState<string>('all');
+  const [uploadingFiles, setUploadingFiles] = useState<Set<string>>(new Set());
+  const [isDragging, setIsDragging] = useState(false);
   const { get, post } = useApi();
 
   // Fetch devices and files from Brain server
@@ -322,6 +324,72 @@ export default function DataPage() {
     }
   };
 
+  // Handle file upload to cloud
+  const handleFileUpload = async (fileList: FileList | null) => {
+    if (!fileList || fileList.length === 0) return;
+
+    const token = localStorage.getItem('auth_token');
+    if (!token) {
+      setError('Please log in to upload files');
+      return;
+    }
+
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'https://web-production-d7d37.up.railway.app';
+
+    for (const file of Array.from(fileList)) {
+      const fileName = file.name;
+      setUploadingFiles(prev => new Set(prev).add(fileName));
+
+      try {
+        const formData = new FormData();
+        formData.append('file', file);
+
+        const response = await fetch(`${apiUrl}/file/upload`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${token}`
+          },
+          body: formData
+        });
+
+        if (!response.ok) {
+          throw new Error(`Failed to upload ${fileName}`);
+        }
+
+        const result = await response.json();
+        console.log(`Uploaded ${fileName}:`, result);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : `Failed to upload ${fileName}`);
+      } finally {
+        setUploadingFiles(prev => {
+          const newSet = new Set(prev);
+          newSet.delete(fileName);
+          return newSet;
+        });
+      }
+    }
+
+    // Refresh file list after upload
+    fetchData();
+  };
+
+  // Drag and drop handlers
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+    handleFileUpload(e.dataTransfer.files);
+  };
+
   useEffect(() => {
     fetchData();
   }, []);
@@ -360,6 +428,50 @@ export default function DataPage() {
           <RefreshCw className="w-4 h-4" />
           Refresh
         </button>
+      </div>
+
+      {/* Upload Area */}
+      <div
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
+        className={`mb-8 border-2 border-dashed rounded-xl p-8 transition-all ${
+          isDragging
+            ? 'border-indigo-500 bg-indigo-500/10'
+            : 'border-slate-700 bg-slate-800/30 hover:border-slate-600'
+        }`}
+      >
+        <div className="text-center">
+          <Upload className={`w-12 h-12 mx-auto mb-4 ${isDragging ? 'text-indigo-400' : 'text-slate-500'}`} />
+          <h3 className="text-lg font-semibold text-white mb-2">Upload Files to Cloud</h3>
+          <p className="text-slate-400 mb-4">
+            Drag and drop files here, or click to browse
+          </p>
+          <input
+            type="file"
+            multiple
+            onChange={(e) => handleFileUpload(e.target.files)}
+            className="hidden"
+            id="file-upload"
+          />
+          <label
+            htmlFor="file-upload"
+            className="inline-flex items-center gap-2 px-6 py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg cursor-pointer transition-colors"
+          >
+            <Upload className="w-4 h-4" />
+            Choose Files
+          </label>
+          {uploadingFiles.size > 0 && (
+            <div className="mt-4 space-y-2">
+              {Array.from(uploadingFiles).map(fileName => (
+                <div key={fileName} className="flex items-center justify-center gap-2 text-sm text-indigo-400">
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Uploading {fileName}...
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* File Type Filters */}
