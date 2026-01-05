@@ -273,23 +273,35 @@ export default function TrainingPage() {
 
   const handleDownloadModel = async (modelId: number, modelName: string) => {
     try {
-      const token = localStorage.getItem('token');
+      // Get the correct token from localStorage (stored as 'auth_token')
+      const token = localStorage.getItem('auth_token');
       if (!token) {
-        setError('Authentication required');
+        setError('Please log in to download models');
         return;
       }
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/datasets/models/${modelId}/download`, {
+
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'https://web-production-d7d37.up.railway.app';
+      console.log(`Downloading model ${modelId} from ${apiUrl}/datasets/models/${modelId}/download`);
+      
+      const response = await fetch(`${apiUrl}/datasets/models/${modelId}/download`, {
         method: 'GET',
         headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/octet-stream'
+          'Authorization': `Bearer ${token}`
         }
       });
+
+      console.log('Download response status:', response.status);
+
       if (!response.ok) {
+        if (response.status === 401) {
+          setError('Authentication failed. Please log in again.');
+          return;
+        }
         const errorText = await response.text();
         console.error('Download failed:', response.status, errorText);
         throw new Error(`Download failed: ${response.status}`);
       }
+
       const blob = await response.blob();
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -301,7 +313,7 @@ export default function TrainingPage() {
       document.body.removeChild(a);
     } catch (err) { 
       console.error('Download error:', err);
-      setError('Failed to download model'); 
+      setError('Failed to download model. Please try again.'); 
     }
   };
 
