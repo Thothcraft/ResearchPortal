@@ -26,7 +26,13 @@ type TrainingJob = {
   job_id: string; dataset_id: number; dataset_name: string; model_type: string;
   training_mode: string; status: string; current_epoch: number; total_epochs: number;
   metrics: { loss?: number[]; accuracy?: number[]; val_loss?: number[]; val_accuracy?: number[] };
-  best_metrics: { val_accuracy?: number; best_epoch?: number };
+  best_metrics: { 
+    val_accuracy?: number; 
+    best_epoch?: number;
+    per_class_metrics?: Record<string, { precision: number; recall: number; f1_score: number; support: number }>;
+    confusion_matrix?: number[][];
+    class_names?: string[];
+  };
   created_at: string; started_at?: string; completed_at?: string;
 };
 type TrainedModel = { id: number; job_id: string; name: string; architecture: string; accuracy: number | null; size_mb: number | null; created_at: string };
@@ -684,6 +690,82 @@ export default function TrainingPage() {
                         </div>
                       </div>
                     )}
+                  </div>
+                </div>
+              )}
+              {selectedJob.best_metrics?.per_class_metrics && Object.keys(selectedJob.best_metrics.per_class_metrics).length > 0 && (
+                <div className="bg-slate-800/50 rounded-lg p-4">
+                  <h4 className="text-white font-medium mb-4">Per-Class Metrics</h4>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead className="bg-slate-900/50">
+                        <tr>
+                          <th className="px-4 py-2 text-left text-slate-400">Class</th>
+                          <th className="px-4 py-2 text-left text-slate-400">Precision</th>
+                          <th className="px-4 py-2 text-left text-slate-400">Recall</th>
+                          <th className="px-4 py-2 text-left text-slate-400">F1-Score</th>
+                          <th className="px-4 py-2 text-left text-slate-400">Support</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-700">
+                        {Object.entries(selectedJob.best_metrics.per_class_metrics).map(([className, metrics]: [string, any]) => (
+                          <tr key={className}>
+                            <td className="px-4 py-2 text-white font-medium">{className}</td>
+                            <td className="px-4 py-2 text-blue-400">{(metrics.precision * 100).toFixed(2)}%</td>
+                            <td className="px-4 py-2 text-green-400">{(metrics.recall * 100).toFixed(2)}%</td>
+                            <td className="px-4 py-2 text-purple-400">{(metrics.f1_score * 100).toFixed(2)}%</td>
+                            <td className="px-4 py-2 text-slate-300">{metrics.support}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+              {selectedJob.best_metrics?.confusion_matrix && selectedJob.best_metrics.confusion_matrix.length > 0 && (
+                <div className="bg-slate-800/50 rounded-lg p-4">
+                  <h4 className="text-white font-medium mb-4">Confusion Matrix</h4>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm border-collapse">
+                      <thead>
+                        <tr>
+                          <th className="p-2 text-slate-400 text-xs"></th>
+                          {selectedJob.best_metrics.class_names?.map((name: string, idx: number) => (
+                            <th key={idx} className="p-2 text-slate-400 text-xs font-medium">
+                              {name}
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {selectedJob.best_metrics.confusion_matrix.map((row: number[], rowIdx: number) => (
+                          <tr key={rowIdx}>
+                            <td className="p-2 text-slate-400 text-xs font-medium">
+                              {selectedJob.best_metrics.class_names?.[rowIdx] || `Class ${rowIdx}`}
+                            </td>
+                            {row.map((value: number, colIdx: number) => {
+                              const maxVal = Math.max(...(selectedJob.best_metrics?.confusion_matrix?.flat() || [1]));
+                              const intensity = maxVal > 0 ? value / maxVal : 0;
+                              const isCorrect = rowIdx === colIdx;
+                              return (
+                                <td
+                                  key={colIdx}
+                                  className="p-2 text-center border border-slate-700"
+                                  style={{
+                                    backgroundColor: isCorrect
+                                      ? `rgba(34, 197, 94, ${intensity * 0.5})`
+                                      : `rgba(239, 68, 68, ${intensity * 0.3})`
+                                  }}
+                                >
+                                  <span className="text-white font-medium">{value}</span>
+                                </td>
+                              );
+                            })}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                    <p className="text-xs text-slate-500 mt-2">Rows: True labels, Columns: Predicted labels</p>
                   </div>
                 </div>
               )}
