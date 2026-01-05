@@ -32,6 +32,19 @@ type TrainingJob = {
     per_class_metrics?: Record<string, { precision: number; recall: number; f1_score: number; support: number }>;
     confusion_matrix?: number[][];
     class_names?: string[];
+    roc_curves?: Record<string, { points: { fpr: number; tpr: number }[]; auc: number }>;
+    pr_curves?: Record<string, { points: { precision: number; recall: number }[] }>;
+    model_architecture?: {
+      layers: { type: string; units?: number; activation?: string; shape?: string; rate?: number; params: number }[];
+      total_params: number;
+      trainable_params: number;
+      optimizer: string;
+      learning_rate: number;
+      batch_size: number;
+    };
+    learning_rate?: number;
+    batch_size?: number;
+    optimizer?: string;
   };
   created_at: string; started_at?: string; completed_at?: string;
 };
@@ -256,13 +269,23 @@ export default function TrainingPage() {
 
   const handleDownloadModel = async (modelId: number, modelName: string) => {
     try {
+      const token = localStorage.getItem('token');
+      if (!token) {
+        setError('Authentication required');
+        return;
+      }
       const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/datasets/models/${modelId}/download`, {
         method: 'GET',
         headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/octet-stream'
         }
       });
-      if (!response.ok) throw new Error('Download failed');
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('Download failed:', response.status, errorText);
+        throw new Error(`Download failed: ${response.status}`);
+      }
       const blob = await response.blob();
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -272,7 +295,10 @@ export default function TrainingPage() {
       a.click();
       window.URL.revokeObjectURL(url);
       document.body.removeChild(a);
-    } catch { setError('Failed to download model'); }
+    } catch (err) { 
+      console.error('Download error:', err);
+      setError('Failed to download model'); 
+    }
   };
 
   const handleAddLabel = () => {
@@ -642,42 +668,80 @@ export default function TrainingPage() {
               </button>
             </div>
             <div className="space-y-6">
-              <div className="grid grid-cols-4 gap-4">
-                <div className="bg-slate-800/50 rounded-lg p-4">
-                  <p className="text-slate-400 text-sm mb-1">Dataset</p>
-                  <p className="text-white font-medium">{selectedJob.dataset_name}</p>
+              <div className="flex justify-between items-center mb-4">
+                <h4 className="text-lg font-semibold text-white">Training Statistics</h4>
+                <button onClick={() => {
+                  const content = document.getElementById('job-details-content');
+                  if (content) {
+                    const printWindow = window.open('', '', 'width=800,height=600');
+                    if (printWindow) {
+                      printWindow.document.write('<html><head><title>Training Report</title>');
+                      printWindow.document.write('<style>body{font-family:Arial;padding:20px;}table{border-collapse:collapse;width:100%;margin:10px 0;}th,td{border:1px solid #ddd;padding:8px;text-align:left;}th{background:#333;color:white;}.stat{margin:10px 0;padding:10px;background:#f5f5f5;border-radius:5px;}</style>');
+                      printWindow.document.write('</head><body>');
+                      printWindow.document.write(`<h1>Training Job Report: ${selectedJob.dataset_name}</h1>`);
+                      printWindow.document.write(content.innerHTML.replace(/class="[^"]*"/g, ''));
+                      printWindow.document.write('</body></html>');
+                      printWindow.document.close();
+                      printWindow.print();
+                    }
+                  }
+                }} className="flex items-center gap-2 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm">
+                  <Download className="w-4 h-4" /> Export PDF
+                </button>
+              </div>
+              <div id="job-details-content">
+              <div className="grid grid-cols-4 gap-3">
+                <div className="bg-slate-800/50 rounded-lg p-3">
+                  <p className="text-slate-400 text-xs mb-1">Dataset</p>
+                  <p className="text-white font-medium text-sm">{selectedJob.dataset_name}</p>
                 </div>
-                <div className="bg-slate-800/50 rounded-lg p-4">
-                  <p className="text-slate-400 text-sm mb-1">Model Type</p>
-                  <p className="text-white font-medium uppercase">{selectedJob.model_type}</p>
+                <div className="bg-slate-800/50 rounded-lg p-3">
+                  <p className="text-slate-400 text-xs mb-1">Model Type</p>
+                  <p className="text-white font-medium text-sm uppercase">{selectedJob.model_type}</p>
                 </div>
-                <div className="bg-slate-800/50 rounded-lg p-4">
-                  <p className="text-slate-400 text-sm mb-1">Total Epochs</p>
-                  <p className="text-white font-medium">{selectedJob.total_epochs}</p>
+                <div className="bg-slate-800/50 rounded-lg p-3">
+                  <p className="text-slate-400 text-xs mb-1">Total Epochs</p>
+                  <p className="text-white font-medium text-sm">{selectedJob.total_epochs}</p>
                 </div>
-                <div className="bg-slate-800/50 rounded-lg p-4">
-                  <p className="text-slate-400 text-sm mb-1">Best Val Accuracy</p>
-                  <p className="text-green-400 font-medium">{selectedJob.best_metrics?.val_accuracy ? `${(selectedJob.best_metrics.val_accuracy * 100).toFixed(2)}%` : 'N/A'}</p>
+                <div className="bg-slate-800/50 rounded-lg p-3">
+                  <p className="text-slate-400 text-xs mb-1">Best Val Accuracy</p>
+                  <p className="text-green-400 font-medium text-sm">{selectedJob.best_metrics?.val_accuracy ? `${(selectedJob.best_metrics.val_accuracy * 100).toFixed(2)}%` : 'N/A'}</p>
                 </div>
-                <div className="bg-slate-800/50 rounded-lg p-4">
-                  <p className="text-slate-400 text-sm mb-1">Final Train Loss</p>
-                  <p className="text-blue-400 font-medium">{selectedJob.metrics?.loss?.[selectedJob.metrics.loss.length - 1]?.toFixed(4) || 'N/A'}</p>
+                <div className="bg-slate-800/50 rounded-lg p-3">
+                  <p className="text-slate-400 text-xs mb-1">Final Train Loss</p>
+                  <p className="text-blue-400 font-medium text-sm">{selectedJob.metrics?.loss?.[selectedJob.metrics.loss.length - 1]?.toFixed(4) || 'N/A'}</p>
                 </div>
-                <div className="bg-slate-800/50 rounded-lg p-4">
-                  <p className="text-slate-400 text-sm mb-1">Final Val Loss</p>
-                  <p className="text-purple-400 font-medium">{selectedJob.metrics?.val_loss?.[selectedJob.metrics.val_loss.length - 1]?.toFixed(4) || 'N/A'}</p>
+                <div className="bg-slate-800/50 rounded-lg p-3">
+                  <p className="text-slate-400 text-xs mb-1">Final Val Loss</p>
+                  <p className="text-purple-400 font-medium text-sm">{selectedJob.metrics?.val_loss?.[selectedJob.metrics.val_loss.length - 1]?.toFixed(4) || 'N/A'}</p>
                 </div>
-                <div className="bg-slate-800/50 rounded-lg p-4">
-                  <p className="text-slate-400 text-sm mb-1">Best Epoch</p>
-                  <p className="text-yellow-400 font-medium">{selectedJob.best_metrics?.best_epoch || 'N/A'}</p>
+                <div className="bg-slate-800/50 rounded-lg p-3">
+                  <p className="text-slate-400 text-xs mb-1">Best Epoch</p>
+                  <p className="text-yellow-400 font-medium text-sm">{selectedJob.best_metrics?.best_epoch || 'N/A'}</p>
                 </div>
-                <div className="bg-slate-800/50 rounded-lg p-4">
-                  <p className="text-slate-400 text-sm mb-1">Training Duration</p>
-                  <p className="text-slate-300 font-medium">
+                <div className="bg-slate-800/50 rounded-lg p-3">
+                  <p className="text-slate-400 text-xs mb-1">Training Duration</p>
+                  <p className="text-slate-300 font-medium text-sm">
                     {selectedJob.started_at && selectedJob.completed_at 
                       ? `${Math.round((new Date(selectedJob.completed_at).getTime() - new Date(selectedJob.started_at).getTime()) / 1000)}s`
                       : 'N/A'}
                   </p>
+                </div>
+                <div className="bg-slate-800/50 rounded-lg p-3">
+                  <p className="text-slate-400 text-xs mb-1">Learning Rate</p>
+                  <p className="text-cyan-400 font-medium text-sm">{selectedJob.best_metrics?.learning_rate || 'N/A'}</p>
+                </div>
+                <div className="bg-slate-800/50 rounded-lg p-3">
+                  <p className="text-slate-400 text-xs mb-1">Batch Size</p>
+                  <p className="text-orange-400 font-medium text-sm">{selectedJob.best_metrics?.batch_size || 'N/A'}</p>
+                </div>
+                <div className="bg-slate-800/50 rounded-lg p-3">
+                  <p className="text-slate-400 text-xs mb-1">Optimizer</p>
+                  <p className="text-pink-400 font-medium text-sm uppercase">{selectedJob.best_metrics?.optimizer || 'N/A'}</p>
+                </div>
+                <div className="bg-slate-800/50 rounded-lg p-3">
+                  <p className="text-slate-400 text-xs mb-1">Total Parameters</p>
+                  <p className="text-emerald-400 font-medium text-sm">{selectedJob.best_metrics?.model_architecture?.total_params?.toLocaleString() || 'N/A'}</p>
                 </div>
               </div>
               {selectedJob.metrics && (selectedJob.metrics.accuracy || selectedJob.metrics.loss) && (
@@ -771,6 +835,104 @@ export default function TrainingPage() {
                   </div>
                 </div>
               )}
+              {selectedJob.best_metrics?.model_architecture && (
+                <div className="bg-slate-800/50 rounded-lg p-4">
+                  <h4 className="text-white font-medium mb-4">Model Architecture</h4>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead className="bg-slate-900/50">
+                        <tr>
+                          <th className="px-4 py-2 text-left text-slate-400">Layer Type</th>
+                          <th className="px-4 py-2 text-left text-slate-400">Output Shape</th>
+                          <th className="px-4 py-2 text-left text-slate-400">Activation</th>
+                          <th className="px-4 py-2 text-right text-slate-400">Parameters</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-700">
+                        {selectedJob.best_metrics.model_architecture.layers.map((layer, idx) => (
+                          <tr key={idx}>
+                            <td className="px-4 py-2 text-white font-medium">{layer.type}</td>
+                            <td className="px-4 py-2 text-slate-300">{layer.shape || (layer.units ? `(${layer.units},)` : '-')}</td>
+                            <td className="px-4 py-2 text-blue-400">{layer.activation || (layer.rate ? `rate=${layer.rate}` : '-')}</td>
+                            <td className="px-4 py-2 text-right text-green-400">{layer.params.toLocaleString()}</td>
+                          </tr>
+                        ))}
+                        <tr className="bg-slate-900/50 font-bold">
+                          <td className="px-4 py-2 text-white" colSpan={3}>Total Parameters</td>
+                          <td className="px-4 py-2 text-right text-green-400">{selectedJob.best_metrics.model_architecture.total_params.toLocaleString()}</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+              {selectedJob.best_metrics?.roc_curves && Object.keys(selectedJob.best_metrics.roc_curves).length > 0 && (
+                <div className="bg-slate-800/50 rounded-lg p-4">
+                  <h4 className="text-white font-medium mb-4">ROC Curves (Receiver Operating Characteristic)</h4>
+                  <div className="grid grid-cols-2 gap-6">
+                    {Object.entries(selectedJob.best_metrics.roc_curves).map(([className, rocData]: [string, any]) => (
+                      <div key={className}>
+                        <p className="text-slate-400 text-sm mb-3 font-medium">{className} (AUC: {(rocData.auc * 100).toFixed(2)}%)</p>
+                        <div className="relative h-48 bg-slate-900/50 rounded-lg p-4">
+                          <svg viewBox="0 0 400 150" className="w-full h-full">
+                            <defs>
+                              <linearGradient id={`rocGrad-${className}`} x1="0%" y1="0%" x2="0%" y2="100%">
+                                <stop offset="0%" stopColor="rgb(59, 130, 246)" stopOpacity="0.3"/>
+                                <stop offset="100%" stopColor="rgb(59, 130, 246)" stopOpacity="0"/>
+                              </linearGradient>
+                            </defs>
+                            {(() => {
+                              const points = rocData.points.map((p: any, i: number) => `${10 + p.fpr * 380},${140 - p.tpr * 120}`).join(' ');
+                              return (
+                                <>
+                                  <line x1="10" y1="140" x2="390" y2="20" stroke="rgb(100, 100, 100)" strokeWidth="1" strokeDasharray="4"/>
+                                  <polyline points={points} fill="none" stroke="rgb(59, 130, 246)" strokeWidth="2"/>
+                                  <polygon points={`${points} 390,140 10,140`} fill={`url(#rocGrad-${className})`}/>
+                                  <text x="10" y="10" fill="rgb(148, 163, 184)" fontSize="10">TPR</text>
+                                  <text x="360" y="145" fill="rgb(148, 163, 184)" fontSize="10">FPR</text>
+                                </>
+                              );
+                            })()}
+                          </svg>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {selectedJob.best_metrics?.pr_curves && Object.keys(selectedJob.best_metrics.pr_curves).length > 0 && (
+                <div className="bg-slate-800/50 rounded-lg p-4">
+                  <h4 className="text-white font-medium mb-4">Precision-Recall Curves</h4>
+                  <div className="grid grid-cols-2 gap-6">
+                    {Object.entries(selectedJob.best_metrics.pr_curves).map(([className, prData]: [string, any]) => (
+                      <div key={className}>
+                        <p className="text-slate-400 text-sm mb-3 font-medium">{className}</p>
+                        <div className="relative h-48 bg-slate-900/50 rounded-lg p-4">
+                          <svg viewBox="0 0 400 150" className="w-full h-full">
+                            <defs>
+                              <linearGradient id={`prGrad-${className}`} x1="0%" y1="0%" x2="0%" y2="100%">
+                                <stop offset="0%" stopColor="rgb(168, 85, 247)" stopOpacity="0.3"/>
+                                <stop offset="100%" stopColor="rgb(168, 85, 247)" stopOpacity="0"/>
+                              </linearGradient>
+                            </defs>
+                            {(() => {
+                              const points = prData.points.map((p: any, i: number) => `${10 + p.recall * 380},${140 - p.precision * 120}`).join(' ');
+                              return (
+                                <>
+                                  <polyline points={points} fill="none" stroke="rgb(168, 85, 247)" strokeWidth="2"/>
+                                  <polygon points={`${points} 390,140 10,140`} fill={`url(#prGrad-${className})`}/>
+                                  <text x="10" y="10" fill="rgb(148, 163, 184)" fontSize="10">Precision</text>
+                                  <text x="350" y="145" fill="rgb(148, 163, 184)" fontSize="10">Recall</text>
+                                </>
+                              );
+                            })()}
+                          </svg>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
               {selectedJob.best_metrics?.per_class_metrics && Object.keys(selectedJob.best_metrics.per_class_metrics).length > 0 && (
                 <div className="bg-slate-800/50 rounded-lg p-4">
                   <h4 className="text-white font-medium mb-4">Per-Class Metrics</h4>
@@ -847,6 +1009,7 @@ export default function TrainingPage() {
                   </div>
                 </div>
               )}
+              </div>
               <div className="bg-slate-800/50 rounded-lg p-4">
                 <h4 className="text-white font-medium mb-4">Timeline</h4>
                 <div className="space-y-2">
