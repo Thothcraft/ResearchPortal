@@ -144,10 +144,14 @@ export default function TrainingPage() {
     fetchData();
     const interval = setInterval(async () => {
       try {
-        const jobsRes = await get('/datasets/train/jobs').catch(() => null);
+        const [jobsRes, modelsRes] = await Promise.all([
+          get('/datasets/train/jobs').catch(() => null),
+          get('/datasets/models').catch(() => null)
+        ]);
         if (jobsRes?.jobs) setTrainingJobs(jobsRes.jobs);
+        if (modelsRes?.models) setTrainedModels(modelsRes.models);
       } catch {}
-    }, 10000); // Poll every 10 seconds instead of 5
+    }, 10000); // Poll every 10 seconds
     return () => clearInterval(interval);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -299,6 +303,40 @@ export default function TrainingPage() {
       console.error('Download error:', err);
       setError('Failed to download model'); 
     }
+  };
+
+  const downloadGraph = (svgElement: SVGSVGElement | null, filename: string) => {
+    if (!svgElement) return;
+    
+    // Clone the SVG to avoid modifying the original
+    const clonedSvg = svgElement.cloneNode(true) as SVGSVGElement;
+    
+    // Set white background for publication
+    clonedSvg.style.backgroundColor = 'white';
+    
+    // Add proper dimensions for high-quality export
+    clonedSvg.setAttribute('width', '1200');
+    clonedSvg.setAttribute('height', '800');
+    
+    // Serialize SVG to string
+    const serializer = new XMLSerializer();
+    let svgString = serializer.serializeToString(clonedSvg);
+    
+    // Add XML declaration and styling for publication quality
+    svgString = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+${svgString}`;
+    
+    // Create blob and download
+    const blob = new Blob([svgString], { type: 'image/svg+xml;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `${filename}.svg`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   };
 
   const handleAddLabel = () => {
@@ -750,9 +788,14 @@ export default function TrainingPage() {
                   <div className="grid grid-cols-2 gap-6">
                     {selectedJob.metrics.accuracy && selectedJob.metrics.val_accuracy && (
                       <div>
-                        <p className="text-slate-400 text-sm mb-3 font-medium">Accuracy Over Epochs</p>
+                        <div className="flex justify-between items-center mb-3">
+                          <p className="text-slate-400 text-sm font-medium">Accuracy Over Epochs</p>
+                          <button onClick={() => downloadGraph(document.getElementById('accuracy-chart') as any, `${selectedJob.dataset_name}_accuracy`)} className="p-1 text-slate-400 hover:text-white">
+                            <Download className="w-4 h-4" />
+                          </button>
+                        </div>
                         <div className="relative h-48 bg-slate-900/50 rounded-lg p-4">
-                          <svg viewBox="0 0 400 150" className="w-full h-full">
+                          <svg id="accuracy-chart" viewBox="0 0 400 150" className="w-full h-full">
                             <defs>
                               <linearGradient id="trainAccGrad" x1="0%" y1="0%" x2="0%" y2="100%">
                                 <stop offset="0%" stopColor="rgb(34, 197, 94)" stopOpacity="0.3"/>
@@ -792,9 +835,14 @@ export default function TrainingPage() {
                     )}
                     {selectedJob.metrics.loss && selectedJob.metrics.val_loss && (
                       <div>
-                        <p className="text-slate-400 text-sm mb-3 font-medium">Loss Over Epochs</p>
+                        <div className="flex justify-between items-center mb-3">
+                          <p className="text-slate-400 text-sm font-medium">Loss Over Epochs</p>
+                          <button onClick={() => downloadGraph(document.getElementById('loss-chart') as any, `${selectedJob.dataset_name}_loss`)} className="p-1 text-slate-400 hover:text-white">
+                            <Download className="w-4 h-4" />
+                          </button>
+                        </div>
                         <div className="relative h-48 bg-slate-900/50 rounded-lg p-4">
-                          <svg viewBox="0 0 400 150" className="w-full h-full">
+                          <svg id="loss-chart" viewBox="0 0 400 150" className="w-full h-full">
                             <defs>
                               <linearGradient id="trainLossGrad" x1="0%" y1="0%" x2="0%" y2="100%">
                                 <stop offset="0%" stopColor="rgb(239, 68, 68)" stopOpacity="0.3"/>
@@ -872,9 +920,14 @@ export default function TrainingPage() {
                   <div className="grid grid-cols-2 gap-6">
                     {Object.entries(selectedJob.best_metrics.roc_curves).map(([className, rocData]: [string, any]) => (
                       <div key={className}>
-                        <p className="text-slate-400 text-sm mb-3 font-medium">{className} (AUC: {(rocData.auc * 100).toFixed(2)}%)</p>
+                        <div className="flex justify-between items-center mb-3">
+                          <p className="text-slate-400 text-sm font-medium">{className} (AUC: {(rocData.auc * 100).toFixed(2)}%)</p>
+                          <button onClick={() => downloadGraph(document.getElementById(`roc-${className}`) as any, `${selectedJob.dataset_name}_roc_${className}`)} className="p-1 text-slate-400 hover:text-white">
+                            <Download className="w-4 h-4" />
+                          </button>
+                        </div>
                         <div className="relative h-48 bg-slate-900/50 rounded-lg p-4">
-                          <svg viewBox="0 0 400 150" className="w-full h-full">
+                          <svg id={`roc-${className}`} viewBox="0 0 400 150" className="w-full h-full">
                             <defs>
                               <linearGradient id={`rocGrad-${className}`} x1="0%" y1="0%" x2="0%" y2="100%">
                                 <stop offset="0%" stopColor="rgb(59, 130, 246)" stopOpacity="0.3"/>
@@ -906,9 +959,14 @@ export default function TrainingPage() {
                   <div className="grid grid-cols-2 gap-6">
                     {Object.entries(selectedJob.best_metrics.pr_curves).map(([className, prData]: [string, any]) => (
                       <div key={className}>
-                        <p className="text-slate-400 text-sm mb-3 font-medium">{className}</p>
+                        <div className="flex justify-between items-center mb-3">
+                          <p className="text-slate-400 text-sm font-medium">{className}</p>
+                          <button onClick={() => downloadGraph(document.getElementById(`pr-${className}`) as any, `${selectedJob.dataset_name}_pr_${className}`)} className="p-1 text-slate-400 hover:text-white">
+                            <Download className="w-4 h-4" />
+                          </button>
+                        </div>
                         <div className="relative h-48 bg-slate-900/50 rounded-lg p-4">
-                          <svg viewBox="0 0 400 150" className="w-full h-full">
+                          <svg id={`pr-${className}`} viewBox="0 0 400 150" className="w-full h-full">
                             <defs>
                               <linearGradient id={`prGrad-${className}`} x1="0%" y1="0%" x2="0%" y2="100%">
                                 <stop offset="0%" stopColor="rgb(168, 85, 247)" stopOpacity="0.3"/>
