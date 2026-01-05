@@ -14,6 +14,7 @@ import {
   MessageCircle,
   ChevronLeft,
   ChevronRight,
+  Workflow,
 } from 'lucide-react';
 import { useState } from 'react';
 
@@ -21,6 +22,7 @@ const navItems = [
   { name: 'Home', href: '/home', icon: Home, description: 'Statistics & Overview' },
   { name: 'Devices', href: '/devices', icon: Monitor, description: 'Online/Offline Devices' },
   { name: 'Data', href: '/data', icon: Database, description: 'Data Files' },
+  { name: 'Processing', href: '/processing', icon: Workflow, description: 'Data Pipelines' },
   { name: 'Training', href: '/training', icon: Brain, description: 'Model Training' },
   { name: 'Chatbot', href: '/chatbot', icon: MessageCircle, description: 'AI Assistant' },
   { name: 'Settings', href: '/settings', icon: Settings, description: 'Preferences' },
