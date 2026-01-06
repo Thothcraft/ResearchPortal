@@ -11,6 +11,12 @@ import {
   Clock,
   CheckCircle,
   XCircle,
+  Wifi,
+  WifiOff,
+  File,
+  MessageCircle,
+  Loader2,
+  RefreshCw,
 } from 'lucide-react';
 
 type Stats = {
@@ -19,7 +25,20 @@ type Stats = {
   offlineDevices: number;
   totalDataFiles: number;
   trainingJobs: number;
-  lastActivity: string;
+  activeJobs: number;
+  totalModels: number;
+  bestAccuracy: number | null;
+};
+
+type ActivityItem = {
+  type: string;
+  action: string;
+  title: string;
+  description: string;
+  timestamp: string;
+  icon: string;
+  color: string;
+  metadata?: Record<string, any>;
 };
 
 export default function HomePage() {
@@ -29,47 +48,98 @@ export default function HomePage() {
     offlineDevices: 0,
     totalDataFiles: 0,
     trainingJobs: 0,
-    lastActivity: 'N/A',
+    activeJobs: 0,
+    totalModels: 0,
+    bestAccuracy: null,
   });
+  const [activities, setActivities] = useState<ActivityItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const { get } = useApi();
 
-  useEffect(() => {
-    const fetchStats = async () => {
-      try {
-        setIsLoading(true);
-        
-        // Fetch devices
-        const deviceData = await get('/device/list?include_offline=true');
-        const devices = deviceData?.devices || [];
-        const onlineCount = devices.filter((d: any) => d.online).length;
-        
-        // Fetch data files
-        let dataFileCount = 0;
-        try {
-          const dataFiles = await get('/data/files');
-          dataFileCount = dataFiles?.files?.length || 0;
-        } catch {
-          dataFileCount = 0;
-        }
-
+  const fetchData = async (showRefresh = false) => {
+    try {
+      if (showRefresh) setIsRefreshing(true);
+      else setIsLoading(true);
+      
+      // Fetch stats from activity endpoint
+      const [statsRes, activityRes] = await Promise.all([
+        get('/activity/stats').catch(() => null),
+        get('/activity/recent?limit=10&hours=48').catch(() => null),
+      ]);
+      
+      if (statsRes?.success && statsRes.stats) {
+        const s = statsRes.stats;
         setStats({
-          totalDevices: devices.length,
-          onlineDevices: onlineCount,
-          offlineDevices: devices.length - onlineCount,
-          totalDataFiles: dataFileCount,
-          trainingJobs: 0,
-          lastActivity: new Date().toLocaleString(),
+          totalDevices: s.devices?.total || 0,
+          onlineDevices: s.devices?.online || 0,
+          offlineDevices: s.devices?.offline || 0,
+          totalDataFiles: s.files?.total || 0,
+          trainingJobs: s.training?.total_jobs || 0,
+          activeJobs: s.training?.active_jobs || 0,
+          totalModels: s.models?.total || 0,
+          bestAccuracy: s.models?.best_accuracy || null,
         });
-      } catch (error) {
-        console.error('Error fetching stats:', error);
-      } finally {
-        setIsLoading(false);
       }
-    };
+      
+      if (activityRes?.success && activityRes.activities) {
+        setActivities(activityRes.activities);
+      }
+    } catch (error) {
+      console.error('Error fetching data:', error);
+    } finally {
+      setIsLoading(false);
+      setIsRefreshing(false);
+    }
+  };
 
-    fetchStats();
+  useEffect(() => {
+    fetchData();
+    // Refresh every 30 seconds
+    const interval = setInterval(() => fetchData(true), 30000);
+    return () => clearInterval(interval);
   }, []);
+
+  const getActivityIcon = (icon: string) => {
+    switch (icon) {
+      case 'wifi': return <Wifi className="w-4 h-4" />;
+      case 'wifi-off': return <WifiOff className="w-4 h-4" />;
+      case 'file': return <File className="w-4 h-4" />;
+      case 'check-circle': return <CheckCircle className="w-4 h-4" />;
+      case 'x-circle': return <XCircle className="w-4 h-4" />;
+      case 'loader': return <Loader2 className="w-4 h-4 animate-spin" />;
+      case 'brain': return <Brain className="w-4 h-4" />;
+      case 'message-circle': return <MessageCircle className="w-4 h-4" />;
+      default: return <Activity className="w-4 h-4" />;
+    }
+  };
+
+  const getActivityColor = (color: string) => {
+    switch (color) {
+      case 'green': return 'bg-green-500';
+      case 'red': return 'bg-red-500';
+      case 'blue': return 'bg-blue-500';
+      case 'purple': return 'bg-purple-500';
+      case 'indigo': return 'bg-indigo-500';
+      case 'orange': return 'bg-orange-500';
+      default: return 'bg-slate-500';
+    }
+  };
+
+  const formatTimestamp = (timestamp: string) => {
+    const date = new Date(timestamp);
+    const now = new Date();
+    const diffMs = now.getTime() - date.getTime();
+    const diffMins = Math.floor(diffMs / 60000);
+    const diffHours = Math.floor(diffMs / 3600000);
+    const diffDays = Math.floor(diffMs / 86400000);
+    
+    if (diffMins < 1) return 'Just now';
+    if (diffMins < 60) return `${diffMins}m ago`;
+    if (diffHours < 24) return `${diffHours}h ago`;
+    if (diffDays < 7) return `${diffDays}d ago`;
+    return date.toLocaleDateString();
+  };
 
   const statCards = [
     {
@@ -87,13 +157,6 @@ export default function HomePage() {
       bgColor: 'bg-green-500/10',
     },
     {
-      title: 'Offline Devices',
-      value: stats.offlineDevices,
-      icon: XCircle,
-      color: 'from-red-500 to-red-600',
-      bgColor: 'bg-red-500/10',
-    },
-    {
       title: 'Data Files',
       value: stats.totalDataFiles,
       icon: Database,
@@ -103,14 +166,22 @@ export default function HomePage() {
     {
       title: 'Training Jobs',
       value: stats.trainingJobs,
+      subtitle: stats.activeJobs > 0 ? `${stats.activeJobs} active` : undefined,
       icon: Brain,
       color: 'from-orange-500 to-orange-600',
       bgColor: 'bg-orange-500/10',
     },
     {
-      title: 'System Status',
-      value: 'Active',
-      icon: Activity,
+      title: 'Trained Models',
+      value: stats.totalModels,
+      icon: Brain,
+      color: 'from-indigo-500 to-indigo-600',
+      bgColor: 'bg-indigo-500/10',
+    },
+    {
+      title: 'Best Accuracy',
+      value: stats.bestAccuracy ? `${(stats.bestAccuracy * 100).toFixed(1)}%` : 'N/A',
+      icon: TrendingUp,
       color: 'from-teal-500 to-teal-600',
       bgColor: 'bg-teal-500/10',
       isText: true,
@@ -159,25 +230,44 @@ export default function HomePage() {
 
       {/* Recent Activity */}
       <div className="bg-slate-800/50 backdrop-blur-sm rounded-xl p-6 border border-slate-700">
-        <div className="flex items-center gap-3 mb-6">
-          <Clock className="w-5 h-5 text-indigo-400" />
-          <h2 className="text-xl font-semibold text-white">Recent Activity</h2>
+        <div className="flex items-center justify-between mb-6">
+          <div className="flex items-center gap-3">
+            <Clock className="w-5 h-5 text-indigo-400" />
+            <h2 className="text-xl font-semibold text-white">Recent Activity</h2>
+          </div>
+          <button
+            onClick={() => fetchData(true)}
+            disabled={isRefreshing}
+            className="p-2 text-slate-400 hover:text-white hover:bg-slate-700 rounded-lg transition-colors"
+          >
+            <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+          </button>
         </div>
-        <div className="space-y-4">
-          <div className="flex items-center gap-4 p-4 bg-slate-700/30 rounded-lg">
-            <div className="w-2 h-2 bg-green-500 rounded-full"></div>
-            <div className="flex-1">
-              <p className="text-white text-sm">System initialized</p>
-              <p className="text-slate-500 text-xs">{stats.lastActivity}</p>
+        <div className="space-y-3 max-h-96 overflow-y-auto">
+          {activities.length === 0 ? (
+            <div className="text-center py-8">
+              <Activity className="w-10 h-10 text-slate-500 mx-auto mb-2" />
+              <p className="text-slate-400 text-sm">No recent activity</p>
             </div>
-          </div>
-          <div className="flex items-center gap-4 p-4 bg-slate-700/30 rounded-lg">
-            <div className="w-2 h-2 bg-blue-500 rounded-full"></div>
-            <div className="flex-1">
-              <p className="text-white text-sm">Dashboard loaded</p>
-              <p className="text-slate-500 text-xs">Just now</p>
-            </div>
-          </div>
+          ) : (
+            activities.map((activity, index) => (
+              <div
+                key={`${activity.type}-${activity.timestamp}-${index}`}
+                className="flex items-start gap-4 p-4 bg-slate-700/30 rounded-lg hover:bg-slate-700/50 transition-colors"
+              >
+                <div className={`w-8 h-8 rounded-full ${getActivityColor(activity.color)} flex items-center justify-center text-white`}>
+                  {getActivityIcon(activity.icon)}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-white text-sm font-medium">{activity.title}</p>
+                  <p className="text-slate-400 text-xs truncate">{activity.description}</p>
+                </div>
+                <span className="text-slate-500 text-xs whitespace-nowrap">
+                  {formatTimestamp(activity.timestamp)}
+                </span>
+              </div>
+            ))
+          )}
         </div>
       </div>
     </div>

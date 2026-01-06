@@ -23,10 +23,27 @@ type Dataset = {
 type DatasetFile = { id: number; file_id: number; filename: string; label: string; size?: number };
 type CloudFile = { file_id: number; filename: string; size: number; content_type: string; uploaded_at: string };
 type ModelOption = { value: string; label: string; description: string; supported_data: string[] };
+type BayesianTrialData = {
+  trial: number;
+  learning_rate: number;
+  batch_size: number;
+  weight_decay?: number;
+  dropout?: number;
+  optimizer?: string;
+  architecture_size?: string;
+  train_accuracy: number;
+  val_accuracy: number;
+  train_loss?: number;
+  val_loss?: number;
+  duration_seconds?: number;
+  is_best: boolean;
+};
+
 type TrainingJob = {
   job_id: string; dataset_id: number; dataset_name: string; model_type: string;
   training_mode: string; status: string; current_epoch: number; total_epochs: number;
   metrics: { loss?: number[]; accuracy?: number[]; val_loss?: number[]; val_accuracy?: number[] };
+  config?: string | Record<string, any>;
   best_metrics: { 
     val_accuracy?: number; 
     best_epoch?: number;
@@ -46,6 +63,7 @@ type TrainingJob = {
     learning_rate?: number;
     batch_size?: number;
     optimizer?: string;
+    bayesian_config?: Record<string, any>;
   };
   created_at: string; started_at?: string; completed_at?: string;
 };
@@ -117,9 +135,22 @@ export default function TrainingPage() {
     validation_split: 0.2, 
     model_name: '', 
     test_dataset_id: null as number | null,
+    window_size: 128,
+    // Bayesian optimization settings
     use_bayesian_optimization: false,
-    bayesian_trials: 20
+    bayesian_trials: 20,
+    bayesian_epochs_per_trial: 3,
+    bayesian_lr_min: 0.00001,
+    bayesian_lr_max: 0.01,
+    bayesian_lr_scale: 'log' as 'log' | 'linear',
+    bayesian_batch_sizes: [16, 32, 64, 128],
+    bayesian_weight_decay_min: 0.0,
+    bayesian_weight_decay_max: 0.01,
+    bayesian_optimizers: ['adam', 'adamw', 'sgd'],
+    bayesian_exploration_rate: 0.3,
+    bayesian_search_architecture: false
   });
+  const [showAdvancedBayesian, setShowAdvancedBayesian] = useState(false);
   const [compareModels, setCompareModels] = useState<number[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -330,6 +361,115 @@ export default function TrainingPage() {
     }
   };
 
+  // Export functions for publication-quality outputs
+  const exportToCSV = (data: any[], filename: string, headers: string[]) => {
+    const csvContent = [
+      headers.join(','),
+      ...data.map(row => headers.map(h => {
+        const val = row[h.toLowerCase().replace(/\s+/g, '_')];
+        return typeof val === 'number' ? val.toFixed(6) : `"${val || ''}"`;
+      }).join(','))
+    ].join('\n');
+    
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${filename}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const exportMetricsTable = (job: TrainingJob) => {
+    if (!job.best_metrics?.per_class_metrics) return;
+    
+    const data = Object.entries(job.best_metrics.per_class_metrics).map(([className, metrics]) => ({
+      class: className,
+      precision: metrics.precision,
+      recall: metrics.recall,
+      f1_score: metrics.f1_score,
+      support: metrics.support
+    }));
+    
+    const headers = ['Class', 'Precision', 'Recall', 'F1_Score', 'Support'];
+    exportToCSV(data, `${job.dataset_name}_metrics`, headers);
+  };
+
+  const exportConfusionMatrix = (job: TrainingJob) => {
+    if (!job.best_metrics?.confusion_matrix || !job.best_metrics?.class_names) return;
+    
+    const classNames = job.best_metrics.class_names;
+    const matrix = job.best_metrics.confusion_matrix;
+    
+    const headers = ['True/Predicted', ...classNames];
+    const csvContent = [
+      headers.join(','),
+      ...matrix.map((row, i) => [classNames[i], ...row].join(','))
+    ].join('\n');
+    
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${job.dataset_name}_confusion_matrix.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const exportBayesianTrials = (job: TrainingJob) => {
+    try {
+      const config = typeof job.config === 'string' ? JSON.parse(job.config) : job.config;
+      const trials = config?.bayesian_trials_results as BayesianTrialData[];
+      if (!trials || trials.length === 0) return;
+      
+      const headers = ['Trial', 'Learning_Rate', 'Batch_Size', 'Weight_Decay', 'Optimizer', 'Train_Acc', 'Val_Acc', 'Duration_s', 'Is_Best'];
+      const csvContent = [
+        headers.join(','),
+        ...trials.map(t => [
+          t.trial,
+          t.learning_rate.toExponential(4),
+          t.batch_size,
+          (t.weight_decay || 0).toExponential(4),
+          t.optimizer || 'adam',
+          (t.train_accuracy * 100).toFixed(2),
+          (t.val_accuracy * 100).toFixed(2),
+          t.duration_seconds || '-',
+          t.is_best ? 'Yes' : 'No'
+        ].join(','))
+      ].join('\n');
+      
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${job.dataset_name}_bayesian_trials.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      console.error('Failed to export Bayesian trials:', e);
+    }
+  };
+
+  const exportTrainingCurves = (job: TrainingJob) => {
+    if (!job.metrics) return;
+    
+    const epochs = job.metrics.loss?.length || job.metrics.accuracy?.length || 0;
+    const data = [];
+    
+    for (let i = 0; i < epochs; i++) {
+      data.push({
+        epoch: i + 1,
+        train_loss: job.metrics.loss?.[i] || '',
+        val_loss: job.metrics.val_loss?.[i] || '',
+        train_accuracy: job.metrics.accuracy?.[i] || '',
+        val_accuracy: job.metrics.val_accuracy?.[i] || ''
+      });
+    }
+    
+    const headers = ['Epoch', 'Train_Loss', 'Val_Loss', 'Train_Accuracy', 'Val_Accuracy'];
+    exportToCSV(data, `${job.dataset_name}_training_curves`, headers);
+  };
+
   const downloadGraph = async (svgElement: SVGSVGElement | null, filename: string) => {
     if (!svgElement) return;
     
@@ -341,7 +481,6 @@ export default function TrainingPage() {
       const plotWidth = width - 2 * margin;
       const plotHeight = height - 2 * margin;
       
-      // Create canvas for publication-quality rendering
       const canvas = document.createElement('canvas');
       canvas.width = width;
       canvas.height = height;
@@ -353,16 +492,11 @@ export default function TrainingPage() {
       ctx.fillStyle = 'white';
       ctx.fillRect(0, 0, width, height);
       
-      // Set publication-quality font
-      ctx.font = 'bold 24px Arial';
+      // Title
+      const graphTitle = filename.replace(/_/g, ' ').split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+      ctx.font = 'bold 28px Arial';
       ctx.fillStyle = '#000000';
       ctx.textAlign = 'center';
-      
-      // Extract data from SVG (this is a simplified approach)
-      // In a real implementation, you'd parse the actual data
-      const graphTitle = filename.replace(/_/g, ' ').split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
-      
-      // Draw title
       ctx.fillText(graphTitle, width / 2, 60);
       
       // Draw axes
@@ -374,18 +508,16 @@ export default function TrainingPage() {
       ctx.lineTo(width - margin, height - margin);
       ctx.stroke();
       
-      // Draw axis labels
-      ctx.font = 'bold 20px Arial';
-      ctx.textAlign = 'center';
+      // Axis labels
+      ctx.font = 'bold 22px Arial';
       ctx.fillText('Epoch', width / 2, height - 40);
-      
       ctx.save();
-      ctx.translate(40, height / 2);
+      ctx.translate(45, height / 2);
       ctx.rotate(-Math.PI / 2);
       ctx.fillText(filename.includes('loss') ? 'Loss' : 'Accuracy', 0, 0);
       ctx.restore();
       
-      // Draw grid lines
+      // Grid
       ctx.strokeStyle = '#e0e0e0';
       ctx.lineWidth = 1;
       for (let i = 0; i <= 10; i++) {
@@ -402,24 +534,25 @@ export default function TrainingPage() {
         ctx.stroke();
       }
       
-      // Draw tick labels
-      ctx.font = '16px Arial';
+      // Tick labels
+      ctx.font = '18px Arial';
       ctx.fillStyle = '#000000';
       ctx.textAlign = 'right';
       for (let i = 0; i <= 10; i++) {
         const y = margin + (plotHeight / 10) * i;
         const value = filename.includes('loss') ? (2.0 - i * 0.2).toFixed(1) : ((100 - i * 10).toString() + '%');
-        ctx.fillText(value, margin - 10, y + 5);
+        ctx.fillText(value, margin - 15, y + 6);
       }
       
       ctx.textAlign = 'center';
       for (let i = 0; i <= 10; i++) {
         const x = margin + (plotWidth / 10) * i;
-        ctx.fillText((i * 10).toString(), x, height - margin + 30);
+        ctx.fillText((i * 10).toString(), x, height - margin + 35);
       }
       
-      // Draw data from SVG
+      // Draw data
       const polylines = svgElement.querySelectorAll('polyline');
+      const colors = ['#2563eb', '#10b981', '#ef4444', '#a855f7'];
       polylines.forEach((polyline, index) => {
         const points = polyline.getAttribute('points');
         if (!points) return;
@@ -427,11 +560,10 @@ export default function TrainingPage() {
         const coords = points.trim().split(/\s+/).map(p => p.split(',').map(Number));
         if (coords.length === 0) return;
         
-        // Map SVG coordinates to canvas coordinates
         const svgWidth = parseFloat(svgElement.getAttribute('viewBox')?.split(' ')[2] || '400');
         const svgHeight = parseFloat(svgElement.getAttribute('viewBox')?.split(' ')[3] || '150');
         
-        ctx.strokeStyle = index === 0 ? '#2563eb' : '#10b981';
+        ctx.strokeStyle = colors[index % colors.length];
         ctx.lineWidth = 4;
         ctx.beginPath();
         
@@ -445,41 +577,34 @@ export default function TrainingPage() {
         ctx.stroke();
       });
       
-      // Draw legend
-      ctx.font = 'bold 18px Arial';
-      const legendX = width - margin - 200;
+      // Legend
+      ctx.font = 'bold 20px Arial';
+      const legendX = width - margin - 180;
       const legendY = margin + 40;
       
       ctx.fillStyle = '#2563eb';
-      ctx.fillRect(legendX, legendY, 30, 4);
+      ctx.fillRect(legendX, legendY, 35, 5);
       ctx.fillStyle = '#000000';
       ctx.textAlign = 'left';
-      ctx.fillText('Training', legendX + 40, legendY + 5);
+      ctx.fillText('Training', legendX + 45, legendY + 6);
       
       ctx.fillStyle = '#10b981';
-      ctx.fillRect(legendX, legendY + 30, 30, 4);
+      ctx.fillRect(legendX, legendY + 35, 35, 5);
       ctx.fillStyle = '#000000';
-      ctx.fillText('Validation', legendX + 40, legendY + 35);
+      ctx.fillText('Validation', legendX + 45, legendY + 41);
       
-      // Convert canvas to image and create PDF
+      // Convert canvas to PDF using jsPDF
       canvas.toBlob(async (blob) => {
         if (!blob) return;
-        
-        // Create proper PDF using jsPDF
-        const pdf = new jsPDF({
-          orientation: 'landscape',
-          unit: 'px',
-          format: [width, height]
+        const imgData = await new Promise<string>((resolve) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result as string);
+          reader.readAsDataURL(blob);
         });
         
-        // Convert blob to data URL
-        const reader = new FileReader();
-        reader.onload = () => {
-          const imgData = reader.result as string;
-          pdf.addImage(imgData, 'PNG', 0, 0, width, height);
-          pdf.save(`${filename}_publication.pdf`);
-        };
-        reader.readAsDataURL(blob);
+        const pdf = new jsPDF({ orientation: 'landscape', unit: 'px', format: [width, height] });
+        pdf.addImage(imgData, 'PNG', 0, 0, width, height);
+        pdf.save(`${filename}.pdf`);
       }, 'image/png', 1.0);
       
     } catch (err) {
@@ -751,8 +876,8 @@ export default function TrainingPage() {
                       </thead>
                       <tbody className="divide-y divide-slate-700">
                         <tr><td className="px-6 py-4 text-slate-300 font-medium">Architecture</td>{compareModels.map(modelId => {const model = trainedModels.find(m => m.id === modelId); return <td key={modelId} className="px-6 py-4 text-white uppercase">{model?.architecture || 'N/A'}</td>;})}</tr>
-                        <tr><td className="px-6 py-4 text-slate-300 font-medium">Accuracy</td>{compareModels.map(modelId => {const model = trainedModels.find(m => m.id === modelId); const isMax = model && model.accuracy === Math.max(...compareModels.map(id => trainedModels.find(m => m.id === id)?.accuracy || 0)); return <td key={modelId} className={`px-6 py-4 font-medium ${isMax ? 'text-green-400' : 'text-white'}`}>{model?.accuracy !== null ? `${(model.accuracy * 100).toFixed(2)}%` : 'N/A'}</td>;})}</tr>
-                        <tr><td className="px-6 py-4 text-slate-300 font-medium">Model Size</td>{compareModels.map(modelId => {const model = trainedModels.find(m => m.id === modelId); const isMin = model && model.size_mb === Math.min(...compareModels.map(id => trainedModels.find(m => m.id === id)?.size_mb || Infinity).filter(s => s !== Infinity)); return <td key={modelId} className={`px-6 py-4 ${isMin ? 'text-green-400 font-medium' : 'text-white'}`}>{model?.size_mb !== null ? `${model.size_mb.toFixed(1)} MB` : 'N/A'}</td>;})}</tr>
+                        <tr><td className="px-6 py-4 text-slate-300 font-medium">Accuracy</td>{compareModels.map(modelId => {const model = trainedModels.find(m => m.id === modelId); const isMax = model && model.accuracy === Math.max(...compareModels.map(id => trainedModels.find(m => m.id === id)?.accuracy || 0)); return <td key={modelId} className={`px-6 py-4 font-medium ${isMax ? 'text-green-400' : 'text-white'}`}>{model?.accuracy != null ? `${(model.accuracy * 100).toFixed(2)}%` : 'N/A'}</td>;})}</tr>
+                        <tr><td className="px-6 py-4 text-slate-300 font-medium">Model Size</td>{compareModels.map(modelId => {const model = trainedModels.find(m => m.id === modelId); const isMin = model && model.size_mb === Math.min(...compareModels.map(id => trainedModels.find(m => m.id === id)?.size_mb || Infinity).filter(s => s !== Infinity)); return <td key={modelId} className={`px-6 py-4 ${isMin ? 'text-green-400 font-medium' : 'text-white'}`}>{model?.size_mb != null ? `${model.size_mb.toFixed(1)} MB` : 'N/A'}</td>;})}</tr>
                         <tr><td className="px-6 py-4 text-slate-300 font-medium">Created Date</td>{compareModels.map(modelId => {const model = trainedModels.find(m => m.id === modelId); return <td key={modelId} className="px-6 py-4 text-slate-400 text-sm">{model ? new Date(model.created_at).toLocaleDateString() : 'N/A'}</td>;})}</tr>
                       </tbody>
                     </table>
@@ -896,17 +1021,166 @@ export default function TrainingPage() {
                 </label>
               </div>
               {trainingConfig.use_bayesian_optimization && (
-                <div>
-                  <label className="block text-sm text-slate-300 mb-1">Optimization Trials</label>
-                  <input 
-                    type="number" 
-                    value={trainingConfig.bayesian_trials} 
-                    onChange={(e) => setTrainingConfig({ ...trainingConfig, bayesian_trials: parseInt(e.target.value) || 20 })} 
-                    className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white" 
-                    min="5"
-                    max="50"
-                  />
-                  <p className="text-xs text-slate-500 mt-1">Number of hyperparameter combinations to try (5-50)</p>
+                <div className="space-y-4 p-4 bg-slate-800/30 rounded-lg border border-slate-700">
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-sm font-medium text-indigo-400">Bayesian Optimization Settings</h4>
+                    <button
+                      type="button"
+                      onClick={() => setShowAdvancedBayesian(!showAdvancedBayesian)}
+                      className="text-xs text-slate-400 hover:text-white"
+                    >
+                      {showAdvancedBayesian ? 'Hide Advanced' : 'Show Advanced'}
+                    </button>
+                  </div>
+                  
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm text-slate-300 mb-1">Number of Trials</label>
+                      <input 
+                        type="number" 
+                        value={trainingConfig.bayesian_trials} 
+                        onChange={(e) => setTrainingConfig({ ...trainingConfig, bayesian_trials: parseInt(e.target.value) || 20 })} 
+                        className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white" 
+                        min="5"
+                        max="100"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm text-slate-300 mb-1">Epochs per Trial</label>
+                      <input 
+                        type="number" 
+                        value={trainingConfig.bayesian_epochs_per_trial} 
+                        onChange={(e) => setTrainingConfig({ ...trainingConfig, bayesian_epochs_per_trial: parseInt(e.target.value) || 3 })} 
+                        className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white" 
+                        min="1"
+                        max="10"
+                      />
+                    </div>
+                  </div>
+
+                  {showAdvancedBayesian && (
+                    <>
+                      <div className="border-t border-slate-700 pt-4">
+                        <h5 className="text-xs font-medium text-slate-400 mb-3">LEARNING RATE SEARCH SPACE</h5>
+                        <div className="grid grid-cols-3 gap-3">
+                          <div>
+                            <label className="block text-xs text-slate-400 mb-1">Min LR</label>
+                            <input 
+                              type="number" 
+                              step="0.00001"
+                              value={trainingConfig.bayesian_lr_min} 
+                              onChange={(e) => setTrainingConfig({ ...trainingConfig, bayesian_lr_min: parseFloat(e.target.value) || 0.00001 })} 
+                              className="w-full px-2 py-1.5 bg-slate-800 border border-slate-600 rounded text-white text-sm" 
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs text-slate-400 mb-1">Max LR</label>
+                            <input 
+                              type="number" 
+                              step="0.001"
+                              value={trainingConfig.bayesian_lr_max} 
+                              onChange={(e) => setTrainingConfig({ ...trainingConfig, bayesian_lr_max: parseFloat(e.target.value) || 0.01 })} 
+                              className="w-full px-2 py-1.5 bg-slate-800 border border-slate-600 rounded text-white text-sm" 
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs text-slate-400 mb-1">Scale</label>
+                            <select 
+                              value={trainingConfig.bayesian_lr_scale} 
+                              onChange={(e) => setTrainingConfig({ ...trainingConfig, bayesian_lr_scale: e.target.value as 'log' | 'linear' })} 
+                              className="w-full px-2 py-1.5 bg-slate-800 border border-slate-600 rounded text-white text-sm"
+                            >
+                              <option value="log">Logarithmic</option>
+                              <option value="linear">Linear</option>
+                            </select>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="border-t border-slate-700 pt-4">
+                        <h5 className="text-xs font-medium text-slate-400 mb-3">WEIGHT DECAY SEARCH SPACE</h5>
+                        <div className="grid grid-cols-2 gap-3">
+                          <div>
+                            <label className="block text-xs text-slate-400 mb-1">Min Weight Decay</label>
+                            <input 
+                              type="number" 
+                              step="0.001"
+                              value={trainingConfig.bayesian_weight_decay_min} 
+                              onChange={(e) => setTrainingConfig({ ...trainingConfig, bayesian_weight_decay_min: parseFloat(e.target.value) || 0 })} 
+                              className="w-full px-2 py-1.5 bg-slate-800 border border-slate-600 rounded text-white text-sm" 
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs text-slate-400 mb-1">Max Weight Decay</label>
+                            <input 
+                              type="number" 
+                              step="0.001"
+                              value={trainingConfig.bayesian_weight_decay_max} 
+                              onChange={(e) => setTrainingConfig({ ...trainingConfig, bayesian_weight_decay_max: parseFloat(e.target.value) || 0.01 })} 
+                              className="w-full px-2 py-1.5 bg-slate-800 border border-slate-600 rounded text-white text-sm" 
+                            />
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="border-t border-slate-700 pt-4">
+                        <h5 className="text-xs font-medium text-slate-400 mb-3">OPTIMIZERS TO TRY</h5>
+                        <div className="flex flex-wrap gap-2">
+                          {['adam', 'adamw', 'sgd'].map(opt => (
+                            <label key={opt} className="flex items-center gap-2 px-3 py-1.5 bg-slate-800 rounded border border-slate-600 cursor-pointer">
+                              <input 
+                                type="checkbox" 
+                                checked={trainingConfig.bayesian_optimizers.includes(opt)}
+                                onChange={(e) => {
+                                  const newOpts = e.target.checked 
+                                    ? [...trainingConfig.bayesian_optimizers, opt]
+                                    : trainingConfig.bayesian_optimizers.filter(o => o !== opt);
+                                  setTrainingConfig({ ...trainingConfig, bayesian_optimizers: newOpts.length > 0 ? newOpts : ['adam'] });
+                                }}
+                                className="w-3 h-3"
+                              />
+                              <span className="text-sm text-white uppercase">{opt}</span>
+                            </label>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div className="border-t border-slate-700 pt-4">
+                        <h5 className="text-xs font-medium text-slate-400 mb-3">BATCH SIZES TO TRY</h5>
+                        <div className="flex flex-wrap gap-2">
+                          {[8, 16, 32, 64, 128, 256].map(bs => (
+                            <label key={bs} className="flex items-center gap-2 px-3 py-1.5 bg-slate-800 rounded border border-slate-600 cursor-pointer">
+                              <input 
+                                type="checkbox" 
+                                checked={trainingConfig.bayesian_batch_sizes.includes(bs)}
+                                onChange={(e) => {
+                                  const newBs = e.target.checked 
+                                    ? [...trainingConfig.bayesian_batch_sizes, bs].sort((a, b) => a - b)
+                                    : trainingConfig.bayesian_batch_sizes.filter(b => b !== bs);
+                                  setTrainingConfig({ ...trainingConfig, bayesian_batch_sizes: newBs.length > 0 ? newBs : [32] });
+                                }}
+                                className="w-3 h-3"
+                              />
+                              <span className="text-sm text-white">{bs}</span>
+                            </label>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div className="border-t border-slate-700 pt-4">
+                        <label className="block text-xs text-slate-400 mb-2">Exploration Rate: {(trainingConfig.bayesian_exploration_rate * 100).toFixed(0)}%</label>
+                        <input 
+                          type="range" 
+                          min="0" 
+                          max="100" 
+                          value={trainingConfig.bayesian_exploration_rate * 100}
+                          onChange={(e) => setTrainingConfig({ ...trainingConfig, bayesian_exploration_rate: parseInt(e.target.value) / 100 })}
+                          className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer"
+                        />
+                        <p className="text-xs text-slate-500 mt-1">Higher = more random exploration, Lower = exploit best found params</p>
+                      </div>
+                    </>
+                  )}
                 </div>
               )}
               <div>
@@ -1052,7 +1326,10 @@ export default function TrainingPage() {
                   if (trials && trials.length > 0) {
                     return (
                       <div className="bg-slate-800/50 rounded-lg p-4">
-                        <h4 className="text-white font-medium mb-4">Bayesian Optimization Trials</h4>
+                        <div className="flex justify-between items-center mb-4">
+                          <h4 className="text-white font-medium">Bayesian Optimization Trials</h4>
+                          <button onClick={() => exportBayesianTrials(selectedJob)} className="px-2 py-1 text-xs bg-slate-700 hover:bg-slate-600 text-white rounded">CSV</button>
+                        </div>
                         <div className="overflow-x-auto">
                           <table className="w-full text-sm">
                             <thead className="bg-slate-900/50">
@@ -1099,7 +1376,10 @@ export default function TrainingPage() {
 
               {selectedJob.metrics && (selectedJob.metrics.accuracy || selectedJob.metrics.loss) && (
                 <div className="bg-slate-800/50 rounded-lg p-4">
-                  <h4 className="text-white font-medium mb-4">Training Progress Charts</h4>
+                  <div className="flex justify-between items-center mb-4">
+                    <h4 className="text-white font-medium">Training Progress Charts</h4>
+                    <button onClick={() => exportTrainingCurves(selectedJob)} className="px-2 py-1 text-xs bg-slate-700 hover:bg-slate-600 text-white rounded">Export CSV</button>
+                  </div>
                   <div className="grid grid-cols-2 gap-6">
                     {selectedJob.metrics.accuracy && selectedJob.metrics.val_accuracy && (
                       <div>
@@ -1308,7 +1588,10 @@ export default function TrainingPage() {
               )}
               {selectedJob.best_metrics?.per_class_metrics && Object.keys(selectedJob.best_metrics.per_class_metrics).length > 0 && (
                 <div className="bg-slate-800/50 rounded-lg p-4">
-                  <h4 className="text-white font-medium mb-4">Per-Class Metrics</h4>
+                  <div className="flex justify-between items-center mb-4">
+                    <h4 className="text-white font-medium">Per-Class Metrics</h4>
+                    <button onClick={() => exportMetricsTable(selectedJob)} className="px-2 py-1 text-xs bg-slate-700 hover:bg-slate-600 text-white rounded">CSV</button>
+                  </div>
                   <div className="overflow-x-auto">
                     <table className="w-full text-sm">
                       <thead className="bg-slate-900/50">
@@ -1337,7 +1620,10 @@ export default function TrainingPage() {
               )}
               {selectedJob.best_metrics?.confusion_matrix && selectedJob.best_metrics.confusion_matrix.length > 0 && (
                 <div className="bg-slate-800/50 rounded-lg p-4">
-                  <h4 className="text-white font-medium mb-4">Confusion Matrix</h4>
+                  <div className="flex justify-between items-center mb-4">
+                    <h4 className="text-white font-medium">Confusion Matrix</h4>
+                    <button onClick={() => exportConfusionMatrix(selectedJob)} className="px-2 py-1 text-xs bg-slate-700 hover:bg-slate-600 text-white rounded">CSV</button>
+                  </div>
                   <div className="overflow-x-auto">
                     <table className="w-full text-sm border-collapse">
                       <thead>
