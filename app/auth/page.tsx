@@ -5,11 +5,6 @@ import { User, Lock, Eye, EyeOff } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '../../contexts/AuthContext';
 
-const testUsers = [
-  { username: 'researcher1', password: 'password123', role: 'Researcher' },
-  { username: 'student1', password: 'password123', role: 'Student' },
-  { username: 'admin', password: 'admin123', role: 'Admin' },
-];
 
 export default function AuthPage() {
   const [showPassword, setShowPassword] = useState(false);
@@ -41,12 +36,6 @@ export default function AuthPage() {
     await login(formData.username, formData.password);
   };
 
-  const handleTestLogin = (testUser: { username: string; password: string }) => {
-    setFormData({
-      username: testUser.username,
-      password: testUser.password
-    });
-  };
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-100 p-4">
@@ -169,29 +158,6 @@ export default function AuthPage() {
               </div>
             </form>
 
-            <div className="mt-6">
-              <div className="relative">
-                <div className="absolute inset-0 flex items-center">
-                  <div className="w-full border-t border-gray-300"></div>
-                </div>
-                <div className="relative flex justify-center text-sm">
-                  <span className="px-2 bg-white text-gray-500">Quick access test accounts</span>
-                </div>
-              </div>
-
-              <div className="mt-6 grid grid-cols-3 gap-3">
-                {testUsers.map((user) => (
-                  <button
-                    key={user.username}
-                    type="button"
-                    onClick={() => handleTestLogin(user)}
-                    className="w-full inline-flex justify-center py-2 px-4 border border-gray-300 rounded-md shadow-sm bg-white text-sm font-medium text-gray-700 hover:bg-gray-50"
-                  >
-                    {user.role}
-                  </button>
-                ))}
-              </div>
-            </div>
           </div>
         </div>
       </div>
