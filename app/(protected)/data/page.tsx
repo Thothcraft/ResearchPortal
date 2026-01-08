@@ -97,7 +97,7 @@ export default function DataPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [filterType, setFilterType] = useState<DataFile['type'] | 'all'>('all');
   const [filterDevice, setFilterDevice] = useState<string>('all');
-  const [uploadingFiles, setUploadingFiles] = useState<Set<string>>(new Set());
+  const [uploadingFiles, setUploadingFiles] = useState<Map<string, number>>(new Map());
   const [isDragging, setIsDragging] = useState(false);
   const { get, post } = useApi();
 
@@ -324,7 +324,7 @@ export default function DataPage() {
     }
   };
 
-  // Handle file upload to cloud
+  // Handle file upload to cloud with progress tracking
   const handleFileUpload = async (fileList: FileList | null) => {
     if (!fileList || fileList.length === 0) return;
 
@@ -336,38 +336,72 @@ export default function DataPage() {
 
     const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'https://web-production-d7d37.up.railway.app';
 
-    for (const file of Array.from(fileList)) {
-      const fileName = file.name;
-      setUploadingFiles(prev => new Set(prev).add(fileName));
+    const uploadPromises = Array.from(fileList).map((file) => {
+      return new Promise<void>((resolve) => {
+        const fileName = file.name;
+        
+        // Initialize progress at 0%
+        setUploadingFiles(prev => new Map(prev).set(fileName, 0));
 
-      try {
+        const xhr = new XMLHttpRequest();
         const formData = new FormData();
         formData.append('file', file);
 
-        const response = await fetch(`${apiUrl}/file/upload`, {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${token}`
-          },
-          body: formData
+        // Track upload progress
+        xhr.upload.addEventListener('progress', (event) => {
+          if (event.lengthComputable) {
+            const percentComplete = Math.round((event.loaded / event.total) * 100);
+            setUploadingFiles(prev => new Map(prev).set(fileName, percentComplete));
+          }
         });
 
-        if (!response.ok) {
-          throw new Error(`Failed to upload ${fileName}`);
-        }
-
-        const result = await response.json();
-        console.log(`Uploaded ${fileName}:`, result);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : `Failed to upload ${fileName}`);
-      } finally {
-        setUploadingFiles(prev => {
-          const newSet = new Set(prev);
-          newSet.delete(fileName);
-          return newSet;
+        xhr.addEventListener('load', () => {
+          if (xhr.status >= 200 && xhr.status < 300) {
+            try {
+              const result = JSON.parse(xhr.responseText);
+              console.log(`Uploaded ${fileName}:`, result);
+            } catch (e) {
+              console.log(`Uploaded ${fileName}`);
+            }
+          } else {
+            setError(`Failed to upload ${fileName}: ${xhr.statusText || 'Server error'}`);
+          }
+          // Remove from uploading files
+          setUploadingFiles(prev => {
+            const newMap = new Map(prev);
+            newMap.delete(fileName);
+            return newMap;
+          });
+          resolve();
         });
-      }
-    }
+
+        xhr.addEventListener('error', () => {
+          setError(`Failed to upload ${fileName}: Network error`);
+          setUploadingFiles(prev => {
+            const newMap = new Map(prev);
+            newMap.delete(fileName);
+            return newMap;
+          });
+          resolve();
+        });
+
+        xhr.addEventListener('abort', () => {
+          setUploadingFiles(prev => {
+            const newMap = new Map(prev);
+            newMap.delete(fileName);
+            return newMap;
+          });
+          resolve();
+        });
+
+        xhr.open('POST', `${apiUrl}/file/upload-multipart`);
+        xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+        xhr.send(formData);
+      });
+    });
+
+    // Wait for all uploads to complete
+    await Promise.all(uploadPromises);
 
     // Refresh file list after upload
     fetchData();
@@ -462,11 +496,19 @@ export default function DataPage() {
             Choose Files
           </label>
           {uploadingFiles.size > 0 && (
-            <div className="mt-4 space-y-2">
-              {Array.from(uploadingFiles).map(fileName => (
-                <div key={fileName} className="flex items-center justify-center gap-2 text-sm text-indigo-400">
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  Uploading {fileName}...
+            <div className="mt-4 space-y-3">
+              {Array.from(uploadingFiles.entries()).map(([fileName, progress]) => (
+                <div key={fileName} className="max-w-md mx-auto">
+                  <div className="flex items-center justify-between text-sm text-indigo-400 mb-1">
+                    <span className="truncate mr-2">{fileName}</span>
+                    <span>{progress}%</span>
+                  </div>
+                  <div className="w-full bg-slate-700 rounded-full h-2">
+                    <div 
+                      className="bg-indigo-500 h-2 rounded-full transition-all duration-300"
+                      style={{ width: `${progress}%` }}
+                    />
+                  </div>
                 </div>
               ))}
             </div>
