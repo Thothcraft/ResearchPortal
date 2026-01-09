@@ -99,6 +99,10 @@ export default function DataPage() {
   const [filterDevice, setFilterDevice] = useState<string>('all');
   const [uploadingFiles, setUploadingFiles] = useState<Map<string, number>>(new Map());
   const [isDragging, setIsDragging] = useState(false);
+  const [showUploadModal, setShowUploadModal] = useState(false);
+  const [pendingFiles, setPendingFiles] = useState<File[]>([]);
+  const [selectedFileType, setSelectedFileType] = useState<DataFile['type']>('other');
+  const [uploadDate, setUploadDate] = useState<string>(new Date().toISOString().split('T')[0]);
   const { get, post } = useApi();
 
   // Fetch devices and files from Brain server
@@ -128,6 +132,7 @@ export default function DataPage() {
       // Fetch files for each device from Brain server
       // Brain server tracks files that exist on each device (fetched during registration)
       const allFiles: DataFile[] = [];
+      const seenCloudFileIds = new Set<number>();
 
       for (const device of deviceList) {
         try {
@@ -150,11 +155,46 @@ export default function DataPage() {
                 downloading: false,
                 uploading: false,
               });
+              // Track cloud file IDs to avoid duplicates
+              if (f.cloud_file_id) {
+                seenCloudFileIds.add(f.cloud_file_id);
+              }
             });
           }
         } catch (e) {
           console.log(`Could not fetch files for device ${device.id}:`, e);
         }
+      }
+
+      // Also fetch cloud-uploaded files (files uploaded directly via web portal)
+      try {
+        const cloudFilesData = await get('/file/files?limit=200');
+        if (cloudFilesData && Array.isArray(cloudFilesData.files)) {
+          cloudFilesData.files.forEach((f: any) => {
+            // Skip if this file is already shown via device files
+            if (seenCloudFileIds.has(f.file_id)) {
+              return;
+            }
+            const { type, timestamp } = parseFileName(f.filename);
+            allFiles.push({
+              id: undefined,  // No DeviceFile ID for cloud-only files
+              name: f.filename,
+              type,
+              size: f.size || 0,
+              timestamp: timestamp || f.uploaded_at?.split('T')[0] || '',
+              extension: f.filename.split('.').pop() || '',
+              deviceId: 'cloud',
+              deviceName: 'Cloud Upload',
+              deviceOnline: true,
+              onCloud: true,
+              cloudFileId: f.file_id,
+              downloading: false,
+              uploading: false,
+            });
+          });
+        }
+      } catch (e) {
+        console.log('Could not fetch cloud files:', e);
       }
 
       setFiles(allFiles);
@@ -324,9 +364,33 @@ export default function DataPage() {
     }
   };
 
-  // Handle file upload to cloud with progress tracking
-  const handleFileUpload = async (fileList: FileList | null) => {
+  // Infer file type from extension
+  const inferFileType = (filename: string): DataFile['type'] => {
+    const ext = filename.split('.').pop()?.toLowerCase() || '';
+    if (['png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp'].includes(ext)) return 'img';
+    if (['mp4', 'avi', 'mov', 'mkv', 'webm'].includes(ext)) return 'vid';
+    if (['json'].includes(ext)) return 'imu';  // Default JSON to IMU
+    if (['csv'].includes(ext)) return 'csi';   // Default CSV to CSI
+    if (['bin'].includes(ext)) return 'mfcw';  // Default binary to MFCW
+    return 'other';
+  };
+
+  // Show upload modal when files are selected
+  const handleFileSelect = (fileList: FileList | null) => {
     if (!fileList || fileList.length === 0) return;
+    const filesArray = Array.from(fileList);
+    setPendingFiles(filesArray);
+    // Infer type from first file
+    if (filesArray.length > 0) {
+      setSelectedFileType(inferFileType(filesArray[0].name));
+    }
+    setUploadDate(new Date().toISOString().split('T')[0]);
+    setShowUploadModal(true);
+  };
+
+  // Handle file upload to cloud with progress tracking
+  const handleFileUpload = async () => {
+    if (pendingFiles.length === 0) return;
 
     const token = localStorage.getItem('auth_token');
     if (!token) {
@@ -334,24 +398,30 @@ export default function DataPage() {
       return;
     }
 
+    setShowUploadModal(false);
     const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'https://web-production-d7d37.up.railway.app';
 
-    const uploadPromises = Array.from(fileList).map((file) => {
+    const uploadPromises = pendingFiles.map((file) => {
       return new Promise<void>((resolve) => {
-        const fileName = file.name;
+        // Generate new filename with type prefix and date
+        const ext = file.name.split('.').pop() || '';
+        const baseName = file.name.replace(/\.[^/.]+$/, '');
+        const newFileName = `${selectedFileType}_${uploadDate}_${baseName}.${ext}`;
         
         // Initialize progress at 0%
-        setUploadingFiles(prev => new Map(prev).set(fileName, 0));
+        setUploadingFiles(prev => new Map(prev).set(newFileName, 0));
 
         const xhr = new XMLHttpRequest();
         const formData = new FormData();
-        formData.append('file', file);
+        // Create a new file with the renamed filename
+        const renamedFile = new File([file], newFileName, { type: file.type });
+        formData.append('file', renamedFile);
 
         // Track upload progress
         xhr.upload.addEventListener('progress', (event) => {
           if (event.lengthComputable) {
             const percentComplete = Math.round((event.loaded / event.total) * 100);
-            setUploadingFiles(prev => new Map(prev).set(fileName, percentComplete));
+            setUploadingFiles(prev => new Map(prev).set(newFileName, percentComplete));
           }
         });
 
@@ -359,27 +429,27 @@ export default function DataPage() {
           if (xhr.status >= 200 && xhr.status < 300) {
             try {
               const result = JSON.parse(xhr.responseText);
-              console.log(`Uploaded ${fileName}:`, result);
+              console.log(`Uploaded ${newFileName}:`, result);
             } catch (e) {
-              console.log(`Uploaded ${fileName}`);
+              console.log(`Uploaded ${newFileName}`);
             }
           } else {
-            setError(`Failed to upload ${fileName}: ${xhr.statusText || 'Server error'}`);
+            setError(`Failed to upload ${newFileName}: ${xhr.statusText || 'Server error'}`);
           }
           // Remove from uploading files
           setUploadingFiles(prev => {
             const newMap = new Map(prev);
-            newMap.delete(fileName);
+            newMap.delete(newFileName);
             return newMap;
           });
           resolve();
         });
 
         xhr.addEventListener('error', () => {
-          setError(`Failed to upload ${fileName}: Network error`);
+          setError(`Failed to upload ${newFileName}: Network error`);
           setUploadingFiles(prev => {
             const newMap = new Map(prev);
-            newMap.delete(fileName);
+            newMap.delete(newFileName);
             return newMap;
           });
           resolve();
@@ -388,7 +458,7 @@ export default function DataPage() {
         xhr.addEventListener('abort', () => {
           setUploadingFiles(prev => {
             const newMap = new Map(prev);
-            newMap.delete(fileName);
+            newMap.delete(newFileName);
             return newMap;
           });
           resolve();
@@ -402,6 +472,7 @@ export default function DataPage() {
 
     // Wait for all uploads to complete
     await Promise.all(uploadPromises);
+    setPendingFiles([]);
 
     // Refresh file list after upload
     fetchData();
@@ -421,7 +492,7 @@ export default function DataPage() {
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
     setIsDragging(false);
-    handleFileUpload(e.dataTransfer.files);
+    handleFileSelect(e.dataTransfer.files);
   };
 
   useEffect(() => {
@@ -449,6 +520,74 @@ export default function DataPage() {
 
   return (
     <div className="p-8">
+      {/* Upload Modal */}
+      {showUploadModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-slate-800 rounded-xl p-6 w-full max-w-md mx-4 border border-slate-700">
+            <h3 className="text-xl font-bold text-white mb-4">Upload Files</h3>
+            
+            <div className="mb-4">
+              <p className="text-slate-400 text-sm mb-2">
+                {pendingFiles.length} file{pendingFiles.length > 1 ? 's' : ''} selected:
+              </p>
+              <div className="max-h-24 overflow-y-auto text-sm text-slate-300">
+                {pendingFiles.map((f, i) => (
+                  <div key={i} className="truncate">{f.name}</div>
+                ))}
+              </div>
+            </div>
+
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-slate-300 mb-2">
+                File Type
+              </label>
+              <select
+                value={selectedFileType}
+                onChange={(e) => setSelectedFileType(e.target.value as DataFile['type'])}
+                className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              >
+                <option value="imu">IMU Data</option>
+                <option value="csi">CSI Data</option>
+                <option value="mfcw">MFCW Data</option>
+                <option value="img">Image</option>
+                <option value="vid">Video</option>
+                <option value="other">Other</option>
+              </select>
+            </div>
+
+            <div className="mb-6">
+              <label className="block text-sm font-medium text-slate-300 mb-2">
+                Date
+              </label>
+              <input
+                type="date"
+                value={uploadDate}
+                onChange={(e) => setUploadDate(e.target.value)}
+                className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              />
+            </div>
+
+            <div className="flex gap-3">
+              <button
+                onClick={() => {
+                  setShowUploadModal(false);
+                  setPendingFiles([]);
+                }}
+                className="flex-1 px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleFileUpload}
+                className="flex-1 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg transition-colors"
+              >
+                Upload
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex items-center justify-between mb-8">
         <div>
@@ -484,7 +623,7 @@ export default function DataPage() {
           <input
             type="file"
             multiple
-            onChange={(e) => handleFileUpload(e.target.files)}
+            onChange={(e) => handleFileSelect(e.target.files)}
             className="hidden"
             id="file-upload"
           />
