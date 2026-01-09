@@ -129,72 +129,83 @@ export default function DataPage() {
       }
       setDevices(deviceList);
 
-      // Fetch files for each device from Brain server
-      // Brain server tracks files that exist on each device (fetched during registration)
+      // Fetch files from all sources in parallel for better performance
       const allFiles: DataFile[] = [];
       const seenCloudFileIds = new Set<number>();
 
-      for (const device of deviceList) {
+      // Create promises for all device file fetches + cloud files fetch
+      const deviceFilePromises = deviceList.map(async (device) => {
         try {
           const deviceFilesData = await get(`/device/${device.id}/files`);
           if (deviceFilesData && Array.isArray(deviceFilesData.files)) {
-            deviceFilesData.files.forEach((f: any) => {
-              const { type, timestamp } = parseFileName(f.filename);
-              allFiles.push({
-                id: f.id,  // DeviceFile ID for upload-from-device
-                name: f.filename,
-                type,
-                size: f.size || 0,
-                timestamp,
-                extension: f.filename.split('.').pop() || '',
-                deviceId: device.id,
-                deviceName: device.name,
-                deviceOnline: device.status === 'online',
-                onCloud: f.on_cloud || false,
-                cloudFileId: f.cloud_file_id,
-                downloading: false,
-                uploading: false,
-              });
-              // Track cloud file IDs to avoid duplicates
-              if (f.cloud_file_id) {
-                seenCloudFileIds.add(f.cloud_file_id);
-              }
-            });
+            return deviceFilesData.files.map((f: any) => ({
+              ...f,
+              _device: device
+            }));
           }
         } catch (e) {
           console.log(`Could not fetch files for device ${device.id}:`, e);
         }
-      }
+        return [];
+      });
 
-      // Also fetch cloud-uploaded files (files uploaded directly via web portal)
-      try {
-        const cloudFilesData = await get('/file/files?limit=200');
-        if (cloudFilesData && Array.isArray(cloudFilesData.files)) {
-          cloudFilesData.files.forEach((f: any) => {
-            // Skip if this file is already shown via device files
-            if (seenCloudFileIds.has(f.file_id)) {
-              return;
-            }
-            const { type, timestamp } = parseFileName(f.filename);
-            allFiles.push({
-              id: undefined,  // No DeviceFile ID for cloud-only files
-              name: f.filename,
-              type,
-              size: f.size || 0,
-              timestamp: timestamp || f.uploaded_at?.split('T')[0] || '',
-              extension: f.filename.split('.').pop() || '',
-              deviceId: 'cloud',
-              deviceName: 'Cloud Upload',
-              deviceOnline: true,
-              onCloud: true,
-              cloudFileId: f.file_id,
-              downloading: false,
-              uploading: false,
-            });
-          });
-        }
-      } catch (e) {
+      const cloudFilesPromise = get('/file/files?limit=200').catch((e) => {
         console.log('Could not fetch cloud files:', e);
+        return { files: [] };
+      });
+
+      // Wait for all requests in parallel
+      const [deviceFilesResults, cloudFilesData] = await Promise.all([
+        Promise.all(deviceFilePromises),
+        cloudFilesPromise
+      ]);
+
+      // Process device files
+      deviceFilesResults.flat().forEach((f: any) => {
+        if (!f || !f._device) return;
+        const device = f._device;
+        const { type, timestamp } = parseFileName(f.filename);
+        allFiles.push({
+          id: f.id,
+          name: f.filename,
+          type,
+          size: f.size || 0,
+          timestamp,
+          extension: f.filename.split('.').pop() || '',
+          deviceId: device.id,
+          deviceName: device.name,
+          deviceOnline: device.status === 'online',
+          onCloud: f.on_cloud || false,
+          cloudFileId: f.cloud_file_id,
+          downloading: false,
+          uploading: false,
+        });
+        if (f.cloud_file_id) {
+          seenCloudFileIds.add(f.cloud_file_id);
+        }
+      });
+
+      // Process cloud-uploaded files (skip duplicates)
+      if (cloudFilesData && Array.isArray(cloudFilesData.files)) {
+        cloudFilesData.files.forEach((f: any) => {
+          if (seenCloudFileIds.has(f.file_id)) return;
+          const { type, timestamp } = parseFileName(f.filename);
+          allFiles.push({
+            id: undefined,
+            name: f.filename,
+            type,
+            size: f.size || 0,
+            timestamp: timestamp || f.uploaded_at?.split('T')[0] || '',
+            extension: f.filename.split('.').pop() || '',
+            deviceId: 'cloud',
+            deviceName: 'Cloud Upload',
+            deviceOnline: true,
+            onCloud: true,
+            cloudFileId: f.file_id,
+            downloading: false,
+            uploading: false,
+          });
+        });
       }
 
       setFiles(allFiles);
