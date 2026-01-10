@@ -21,6 +21,7 @@ import {
   Server,
   Upload,
   Check,
+  Trash2,
 } from 'lucide-react';
 
 type Device = {
@@ -372,6 +373,50 @@ export default function DataPage() {
       setFiles(prev => prev.map(f => 
         f.name === file.name ? { ...f, downloading: false } : f
       ));
+    }
+  };
+
+  // Handle file deletion (cloud files only)
+  const handleDelete = async (file: DataFile) => {
+    if (!file.onCloud) return;
+    
+    // Use cloudFileId for cloud-uploaded files, otherwise use id for device files that were uploaded
+    const fileId = file.cloudFileId || file.id;
+    if (!fileId) {
+      setError('Cannot delete: File ID not found');
+      return;
+    }
+    
+    const token = localStorage.getItem('auth_token');
+    if (!token) {
+      setError('Authentication required');
+      return;
+    }
+
+    if (!confirm(`Are you sure you want to delete "${file.name}" from the cloud?`)) {
+      return;
+    }
+
+    try {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'https://web-production-d7d37.up.railway.app'}/file/${fileId}`, {
+        method: 'DELETE',
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      
+      if (!response.ok) {
+        throw new Error('Failed to delete file');
+      }
+      
+      // Remove file from state
+      setFiles(prev => prev.filter(f => f !== file));
+      
+      // Show success message
+      setError(`Successfully deleted "${file.name}"`);
+      setTimeout(() => setError(null), 3000);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Delete failed');
     }
   };
 
@@ -752,10 +797,15 @@ export default function DataPage() {
                   <div className="flex items-center gap-2">
                     {/* Cloud status indicator */}
                     {file.onCloud ? (
-                      <span className="flex items-center gap-1 px-2 py-1 rounded text-xs font-medium bg-green-500/10 text-green-400">
-                        <Cloud className="w-3 h-3" />
-                        On Cloud
-                      </span>
+                      <>
+                        <span className="flex items-center gap-1 px-2 py-1 rounded text-xs font-medium bg-green-500/10 text-green-400">
+                          <Cloud className="w-3 h-3" />
+                          On Cloud
+                        </span>
+                        <span className="flex items-center gap-1 px-2 py-1 rounded text-xs font-medium bg-blue-500/10 text-blue-400">
+                          Uploaded
+                        </span>
+                      </>
                     ) : (
                       <span className="flex items-center gap-1 px-2 py-1 rounded text-xs font-medium bg-slate-500/10 text-slate-400">
                         <CloudOff className="w-3 h-3" />
@@ -793,39 +843,50 @@ export default function DataPage() {
                   </div>
                 </div>
 
-                <button 
-                  onClick={() => handleDownload(file)}
-                  disabled={!canDownload || file.downloading}
-                  className={`mt-4 w-full flex items-center justify-center gap-2 px-4 py-2 rounded-lg transition-colors ${
-                    !canDownload 
-                      ? 'bg-slate-700/30 text-slate-500 cursor-not-allowed'
-                      : file.downloading
-                        ? 'bg-indigo-600/50 text-white cursor-wait'
-                        : 'bg-slate-700/50 hover:bg-indigo-600 text-slate-300 hover:text-white'
-                  }`}
-                >
-                  {file.downloading ? (
-                    <>
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                      {file.onCloud ? 'Downloading...' : 'Uploading to Cloud...'}
-                    </>
-                  ) : file.onCloud ? (
-                    <>
-                      <Download className="w-4 h-4" />
-                      Download from Cloud
-                    </>
-                  ) : file.deviceOnline ? (
-                    <>
-                      <Upload className="w-4 h-4" />
-                      Download & Upload to Cloud
-                    </>
-                  ) : (
-                    <>
-                      <CloudOff className="w-4 h-4" />
-                      Device Offline
-                    </>
+                <div className="flex gap-2 mt-4">
+                  {file.onCloud && (
+                    <button 
+                      onClick={() => handleDelete(file)}
+                      className="flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-lg transition-colors bg-red-600/20 hover:bg-red-600/30 text-red-400 border border-red-600/30"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                      Delete
+                    </button>
                   )}
-                </button>
+                  <button 
+                    onClick={() => handleDownload(file)}
+                    disabled={!canDownload || file.downloading}
+                    className={`flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-lg transition-colors ${
+                      !canDownload 
+                        ? 'bg-slate-700/30 text-slate-500 cursor-not-allowed'
+                        : file.downloading
+                          ? 'bg-indigo-600/50 text-white cursor-wait'
+                          : 'bg-slate-700/50 hover:bg-indigo-600 text-slate-300 hover:text-white'
+                    }`}
+                  >
+                    {file.downloading ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        {file.onCloud ? 'Downloading...' : 'Uploading to Cloud...'}
+                      </>
+                    ) : file.onCloud ? (
+                      <>
+                        <Download className="w-4 h-4" />
+                        Download
+                      </>
+                    ) : file.deviceOnline ? (
+                      <>
+                        <Upload className="w-4 h-4" />
+                        Download & Upload
+                      </>
+                    ) : (
+                      <>
+                        <CloudOff className="w-4 h-4" />
+                        Device Offline
+                      </>
+                    )}
+                  </button>
+                </div>
               </div>
             );
           })}
