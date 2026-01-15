@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import jsPDF from 'jspdf';
 import { useApi } from '@/hooks/useApi';
+import { useAuth } from '@/contexts/AuthContext';
 import {
   Brain, Cloud, Smartphone, Network, Play, RefreshCw, Plus, Tag, Database,
   FileText, Trash2, ChevronRight, BarChart3, CheckCircle, Clock, AlertCircle,
@@ -112,6 +113,7 @@ const TRAINING_STATUS_CONFIG: Record<string, { color: string; bg: string; icon: 
 
 export default function TrainingPage() {
   const { get, post, delete: del, put } = useApi();
+  const { user } = useAuth();
   const [selectedMode, setSelectedMode] = useState<TrainingMode>('cloud');
   const [datasets, setDatasets] = useState<Dataset[]>([]);
   const [selectedDataset, setSelectedDataset] = useState<Dataset | null>(null);
@@ -317,21 +319,16 @@ export default function TrainingPage() {
 
   const handleDownloadModel = async (modelId: number, modelName: string) => {
     try {
-      // Get the correct token from localStorage (stored as 'auth_token')
-      const token = localStorage.getItem('auth_token');
-      if (!token) {
-        setError('Please log in to download models');
-        return;
-      }
-
       const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'https://web-production-d7d37.up.railway.app';
       console.log(`Downloading model ${modelId} from ${apiUrl}/datasets/models/${modelId}/download`);
       
       const response = await fetch(`${apiUrl}/datasets/models/${modelId}/download`, {
         method: 'GET',
         headers: {
-          'Authorization': `Bearer ${token}`
-        }
+          'Authorization': `Bearer ${user?.token || ''}`,
+          'Accept': 'application/octet-stream'
+        },
+        credentials: 'include'
       });
 
       console.log('Download response status:', response.status);
@@ -832,7 +829,7 @@ export default function TrainingPage() {
                           <td className="px-6 py-4"><input type="checkbox" checked={compareModels.includes(m.id)} onChange={(e) => {if (e.target.checked) setCompareModels([...compareModels, m.id]); else setCompareModels(compareModels.filter(id => id !== m.id));}} className="w-4 h-4" /></td>
                           <td className="px-6 py-4"><span className="text-white font-medium">{m.name}</span></td>
                           <td className="px-6 py-4"><span className="text-slate-300 uppercase">{m.architecture}</span></td>
-                          <td className="px-6 py-4"><span className="text-green-400 font-medium">{m.accuracy !== null ? `${(m.accuracy * 100).toFixed(2)}%` : 'N/A'}</span></td>
+                          <td className="px-6 py-4"><span className="text-green-400 font-medium">{m.accuracy !== null ? `${m.accuracy.toFixed(2)}%` : 'N/A'}</span></td>
                           <td className="px-6 py-4"><span className="text-slate-300">{m.size_mb !== null ? `${m.size_mb.toFixed(1)} MB` : 'N/A'}</span></td>
                           <td className="px-6 py-4"><span className="text-slate-400 text-sm">{new Date(m.created_at).toLocaleDateString()}</span></td>
                           <td className="px-6 py-4"><div className="flex gap-2"><button onClick={() => handleDownloadModel(m.id, m.name)} className="flex items-center gap-1 px-2 py-1 text-purple-400 hover:bg-purple-500/10 rounded text-sm"><Download className="w-4 h-4" /> Download</button><button onClick={() => { setRenamingModel(m); setNewModelName(m.name); }} className="flex items-center gap-1 px-2 py-1 text-blue-400 hover:bg-blue-500/10 rounded text-sm"><Edit2 className="w-4 h-4" /> Rename</button><button onClick={() => handleDeleteModel(m.id)} className="flex items-center gap-1 px-2 py-1 text-red-400 hover:bg-red-500/10 rounded text-sm"><Trash2 className="w-4 h-4" /> Delete</button></div></td>
@@ -876,7 +873,7 @@ export default function TrainingPage() {
                       </thead>
                       <tbody className="divide-y divide-slate-700">
                         <tr><td className="px-6 py-4 text-slate-300 font-medium">Architecture</td>{compareModels.map(modelId => {const model = trainedModels.find(m => m.id === modelId); return <td key={modelId} className="px-6 py-4 text-white uppercase">{model?.architecture || 'N/A'}</td>;})}</tr>
-                        <tr><td className="px-6 py-4 text-slate-300 font-medium">Accuracy</td>{compareModels.map(modelId => {const model = trainedModels.find(m => m.id === modelId); const isMax = model && model.accuracy === Math.max(...compareModels.map(id => trainedModels.find(m => m.id === id)?.accuracy || 0)); return <td key={modelId} className={`px-6 py-4 font-medium ${isMax ? 'text-green-400' : 'text-white'}`}>{model?.accuracy != null ? `${(model.accuracy * 100).toFixed(2)}%` : 'N/A'}</td>;})}</tr>
+                        <tr><td className="px-6 py-4 text-slate-300 font-medium">Accuracy</td>{compareModels.map(modelId => {const model = trainedModels.find(m => m.id === modelId); const isMax = model && model.accuracy === Math.max(...compareModels.map(id => trainedModels.find(m => m.id === id)?.accuracy || 0)); return <td key={modelId} className={`px-6 py-4 font-medium ${isMax ? 'text-green-400' : 'text-white'}`}>{model?.accuracy != null ? `${model.accuracy.toFixed(2)}%` : 'N/A'}</td>;})}</tr>
                         <tr><td className="px-6 py-4 text-slate-300 font-medium">Model Size</td>{compareModels.map(modelId => {const model = trainedModels.find(m => m.id === modelId); const isMin = model && model.size_mb === Math.min(...compareModels.map(id => trainedModels.find(m => m.id === id)?.size_mb || Infinity).filter(s => s !== Infinity)); return <td key={modelId} className={`px-6 py-4 ${isMin ? 'text-green-400 font-medium' : 'text-white'}`}>{model?.size_mb != null ? `${model.size_mb.toFixed(1)} MB` : 'N/A'}</td>;})}</tr>
                         <tr><td className="px-6 py-4 text-slate-300 font-medium">Created Date</td>{compareModels.map(modelId => {const model = trainedModels.find(m => m.id === modelId); return <td key={modelId} className="px-6 py-4 text-slate-400 text-sm">{model ? new Date(model.created_at).toLocaleDateString() : 'N/A'}</td>;})}</tr>
                       </tbody>
@@ -894,10 +891,10 @@ export default function TrainingPage() {
                           <div key={modelId}>
                             <div className="flex items-center justify-between mb-2">
                               <span className="text-slate-300 text-sm">{model?.name || 'Unknown'}</span>
-                              <span className="text-white font-medium">{(accuracy * 100).toFixed(2)}%</span>
+                              <span className="text-white font-medium">{accuracy.toFixed(2)}%</span>
                             </div>
                             <div className="w-full bg-slate-700 rounded-full h-3">
-                              <div className="bg-gradient-to-r from-indigo-500 to-purple-500 h-3 rounded-full transition-all" style={{width: `${accuracy * 100}%`}}></div>
+                              <div className="bg-gradient-to-r from-indigo-500 to-purple-500 h-3 rounded-full transition-all" style={{width: `${accuracy}%`}}></div>
                             </div>
                           </div>
                         );
