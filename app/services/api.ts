@@ -29,14 +29,29 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
-// Add response interceptor for error handling
+// Add response interceptor for error handling with retry logic
 api.interceptors.response.use(
   (response) => response,
-  (error) => {
+  async (error) => {
     if (error.code === 'ERR_NETWORK') {
       console.error('Network error - unable to fetch device data');
+      
+      // Check if it's a database connection issue
+      if (error.response?.data?.database?.status === 'disconnected') {
+        console.warn('Database connection issue detected');
+        // Could implement retry logic here
+        return Promise.reject(new Error('Database temporarily unavailable. Please try again in a moment.'));
+      }
+      
       return Promise.reject(new Error('Unable to connect to the server. Please check your connection.'));
     }
+    
+    // Handle database connection errors specifically
+    if (error.response?.status === 503 && error.response?.data?.database?.status !== 'connected') {
+      console.warn('Service unavailable due to database issues');
+      return Promise.reject(new Error('Database temporarily unavailable. Please try again.'));
+    }
+    
     return Promise.reject(error);
   }
 );
@@ -156,6 +171,11 @@ class ApiService {
   // System
   async getHealth() {
     const response = await api.get('/health');
+    return response.data;
+  }
+
+  async getDatabaseHealth(forceRefresh: boolean = false) {
+    const response = await api.get(`/database/health?force_refresh=${forceRefresh}`);
     return response.data;
   }
 
