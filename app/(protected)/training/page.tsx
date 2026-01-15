@@ -138,6 +138,10 @@ export default function TrainingPage() {
     model_name: '', 
     test_dataset_id: null as number | null,
     window_size: 128,
+    test_split: 0.2,
+    early_stopping: true,
+    augment_data: false,
+    use_transfer_learning: false,
     // Bayesian optimization settings
     use_bayesian_optimization: false,
     bayesian_trials: 20,
@@ -150,6 +154,7 @@ export default function TrainingPage() {
     bayesian_weight_decay_max: 0.01,
     bayesian_optimizers: ['adam', 'adamw', 'sgd'],
     bayesian_exploration_rate: 0.3,
+    bayesian_search: false,
     bayesian_search_architecture: false
   });
   const [showAdvancedBayesian, setShowAdvancedBayesian] = useState(false);
@@ -160,44 +165,87 @@ export default function TrainingPage() {
   const [renamingModel, setRenamingModel] = useState<TrainedModel | null>(null);
   const [newModelName, setNewModelName] = useState('');
   const [selectedJob, setSelectedJob] = useState<TrainingJob | null>(null);
+  
+  // Granular loading states
+  const [loadingStates, setLoadingStates] = useState({
+    datasets: false,
+    jobs: false,
+    models: false,
+    files: false,
+    training: false,
+    deleting: false,
+    downloading: false,
+    renaming: false
+  });
+  const [operations, setOperations] = useState({
+    creatingDataset: false,
+    addingFiles: false,
+    startingTraining: false,
+    cancellingJob: false,
+    deletingModel: null as number | null,
+    downloadingModel: null as number | null,
+    renamingModel: null as number | null
+  });
 
-  const fetchData = async () => {
+  const fetchData = async (options?: { datasets?: boolean; jobs?: boolean; models?: boolean; files?: boolean }) => {
+    const opts = { datasets: true, jobs: true, models: true, files: true, ...options };
+    
     try {
-      setLoading(true);
+      // Set loading states for specific operations
+      if (opts.datasets) setLoadingStates(prev => ({ ...prev, datasets: true }));
+      if (opts.jobs) setLoadingStates(prev => ({ ...prev, jobs: true }));
+      if (opts.models) setLoadingStates(prev => ({ ...prev, models: true }));
+      if (opts.files) setLoadingStates(prev => ({ ...prev, files: true }));
+      
       setError(null);
-      const [datasetsRes, jobsRes, modelsRes, filesRes] = await Promise.all([
-        get('/datasets/list').catch(() => null),
-        get('/datasets/train/jobs').catch(() => null),
-        get('/datasets/models').catch(() => null),
-        get('/file/files').catch(() => null),
-      ]);
-      console.log('Datasets response:', JSON.stringify(datasetsRes, null, 2));
-      console.log('Jobs response:', JSON.stringify(jobsRes, null, 2));
-      console.log('Models response:', JSON.stringify(modelsRes, null, 2));
-      console.log('Files response:', JSON.stringify(filesRes, null, 2));
-      if (datasetsRes?.datasets) setDatasets(datasetsRes.datasets);
-      if (jobsRes?.jobs) setTrainingJobs(jobsRes.jobs);
-      if (modelsRes?.models) setTrainedModels(modelsRes.models);
-      if (filesRes?.files) setCloudFiles(filesRes.files);
+      
+      // Only fetch the requested data
+      const promises = [];
+      if (opts.datasets) promises.push(get('/datasets/list').catch(() => null));
+      if (opts.jobs) promises.push(get('/datasets/train/jobs').catch(() => null));
+      if (opts.models) promises.push(get('/datasets/models').catch(() => null));
+      if (opts.files) promises.push(get('/file/files').catch(() => null));
+      
+      const results = await Promise.all(promises);
+      let resultIndex = 0;
+      
+      if (opts.datasets && results[resultIndex]) {
+        const datasetsRes = results[resultIndex++];
+        if (datasetsRes?.datasets) setDatasets(datasetsRes.datasets);
+      }
+      if (opts.jobs && results[resultIndex]) {
+        const jobsRes = results[resultIndex++];
+        if (jobsRes?.jobs) setTrainingJobs(jobsRes.jobs);
+      }
+      if (opts.models && results[resultIndex]) {
+        const modelsRes = results[resultIndex++];
+        if (modelsRes?.models) setTrainedModels(modelsRes.models);
+      }
+      if (opts.files && results[resultIndex]) {
+        const filesRes = results[resultIndex++];
+        if (filesRes?.files) setCloudFiles(filesRes.files);
+      }
     } catch (err) {
       setError('Failed to load training data');
     } finally {
-      setLoading(false);
+      // Clear loading states
+      if (opts.datasets) setLoadingStates(prev => ({ ...prev, datasets: false }));
+      if (opts.jobs) setLoadingStates(prev => ({ ...prev, jobs: false }));
+      if (opts.models) setLoadingStates(prev => ({ ...prev, models: false }));
+      if (opts.files) setLoadingStates(prev => ({ ...prev, files: false }));
     }
   };
 
   useEffect(() => {
-    fetchData();
+    fetchData(); // Initial load
+    
+    // Set up polling for jobs and models only (more frequent)
     const interval = setInterval(async () => {
       try {
-        const [jobsRes, modelsRes] = await Promise.all([
-          get('/datasets/train/jobs').catch(() => null),
-          get('/datasets/models').catch(() => null)
-        ]);
-        if (jobsRes?.jobs) setTrainingJobs(jobsRes.jobs);
-        if (modelsRes?.models) setTrainedModels(modelsRes.models);
+        await fetchData({ jobs: true, models: true }); // Only fetch jobs and models
       } catch {}
-    }, 10000); // Poll every 10 seconds
+    }, 5000); // Reduced to 5 seconds for better UX
+    
     return () => clearInterval(interval);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -230,10 +278,16 @@ export default function TrainingPage() {
 
   const handleCreateDataset = async () => {
     if (!newDatasetName.trim()) return;
+    
+    setOperations(prev => ({ ...prev, creatingDataset: true }));
     try {
-      const res = await post('/datasets/create', { name: newDatasetName, description: newDatasetDesc || null });
-      if (res?.success) { setShowCreateDataset(false); setNewDatasetName(''); setNewDatasetDesc(''); fetchData(); }
+      await post('/datasets/create', { name: newDatasetName.trim(), description: newDatasetDesc.trim() });
+      setNewDatasetName('');
+      setNewDatasetDesc('');
+      setShowCreateDataset(false);
+      await fetchData({ datasets: true }); // Only refresh datasets
     } catch { setError('Failed to create dataset'); }
+    finally { setOperations(prev => ({ ...prev, creatingDataset: false })); }
   };
 
   const handleSelectDataset = async (dataset: Dataset) => {
@@ -260,11 +314,16 @@ export default function TrainingPage() {
 
   const handleAddFilesToDataset = async () => {
     if (!selectedDataset || selectedFiles.size === 0) return;
-    const files = Array.from(selectedFiles.entries()).map(([file_id, label]) => ({ file_id, label }));
+    
+    setOperations(prev => ({ ...prev, addingFiles: true }));
     try {
-      const res = await post(`/datasets/${selectedDataset.id}/files`, { files });
-      if (res?.success) { setShowAddFiles(false); setSelectedFiles(new Map()); handleSelectDataset(selectedDataset); }
-    } catch { setError('Failed to add files'); }
+      const files = Array.from(selectedFiles.entries()).map(([fileId, label]) => ({ file_id: fileId, label }));
+      await post(`/datasets/${selectedDataset.id}/files`, { files });
+      setSelectedFiles(new Map());
+      setShowAddFiles(false);
+      await fetchData({ datasets: true }); // Only refresh datasets
+    } catch { setError('Failed to add files to dataset'); }
+    finally { setOperations(prev => ({ ...prev, addingFiles: false })); }
   };
 
   const handleRemoveFile = async (fileId: number) => {
@@ -279,45 +338,79 @@ export default function TrainingPage() {
 
   const handleStartTraining = async () => {
     if (!selectedDataset) return;
+    
+    setOperations(prev => ({ ...prev, startingTraining: true }));
     try {
-      const res = await post('/datasets/train/cloud', { dataset_id: selectedDataset.id, ...trainingConfig, model_name: trainingConfig.model_name || null });
-      if (res?.success) { setShowTrainingConfig(false); setActiveTab('jobs'); fetchData(); }
-    } catch (err: any) { setError(err?.response?.data?.detail || 'Failed to start training'); }
+      const config = {
+        model_type: trainingConfig.model_type,
+        training_mode: selectedMode,
+        epochs: trainingConfig.epochs,
+        batch_size: trainingConfig.batch_size,
+        learning_rate: trainingConfig.learning_rate,
+        test_split: trainingConfig.test_split,
+        validation_split: trainingConfig.validation_split,
+        early_stopping: trainingConfig.early_stopping,
+        augment_data: trainingConfig.augment_data,
+        use_transfer_learning: trainingConfig.use_transfer_learning,
+        bayesian_search: trainingConfig.bayesian_search,
+        bayesian_trials: trainingConfig.bayesian_trials,
+        bayesian_search_architecture: trainingConfig.bayesian_search_architecture
+      };
+      await post('/datasets/train', { dataset_id: selectedDataset.id, config });
+      setShowTrainingConfig(false);
+      await fetchData({ jobs: true }); // Only refresh jobs
+    } catch { setError('Failed to start training'); }
+    finally { setOperations(prev => ({ ...prev, startingTraining: false })); }
   };
 
   const handleCancelJob = async (jobId: string) => {
-    try { await post(`/datasets/train/jobs/${jobId}/cancel`, {}); fetchData(); } catch { setError('Failed to cancel job'); }
+    setOperations(prev => ({ ...prev, cancellingJob: true }));
+    try { await post(`/datasets/train/jobs/${jobId}/cancel`, {}); await fetchData({ jobs: true }); } 
+    catch { setError('Failed to cancel job'); }
+    finally { setOperations(prev => ({ ...prev, cancellingJob: false })); }
   };
 
   const handleDeleteJob = async (jobId: string) => {
     try {
       await del(`/datasets/train/jobs/${jobId}`);
-      fetchData();
-    } catch {
-      setError('Failed to delete job');
-    }
+      await fetchData({ jobs: true }); // Only refresh jobs
+    } catch { setError('Failed to delete job'); }
   };
 
   const handleDeleteDataset = async (datasetId: number) => {
-    try { await del(`/datasets/${datasetId}`); setSelectedDataset(null); fetchData(); } catch { setError('Failed to delete dataset'); }
+    try { 
+      await del(`/datasets/${datasetId}`); 
+      setSelectedDataset(null);
+      await fetchData({ datasets: true, jobs: true }); // Refresh datasets and jobs
+    } catch { setError('Failed to delete dataset'); }
   };
 
   const handleDeleteModel = async (modelId: number) => {
     if (!confirm('Are you sure you want to delete this model?')) return;
-    try { await del(`/datasets/models/${modelId}`); fetchData(); } catch { setError('Failed to delete model'); }
+    
+    setOperations(prev => ({ ...prev, deletingModel: modelId }));
+    try { 
+      await del(`/datasets/models/${modelId}`); 
+      await fetchData({ models: true }); // Only refresh models
+    } catch { setError('Failed to delete model'); }
+    finally { setOperations(prev => ({ ...prev, deletingModel: null })); }
   };
 
   const handleRenameModel = async () => {
     if (!renamingModel || !newModelName.trim()) return;
+    
+    setOperations(prev => ({ ...prev, renamingModel: renamingModel.id }));
     try {
       await put(`/datasets/models/${renamingModel.id}/rename`, { name: newModelName.trim() });
       setRenamingModel(null);
       setNewModelName('');
-      fetchData();
+      await fetchData({ models: true }); // Only refresh models
     } catch { setError('Failed to rename model'); }
+    finally { setOperations(prev => ({ ...prev, renamingModel: null })); }
   };
 
   const handleDownloadModel = async (modelId: number, modelName: string) => {
+    setOperations(prev => ({ ...prev, downloadingModel: modelId }));
     try {
       const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'https://web-production-d7d37.up.railway.app';
       console.log(`Downloading model ${modelId} from ${apiUrl}/datasets/models/${modelId}/download`);
@@ -355,6 +448,8 @@ export default function TrainingPage() {
     } catch (err) { 
       console.error('Download error:', err);
       setError('Failed to download model. Please try again.'); 
+    } finally {
+      setOperations(prev => ({ ...prev, downloadingModel: null }));
     }
   };
 
@@ -774,7 +869,13 @@ export default function TrainingPage() {
           {/* Jobs Tab */}
           {activeTab === 'jobs' && (
             <div className="space-y-4">
-              {trainingJobs.length === 0 ? (
+              {loadingStates.jobs ? (
+                <div className="text-center py-12 bg-slate-800/50 rounded-xl border border-slate-700">
+                  <Loader2 className="w-16 h-16 text-indigo-400 mx-auto mb-4 animate-spin" />
+                  <h3 className="text-xl font-medium text-white mb-2">Loading Training Jobs</h3>
+                  <p className="text-slate-400">Fetching training jobs...</p>
+                </div>
+              ) : trainingJobs.length === 0 ? (
                 <div className="text-center py-12 bg-slate-800/50 rounded-xl border border-slate-700"><BarChart3 className="w-16 h-16 text-slate-500 mx-auto mb-4" /><h3 className="text-xl font-medium text-white mb-2">No Training Jobs</h3><p className="text-slate-400">Start a training job from a dataset</p></div>
               ) : trainingJobs.map(job => {
                 const sc = STATUS_CONFIG[job.status] || STATUS_CONFIG.pending;
@@ -792,8 +893,12 @@ export default function TrainingPage() {
                           </button>
                         )}
                         {['pending', 'running'].includes(job.status) && (
-                          <button onClick={() => handleCancelJob(job.job_id)} className="p-2 text-red-400 hover:bg-red-500/10 rounded-lg">
-                            <XCircle className="w-5 h-5" />
+                          <button onClick={() => handleCancelJob(job.job_id)} disabled={operations.cancellingJob} className="p-2 text-red-400 hover:bg-red-500/10 disabled:text-red-600 disabled:hover:bg-red-500/5 rounded-lg">
+                            {operations.cancellingJob ? (
+                              <Loader2 className="w-5 h-5 animate-spin" />
+                            ) : (
+                              <XCircle className="w-5 h-5" />
+                            )}
                           </button>
                         )}
                         <button onClick={() => handleDeleteJob(job.job_id)} className="p-2 text-red-400 hover:bg-red-500/10 rounded-lg">
@@ -817,7 +922,13 @@ export default function TrainingPage() {
           {/* Models Tab */}
           {activeTab === 'models' && (
             <div>
-              {trainedModels.length === 0 ? (
+              {loadingStates.models ? (
+                <div className="text-center py-12 bg-slate-800/50 rounded-xl border border-slate-700">
+                  <Loader2 className="w-16 h-16 text-indigo-400 mx-auto mb-4 animate-spin" />
+                  <h3 className="text-xl font-medium text-white mb-2">Loading Trained Models</h3>
+                  <p className="text-slate-400">Fetching your models...</p>
+                </div>
+              ) : trainedModels.length === 0 ? (
                 <div className="text-center py-12 bg-slate-800/50 rounded-xl border border-slate-700"><Brain className="w-16 h-16 text-slate-500 mx-auto mb-4" /><h3 className="text-xl font-medium text-white mb-2">No Trained Models</h3><p className="text-slate-400">Complete a training job to see models here</p></div>
               ) : (
                 <div className="bg-slate-800/50 rounded-xl border border-slate-700 overflow-hidden">
@@ -832,7 +943,41 @@ export default function TrainingPage() {
                           <td className="px-6 py-4"><span className="text-green-400 font-medium">{m.accuracy !== null ? `${m.accuracy.toFixed(2)}%` : 'N/A'}</span></td>
                           <td className="px-6 py-4"><span className="text-slate-300">{m.size_mb !== null ? `${m.size_mb.toFixed(1)} MB` : 'N/A'}</span></td>
                           <td className="px-6 py-4"><span className="text-slate-400 text-sm">{new Date(m.created_at).toLocaleDateString()}</span></td>
-                          <td className="px-6 py-4"><div className="flex gap-2"><button onClick={() => handleDownloadModel(m.id, m.name)} className="flex items-center gap-1 px-2 py-1 text-purple-400 hover:bg-purple-500/10 rounded text-sm"><Download className="w-4 h-4" /> Download</button><button onClick={() => { setRenamingModel(m); setNewModelName(m.name); }} className="flex items-center gap-1 px-2 py-1 text-blue-400 hover:bg-blue-500/10 rounded text-sm"><Edit2 className="w-4 h-4" /> Rename</button><button onClick={() => handleDeleteModel(m.id)} className="flex items-center gap-1 px-2 py-1 text-red-400 hover:bg-red-500/10 rounded text-sm"><Trash2 className="w-4 h-4" /> Delete</button></div></td>
+                          <td className="px-6 py-4"><div className="flex gap-2">
+                            <button 
+                              onClick={() => handleDownloadModel(m.id, m.name)} 
+                              disabled={operations.downloadingModel === m.id}
+                              className="flex items-center gap-1 px-2 py-1 text-purple-400 hover:bg-purple-500/10 disabled:text-purple-600 disabled:hover:bg-purple-500/5 rounded text-sm"
+                            >
+                              {operations.downloadingModel === m.id ? (
+                                <><Loader2 className="w-4 h-4 animate-spin" /> Downloading...</>
+                              ) : (
+                                <><Download className="w-4 h-4" /> Download</>
+                              )}
+                            </button>
+                            <button 
+                              onClick={() => { setRenamingModel(m); setNewModelName(m.name); }} 
+                              disabled={operations.renamingModel === m.id}
+                              className="flex items-center gap-1 px-2 py-1 text-blue-400 hover:bg-blue-500/10 disabled:text-blue-600 disabled:hover:bg-blue-500/5 rounded text-sm"
+                            >
+                              {operations.renamingModel === m.id ? (
+                                <><Loader2 className="w-4 h-4 animate-spin" /> Renaming...</>
+                              ) : (
+                                <><Edit2 className="w-4 h-4" /> Rename</>
+                              )}
+                            </button>
+                            <button 
+                              onClick={() => handleDeleteModel(m.id)} 
+                              disabled={operations.deletingModel === m.id}
+                              className="flex items-center gap-1 px-2 py-1 text-red-400 hover:bg-red-500/10 disabled:text-red-600 disabled:hover:bg-red-500/5 rounded text-sm"
+                            >
+                              {operations.deletingModel === m.id ? (
+                                <><Loader2 className="w-4 h-4 animate-spin" /> Deleting...</>
+                              ) : (
+                                <><Trash2 className="w-4 h-4" /> Delete</>
+                              )}
+                            </button>
+                          </div></td>
                         </tr>
                       ))}
                     </tbody>
@@ -918,7 +1063,13 @@ export default function TrainingPage() {
               <div><label className="block text-sm text-slate-300 mb-1">Description</label><textarea value={newDatasetDesc} onChange={(e) => setNewDatasetDesc(e.target.value)} placeholder="Describe your dataset..." rows={3} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white placeholder-slate-500" /></div>
             </div>
             <div className="flex gap-3 mt-6">
-              <button onClick={handleCreateDataset} disabled={!newDatasetName.trim()} className="flex-1 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-600 text-white rounded-lg font-medium">Create</button>
+              <button onClick={handleCreateDataset} disabled={!newDatasetName.trim() || operations.creatingDataset} className="flex-1 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-600 text-white rounded-lg font-medium flex items-center justify-center gap-2">
+                {operations.creatingDataset ? (
+                  <><Loader2 className="w-4 h-4 animate-spin" /> Creating...</>
+                ) : (
+                  'Create'
+                )}
+              </button>
               <button onClick={() => setShowCreateDataset(false)} className="flex-1 px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg font-medium">Cancel</button>
             </div>
           </div>
@@ -949,7 +1100,13 @@ export default function TrainingPage() {
               )}
             </div>
             <div className="flex gap-3">
-              <button onClick={handleAddFilesToDataset} disabled={selectedFiles.size === 0} className="flex-1 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-600 text-white rounded-lg font-medium">Add {selectedFiles.size} Files</button>
+              <button onClick={handleAddFilesToDataset} disabled={selectedFiles.size === 0 || operations.addingFiles} className="flex-1 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-600 text-white rounded-lg font-medium flex items-center justify-center gap-2">
+                {operations.addingFiles ? (
+                  <><Loader2 className="w-4 h-4 animate-spin" /> Adding {selectedFiles.size} Files...</>
+                ) : (
+                  <>Add {selectedFiles.size} Files</>
+                )}
+              </button>
               <button onClick={() => { setShowAddFiles(false); setSelectedFiles(new Map()); }} className="flex-1 px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg font-medium">Cancel</button>
             </div>
           </div>
@@ -1201,7 +1358,13 @@ export default function TrainingPage() {
               <div><label className="block text-sm text-slate-300 mb-1">Model Name (optional)</label><input type="text" value={trainingConfig.model_name} onChange={(e) => setTrainingConfig({ ...trainingConfig, model_name: e.target.value })} placeholder="Auto-generated if empty" className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white placeholder-slate-500" /></div>
             </div>
             <div className="flex gap-3 mt-6">
-              <button onClick={handleStartTraining} className="flex-1 px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg font-medium flex items-center justify-center gap-2"><Play className="w-4 h-4" /> Start Training</button>
+              <button onClick={handleStartTraining} disabled={operations.startingTraining} className="flex-1 px-4 py-2 bg-green-600 hover:bg-green-700 disabled:bg-slate-600 text-white rounded-lg font-medium flex items-center justify-center gap-2">
+                {operations.startingTraining ? (
+                  <><Loader2 className="w-4 h-4 animate-spin" /> Starting Training...</>
+                ) : (
+                  <><Play className="w-4 h-4" /> Start Training</>
+                )}
+              </button>
               <button onClick={() => setShowTrainingConfig(false)} className="flex-1 px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg font-medium">Cancel</button>
             </div>
           </div>
@@ -1220,7 +1383,13 @@ export default function TrainingPage() {
               </div>
             </div>
             <div className="flex gap-3 mt-6">
-              <button onClick={handleRenameModel} disabled={!newModelName.trim()} className="flex-1 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-600 text-white rounded-lg font-medium">Rename</button>
+              <button onClick={handleRenameModel} disabled={!newModelName.trim() || operations.renamingModel === renamingModel.id} className="flex-1 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-600 text-white rounded-lg font-medium flex items-center justify-center gap-2">
+                {operations.renamingModel === renamingModel.id ? (
+                  <><Loader2 className="w-4 h-4 animate-spin" /> Renaming...</>
+                ) : (
+                  'Rename'
+                )}
+              </button>
               <button onClick={() => { setRenamingModel(null); setNewModelName(''); }} className="flex-1 px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg font-medium">Cancel</button>
             </div>
           </div>
