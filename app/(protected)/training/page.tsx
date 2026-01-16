@@ -908,8 +908,8 @@ export default function TrainingPage() {
                     </div>
                     <div className="mb-4"><div className="flex justify-between text-sm text-slate-400 mb-1"><span>Epoch {job.current_epoch}/{job.total_epochs}</span><span>{prog.toFixed(0)}%</span></div><div className="w-full bg-slate-700 rounded-full h-2"><div className="bg-indigo-500 h-2 rounded-full transition-all" style={{ width: `${prog}%` }} /></div></div>
                     <div className="grid grid-cols-4 gap-4">
-                      <div className="bg-slate-900/50 rounded-lg p-3"><p className="text-slate-500 text-xs mb-1">Loss</p><p className="text-white font-medium">{job.metrics?.loss?.[job.metrics.loss.length - 1]?.toFixed(4) || 'N/A'}</p></div>
-                      <div className="bg-slate-900/50 rounded-lg p-3"><p className="text-slate-500 text-xs mb-1">Accuracy</p><p className="text-white font-medium">{job.metrics?.accuracy?.[job.metrics.accuracy.length - 1] ? `${(job.metrics.accuracy[job.metrics.accuracy.length - 1] * 100).toFixed(2)}%` : 'N/A'}</p></div>
+                      <div className="bg-slate-900/50 rounded-lg p-3"><p className="text-slate-500 text-xs mb-1">Loss</p><p className="text-white font-medium">{job.metrics?.loss && job.metrics.loss.length > 0 ? job.metrics.loss[job.metrics.loss.length - 1]?.toFixed(4) : 'N/A'}</p></div>
+                      <div className="bg-slate-900/50 rounded-lg p-3"><p className="text-slate-500 text-xs mb-1">Accuracy</p><p className="text-white font-medium">{job.metrics?.accuracy && job.metrics.accuracy.length > 0 ? `${(job.metrics.accuracy[job.metrics.accuracy.length - 1] * 100).toFixed(2)}%` : 'N/A'}</p></div>
                       <div className="bg-slate-900/50 rounded-lg p-3"><p className="text-slate-500 text-xs mb-1">Best Val Acc</p><p className="text-green-400 font-medium">{job.best_metrics?.val_accuracy ? `${(job.best_metrics.val_accuracy * 100).toFixed(2)}%` : 'N/A'}</p></div>
                       <div className="bg-slate-900/50 rounded-lg p-3"><p className="text-slate-500 text-xs mb-1">Best Epoch</p><p className="text-white font-medium">{job.best_metrics?.best_epoch || 'N/A'}</p></div>
                     </div>
@@ -1679,7 +1679,7 @@ export default function TrainingPage() {
                 <div className="bg-slate-800/50 rounded-lg p-4">
                   <h4 className="text-white font-medium mb-4">ROC Curves (Receiver Operating Characteristic)</h4>
                   <div className="grid grid-cols-2 gap-6">
-                    {Object.entries(selectedJob.best_metrics.roc_curves).map(([className, rocData]: [string, any]) => (
+                    {selectedJob.best_metrics?.roc_curves && Object.entries(selectedJob.best_metrics.roc_curves).map(([className, rocData]: [string, any]) => (
                       <div key={className}>
                         <div className="flex justify-between items-center mb-3">
                           <p className="text-slate-400 text-sm font-medium">{className} (AUC: {(rocData.auc * 100).toFixed(2)}%)</p>
@@ -1718,7 +1718,7 @@ export default function TrainingPage() {
                 <div className="bg-slate-800/50 rounded-lg p-4">
                   <h4 className="text-white font-medium mb-4">Precision-Recall Curves</h4>
                   <div className="grid grid-cols-2 gap-6">
-                    {Object.entries(selectedJob.best_metrics.pr_curves).map(([className, prData]: [string, any]) => (
+                    {selectedJob.best_metrics?.pr_curves && Object.entries(selectedJob.best_metrics.pr_curves).map(([className, prData]: [string, any]) => (
                       <div key={className}>
                         <div className="flex justify-between items-center mb-3">
                           <p className="text-slate-400 text-sm font-medium">{className}</p>
@@ -1770,7 +1770,7 @@ export default function TrainingPage() {
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-700">
-                        {Object.entries(selectedJob.best_metrics.per_class_metrics).map(([className, metrics]: [string, any]) => (
+                        {selectedJob.best_metrics?.per_class_metrics && Object.entries(selectedJob.best_metrics.per_class_metrics).map(([className, metrics]: [string, any]) => (
                           <tr key={className}>
                             <td className="px-4 py-2 text-white font-medium">{className}</td>
                             <td className="px-4 py-2 text-blue-400">{(metrics.precision * 100).toFixed(2)}%</td>
@@ -1803,7 +1803,7 @@ export default function TrainingPage() {
                         </tr>
                       </thead>
                       <tbody>
-                        {selectedJob.best_metrics.confusion_matrix.map((row: number[], rowIdx: number) => (
+                        {selectedJob.best_metrics?.confusion_matrix && selectedJob.best_metrics.confusion_matrix.map((row: number[], rowIdx: number) => (
                           <tr key={rowIdx}>
                             <td className="p-2 text-slate-400 text-xs font-medium">
                               {selectedJob.best_metrics.class_names?.[rowIdx] || `Class ${rowIdx}`}

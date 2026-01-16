@@ -670,7 +670,7 @@ const EnhancedTrainingSystem: React.FC = () => {
                   {Object.entries(job.metrics).map(([metric, values]) => (
                     <div key={metric}>
                       <span className="font-medium">{metric}:</span>
-                      <span className="ml-2">{values[values.length - 1]?.toFixed(4)}</span>
+                      <span className="ml-2">{values && values.length > 0 ? values[values.length - 1]?.toFixed(4) : 'N/A'}</span>
                     </div>
                   ))}
                 </div>
@@ -792,7 +792,7 @@ const EnhancedTrainingSystem: React.FC = () => {
                     {Object.entries(selectedJob.metrics).map(([metric, values]) => (
                       <div key={metric}>
                         <span className="font-medium">{metric}:</span>
-                        <span className="ml-2">{values.map(v => v.toFixed(4)).join(', ')}</span>
+                        <span className="ml-2">{values && Array.isArray(values) ? values.map(v => v.toFixed(4)).join(', ') : 'N/A'}</span>
                       </div>
                     ))}
                   </div>
