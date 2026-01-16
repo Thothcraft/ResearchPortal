@@ -831,7 +831,7 @@ export default function TrainingPage() {
                                     <div>
                                       <p className="text-white text-sm font-medium">{filename}</p>
                                       <p className="text-slate-500 text-xs">
-                                        {files[0].size ? `${(files[0].size / 1024).toFixed(1)} KB` : ''}
+                                        {files.length > 0 && files[0]?.size ? `${(files[0].size / 1024).toFixed(1)} KB` : ''}
                                         {files.length > 1 && <span className="ml-2 text-indigo-400">({files.length} entries with different labels)</span>}
                                       </p>
                                     </div>

@@ -83,17 +83,21 @@ export default function MobileFileGrid({
 
   // Handle touch events for long press
   const handleTouchStart = (e: React.TouchEvent, item: FileItem | FolderItem) => {
-    touchStartPos.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+    if (e.touches.length > 0) {
+      touchStartPos.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+    }
     
     longPressTimer.current = setTimeout(() => {
       // Long press detected - show context menu
-      const touch = e.touches[0];
-      setContextMenu({
-        x: touch.clientX,
-        y: touch.clientY,
-        file: 'id' in item ? item as FileItem : undefined,
-        folder: 'fileCount' in item ? item as FolderItem : undefined
-      });
+      if (e.touches.length > 0) {
+        const touch = e.touches[0];
+        setContextMenu({
+          x: touch.clientX,
+          y: touch.clientY,
+          file: 'id' in item ? item as FileItem : undefined,
+          folder: 'fileCount' in item ? item as FolderItem : undefined
+        });
+      }
     }, 500);
   };
 
@@ -111,12 +115,13 @@ export default function MobileFileGrid({
     }
     
     // Check if it was a tap (not a long press)
-    const touch = e.changedTouches[0];
-    const startPos = touchStartPos.current;
-    
-    if (startPos && 
-        Math.abs(touch.clientX - startPos.x) < 10 && 
-        Math.abs(touch.clientY - startPos.y) < 10) {
+    if (e.changedTouches.length > 0) {
+      const touch = e.changedTouches[0];
+      const startPos = touchStartPos.current;
+      
+      if (startPos && 
+          Math.abs(touch.clientX - startPos.x) < 10 && 
+          Math.abs(touch.clientY - startPos.y) < 10) {
       
       if (isSelectionMode && 'id' in item) {
         // Toggle selection in selection mode
@@ -128,6 +133,7 @@ export default function MobileFileGrid({
         } else {
           onFolderSelect?.(item as FolderItem);
         }
+      }
       }
     }
     

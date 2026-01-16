@@ -690,7 +690,7 @@ export default function ProcessingPage() {
           <div className="bg-slate-900 rounded-xl p-6 w-full max-w-md border border-slate-700">
             <h3 className="text-xl font-semibold text-white mb-4">Configure {selectedBlock.name}</h3>
             <div className="space-y-4">
-              {Object.entries(selectedBlock.config).map(([key, value]) => (
+              {selectedBlock?.config && Object.entries(selectedBlock.config).map(([key, value]) => (
                 <div key={key}>
                   <label className="block text-sm text-slate-300 mb-1 capitalize">{key.replace(/_/g, ' ')}</label>
                   <input
