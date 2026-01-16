@@ -585,7 +585,7 @@ export default function TrainingPage() {
       ctx.fillRect(0, 0, width, height);
       
       // Title
-      const graphTitle = filename.replace(/_/g, ' ').split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+      const graphTitle = filename ? filename.replace(/_/g, ' ').split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ') : 'Graph';
       ctx.font = 'bold 28px Arial';
       ctx.fillStyle = '#000000';
       ctx.textAlign = 'center';
@@ -649,7 +649,7 @@ export default function TrainingPage() {
         const points = polyline.getAttribute('points');
         if (!points) return;
         
-        const coords = points.trim().split(/\s+/).map(p => p.split(',').map(Number));
+        const coords = points.trim().split(/\s+/).map(p => p.split(',').map(Number).filter(n => !isNaN(n)));
         if (coords.length === 0) return;
         
         const svgWidth = parseFloat(svgElement.getAttribute('viewBox')?.split(' ')[2] || '400');
@@ -759,7 +759,7 @@ export default function TrainingPage() {
         <div className="bg-slate-800/50 rounded-xl p-4 border border-slate-700"><p className="text-slate-400 text-sm mb-1">Datasets</p><p className="text-2xl font-bold text-white">{datasets.length}</p></div>
         <div className="bg-slate-800/50 rounded-xl p-4 border border-slate-700"><p className="text-slate-400 text-sm mb-1">Active Jobs</p><p className="text-2xl font-bold text-blue-400">{activeJobsCount}</p></div>
         <div className="bg-slate-800/50 rounded-xl p-4 border border-slate-700"><p className="text-slate-400 text-sm mb-1">Trained Models</p><p className="text-2xl font-bold text-green-400">{trainedModels.length}</p></div>
-        <div className="bg-slate-800/50 rounded-xl p-4 border border-slate-700"><p className="text-slate-400 text-sm mb-1">Best Accuracy</p><p className="text-2xl font-bold text-purple-400">{trainedModels.length > 0 ? `${(Math.max(...trainedModels.map(m => m.accuracy || 0)) * 100).toFixed(1)}%` : 'N/A'}</p></div>
+        <div className="bg-slate-800/50 rounded-xl p-4 border border-slate-700"><p className="text-slate-400 text-sm mb-1">Best Accuracy</p><p className="text-2xl font-bold text-purple-400">{trainedModels.length > 0 && trainedModels.some(m => m.accuracy) ? `${(Math.max(...trainedModels.filter(m => m.accuracy).map(m => m.accuracy || 0)) * 100).toFixed(1)}%` : 'N/A'}</p></div>
       </div>
 
       {selectedMode === 'cloud' && (
@@ -1568,14 +1568,14 @@ export default function TrainingPage() {
                               </linearGradient>
                             </defs>
                             {(() => {
-                              const trainAcc = selectedJob.metrics.accuracy;
-                              const valAcc = selectedJob.metrics.val_accuracy;
-                              const maxAcc = Math.max(...trainAcc, ...valAcc);
-                              const minAcc = Math.min(...trainAcc, ...valAcc);
+                              const trainAcc = selectedJob.metrics.accuracy || [];
+                              const valAcc = selectedJob.metrics.val_accuracy || [];
+                              const maxAcc = trainAcc.length > 0 || valAcc.length > 0 ? Math.max(...trainAcc, ...valAcc) : 1;
+                              const minAcc = trainAcc.length > 0 || valAcc.length > 0 ? Math.min(...trainAcc, ...valAcc) : 0;
                               const range = maxAcc - minAcc || 0.1;
                               const xStep = 380 / (trainAcc.length - 1 || 1);
-                              const trainPoints = trainAcc.map((acc, i) => `${10 + i * xStep},${140 - ((acc - minAcc) / range) * 120}`).join(' ');
-                              const valPoints = valAcc.map((acc, i) => `${10 + i * xStep},${140 - ((acc - minAcc) / range) * 120}`).join(' ');
+                              const trainPoints = trainAcc && trainAcc.length > 0 ? trainAcc.map((acc, i) => `${10 + i * xStep},${140 - ((acc - minAcc) / range) * 120}`).join(' ') : '';
+                              const valPoints = valAcc && valAcc.length > 0 ? valAcc.map((acc, i) => `${10 + i * xStep},${140 - ((acc - minAcc) / range) * 120}`).join(' ') : '';
                               return (
                                 <>
                                   <polyline points={trainPoints} fill="none" stroke="rgb(34, 197, 94)" strokeWidth="2"/>
@@ -1615,14 +1615,14 @@ export default function TrainingPage() {
                               </linearGradient>
                             </defs>
                             {(() => {
-                              const trainLoss = selectedJob.metrics.loss;
-                              const valLoss = selectedJob.metrics.val_loss;
-                              const maxLoss = Math.max(...trainLoss, ...valLoss);
-                              const minLoss = Math.min(...trainLoss, ...valLoss);
+                              const trainLoss = selectedJob.metrics.loss || [];
+                              const valLoss = selectedJob.metrics.val_loss || [];
+                              const maxLoss = trainLoss.length > 0 || valLoss.length > 0 ? Math.max(...trainLoss, ...valLoss) : 1;
+                              const minLoss = trainLoss.length > 0 || valLoss.length > 0 ? Math.min(...trainLoss, ...valLoss) : 0;
                               const range = maxLoss - minLoss || 0.1;
                               const xStep = 380 / (trainLoss.length - 1 || 1);
-                              const trainPoints = trainLoss.map((loss, i) => `${10 + i * xStep},${140 - ((loss - minLoss) / range) * 120}`).join(' ');
-                              const valPoints = valLoss.map((loss, i) => `${10 + i * xStep},${140 - ((loss - minLoss) / range) * 120}`).join(' ');
+                              const trainPoints = trainLoss && trainLoss.length > 0 ? trainLoss.map((loss, i) => `${10 + i * xStep},${140 - ((loss - minLoss) / range) * 120}`).join(' ') : '';
+                              const valPoints = valLoss && valLoss.length > 0 ? valLoss.map((loss, i) => `${10 + i * xStep},${140 - ((loss - minLoss) / range) * 120}`).join(' ') : '';
                               return (
                                 <>
                                   <polyline points={trainPoints} fill="none" stroke="rgb(239, 68, 68)" strokeWidth="2"/>
@@ -1696,7 +1696,7 @@ export default function TrainingPage() {
                               </linearGradient>
                             </defs>
                             {(() => {
-                              const points = rocData.points.map((p: any, i: number) => `${10 + p.fpr * 380},${140 - p.tpr * 120}`).join(' ');
+                              const points = rocData.points && rocData.points.length > 0 ? rocData.points.map((p: any, i: number) => `${10 + p.fpr * 380},${140 - p.tpr * 120}`).join(' ') : '';
                               return (
                                 <>
                                   <line x1="10" y1="140" x2="390" y2="20" stroke="rgb(100, 100, 100)" strokeWidth="1" strokeDasharray="4"/>
@@ -1735,7 +1735,7 @@ export default function TrainingPage() {
                               </linearGradient>
                             </defs>
                             {(() => {
-                              const points = prData.points.map((p: any, i: number) => `${10 + p.recall * 380},${140 - p.precision * 120}`).join(' ');
+                              const points = prData.points && prData.points.length > 0 ? prData.points.map((p: any, i: number) => `${10 + p.recall * 380},${140 - p.precision * 120}`).join(' ') : '';
                               return (
                                 <>
                                   <polyline points={points} fill="none" stroke="rgb(168, 85, 247)" strokeWidth="2"/>
