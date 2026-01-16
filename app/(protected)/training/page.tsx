@@ -1448,11 +1448,11 @@ export default function TrainingPage() {
                 </div>
                 <div className="bg-slate-800/50 rounded-lg p-3">
                   <p className="text-slate-400 text-xs mb-1">Final Train Loss</p>
-                  <p className="text-blue-400 font-medium text-sm">{selectedJob.metrics?.loss?.[selectedJob.metrics.loss.length - 1]?.toFixed(4) || 'N/A'}</p>
+                  <p className="text-blue-400 font-medium text-sm">{selectedJob.metrics?.loss && selectedJob.metrics.loss.length > 0 ? selectedJob.metrics.loss[selectedJob.metrics.loss.length - 1]?.toFixed(4) : 'N/A'}</p>
                 </div>
                 <div className="bg-slate-800/50 rounded-lg p-3">
                   <p className="text-slate-400 text-xs mb-1">Final Val Loss</p>
-                  <p className="text-purple-400 font-medium text-sm">{selectedJob.metrics?.val_loss?.[selectedJob.metrics.val_loss.length - 1]?.toFixed(4) || 'N/A'}</p>
+                  <p className="text-purple-400 font-medium text-sm">{selectedJob.metrics?.val_loss && selectedJob.metrics.val_loss.length > 0 ? selectedJob.metrics.val_loss[selectedJob.metrics.val_loss.length - 1]?.toFixed(4) : 'N/A'}</p>
                 </div>
                 <div className="bg-slate-800/50 rounded-lg p-3">
                   <p className="text-slate-400 text-xs mb-1">Best Epoch</p>

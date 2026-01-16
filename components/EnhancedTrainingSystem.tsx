@@ -806,7 +806,7 @@ const EnhancedTrainingSystem: React.FC = () => {
                     {Object.entries(selectedJob.best_metrics).map(([metric, value]) => (
                       <div key={metric}>
                         <span className="font-medium">{metric}:</span>
-                        <span className="ml-2">{value.toFixed(4)}</span>
+                        <span className="ml-2">{typeof value === 'number' ? value.toFixed(4) : 'N/A'}</span>
                       </div>
                     ))}
                   </div>
