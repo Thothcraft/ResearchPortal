@@ -120,6 +120,9 @@ export default function TrainingPage() {
   const [showCreateDataset, setShowCreateDataset] = useState(false);
   const [newDatasetName, setNewDatasetName] = useState('');
   const [newDatasetDesc, setNewDatasetDesc] = useState('');
+  const [newDatasetLabel, setNewDatasetLabel] = useState('');
+  const [newDatasetLabels, setNewDatasetLabels] = useState<string[]>([]);
+  const [datasetLabelOverrides, setDatasetLabelOverrides] = useState<Record<number, string[]>>({});
   const [cloudFiles, setCloudFiles] = useState<CloudFile[]>([]);
   const [showAddFiles, setShowAddFiles] = useState(false);
   const [selectedFiles, setSelectedFiles] = useState<Map<number, string>>(new Map());
@@ -260,6 +263,12 @@ export default function TrainingPage() {
   }, [showAddFiles]);
 
   useEffect(() => {
+    if (!showCreateDataset) return;
+    setNewDatasetLabel('');
+    setNewDatasetLabels([]);
+  }, [showCreateDataset]);
+
+  useEffect(() => {
     fetchData({ datasets: true, jobs: false, models: false, files: false });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -326,10 +335,23 @@ export default function TrainingPage() {
     
     setOperations(prev => ({ ...prev, creatingDataset: true }));
     try {
-      await post('/datasets/create', { name: newDatasetName.trim(), description: newDatasetDesc.trim() });
+      const initialLabels = Array.from(
+        new Set(newDatasetLabels.map(l => l.trim()).filter(Boolean))
+      );
+
+      const created = await post('/datasets/create', { name: newDatasetName.trim(), description: newDatasetDesc.trim() });
       setNewDatasetName('');
       setNewDatasetDesc('');
+      setNewDatasetLabel('');
+      setNewDatasetLabels([]);
       setShowCreateDataset(false);
+
+      const createdDataset: Dataset | undefined = created?.dataset;
+      if (createdDataset?.id && initialLabels.length > 0) {
+        setDatasetLabelOverrides(prev => ({ ...prev, [createdDataset.id]: initialLabels }));
+        setAvailableLabels(initialLabels);
+      }
+
       await fetchData({ datasets: true }); // Only refresh datasets
     } catch { setError('Failed to create dataset'); }
     finally { setOperations(prev => ({ ...prev, creatingDataset: false })); }
@@ -343,8 +365,13 @@ export default function TrainingPage() {
         setSelectedDataset(res.dataset);
         // Update available labels based on dataset
         const datasetLabels = res.dataset.labels || [];
+        const overrideLabels = datasetLabelOverrides[res.dataset.id] || [];
         if (datasetLabels.length > 0) {
-          setAvailableLabels(datasetLabels);
+          const merged = Array.from(new Set([...overrideLabels, ...datasetLabels].map(l => l.trim()).filter(Boolean)));
+          setAvailableLabels(merged);
+          if (merged.length > 0) setDatasetLabelOverrides(prev => ({ ...prev, [res.dataset.id]: merged }));
+        } else if (overrideLabels.length > 0) {
+          setAvailableLabels(overrideLabels);
         }
         // Update training config with first available model
         const availableModels = getAvailableModels(res.dataset);
@@ -1140,6 +1167,47 @@ export default function TrainingPage() {
             <div className="space-y-4">
               <div><label className="block text-sm text-slate-300 mb-1">Dataset Name</label><input type="text" value={newDatasetName} onChange={(e) => setNewDatasetName(e.target.value)} placeholder="e.g., Activity Recognition" className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white placeholder-slate-500" /></div>
               <div><label className="block text-sm text-slate-300 mb-1">Description</label><textarea value={newDatasetDesc} onChange={(e) => setNewDatasetDesc(e.target.value)} placeholder="Describe your dataset..." rows={3} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white placeholder-slate-500" /></div>
+              <div>
+                <label className="block text-sm text-slate-300 mb-1">Labels</label>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={newDatasetLabel}
+                    onChange={(e) => setNewDatasetLabel(e.target.value)}
+                    placeholder="e.g., watch"
+                    className="flex-1 px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white placeholder-slate-500"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const lbl = newDatasetLabel.trim();
+                      if (!lbl) return;
+                      if (newDatasetLabels.includes(lbl)) return;
+                      setNewDatasetLabels([...newDatasetLabels, lbl]);
+                      setNewDatasetLabel('');
+                    }}
+                    className="px-3 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg text-sm"
+                  >
+                    Add
+                  </button>
+                </div>
+                {newDatasetLabels.length > 0 && (
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {newDatasetLabels.map(l => (
+                      <span key={l} className="inline-flex items-center gap-2 px-3 py-1 bg-indigo-500/20 text-indigo-300 rounded-full text-sm border border-indigo-500/30">
+                        {l}
+                        <button
+                          type="button"
+                          onClick={() => setNewDatasetLabels(newDatasetLabels.filter(x => x !== l))}
+                          className="text-indigo-200 hover:text-white"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
             <div className="flex gap-3 mt-6">
               <button onClick={handleCreateDataset} disabled={!newDatasetName.trim() || operations.creatingDataset} className="flex-1 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-600 text-white rounded-lg font-medium flex items-center justify-center gap-2">
