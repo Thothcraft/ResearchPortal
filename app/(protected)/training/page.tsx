@@ -1681,7 +1681,9 @@ export default function TrainingPage() {
                 <div className="bg-slate-800/50 rounded-lg p-4">
                   <h4 className="text-white font-medium mb-4">ROC Curves (Receiver Operating Characteristic)</h4>
                   <div className="grid grid-cols-2 gap-6">
-                    {selectedJob.best_metrics?.roc_curves && Object.entries(selectedJob.best_metrics.roc_curves).map(([className, rocData]: [string, any]) => (
+                    {selectedJob.best_metrics?.roc_curves && Object.entries(selectedJob.best_metrics.roc_curves).map(([className, rocData]: [string, any]) => {
+                      if (!rocData || !rocData.points || !Array.isArray(rocData.points)) return null;
+                      return (
                       <div key={className}>
                         <div className="flex justify-between items-center mb-3">
                           <p className="text-slate-400 text-sm font-medium">{className} (AUC: {(rocData.auc * 100).toFixed(2)}%)</p>
@@ -1712,7 +1714,8 @@ export default function TrainingPage() {
                           </svg>
                         </div>
                       </div>
-                    ))}
+                    );
+                    })}
                   </div>
                 </div>
               )}
@@ -1720,7 +1723,9 @@ export default function TrainingPage() {
                 <div className="bg-slate-800/50 rounded-lg p-4">
                   <h4 className="text-white font-medium mb-4">Precision-Recall Curves</h4>
                   <div className="grid grid-cols-2 gap-6">
-                    {selectedJob.best_metrics?.pr_curves && Object.entries(selectedJob.best_metrics.pr_curves).map(([className, prData]: [string, any]) => (
+                    {selectedJob.best_metrics?.pr_curves && Object.entries(selectedJob.best_metrics.pr_curves).map(([className, prData]: [string, any]) => {
+                      if (!prData || !prData.points || !Array.isArray(prData.points)) return null;
+                      return (
                       <div key={className}>
                         <div className="flex justify-between items-center mb-3">
                           <p className="text-slate-400 text-sm font-medium">{className}</p>
@@ -1750,7 +1755,8 @@ export default function TrainingPage() {
                           </svg>
                         </div>
                       </div>
-                    ))}
+                    );
+                    })}
                   </div>
                 </div>
               )}
