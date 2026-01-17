@@ -172,6 +172,7 @@ export default function TrainingPage() {
     jobs: false,
     models: false,
     files: false,
+    datasetDetail: false,
     training: false,
     deleting: false,
     downloading: false,
@@ -239,24 +240,40 @@ export default function TrainingPage() {
   };
 
   useEffect(() => {
-    fetchData(); // Initial load
-    
-    // Set up polling for jobs and models only (more frequent)
+    fetchData({ datasets: true, jobs: false, models: false, files: false });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (activeTab === 'jobs') {
+      fetchData({ datasets: false, jobs: true, models: false, files: false });
+    }
+    if (activeTab === 'models' || activeTab === 'compare') {
+      fetchData({ datasets: false, jobs: false, models: true, files: false });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab]);
+
+  useEffect(() => {
+    if (activeTab !== 'jobs' && activeTab !== 'models' && activeTab !== 'compare') return;
+
     const interval = setInterval(async () => {
-      // Don't poll if any operation is in progress
       const hasActiveOperation = Object.values(operations).some(v => v === true || v !== null);
-      if (hasActiveOperation) {
-        return; // Skip this poll cycle
-      }
-      
+      if (hasActiveOperation) return;
+
       try {
-        await fetchData({ jobs: true, models: true }); // Only fetch jobs and models
+        await fetchData({
+          datasets: false,
+          jobs: activeTab === 'jobs',
+          models: activeTab === 'models' || activeTab === 'compare',
+          files: false,
+        });
       } catch {}
-    }, 10000); // Increased to 10 seconds to reduce load
-    
+    }, 10000);
+
     return () => clearInterval(interval);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [operations]);
+  }, [activeTab, operations]);
 
   // Get available models based on dataset file types
   const getAvailableModels = useCallback((dataset: Dataset | null): ModelOption[] => {
@@ -300,6 +317,7 @@ export default function TrainingPage() {
 
   const handleSelectDataset = async (dataset: Dataset) => {
     try {
+      setLoadingStates(prev => ({ ...prev, datasetDetail: true }));
       const res = await get(`/datasets/${dataset.id}`);
       if (res?.dataset) {
         setSelectedDataset(res.dataset);
@@ -318,6 +336,9 @@ export default function TrainingPage() {
         }
       }
     } catch { setError('Failed to load dataset'); }
+    finally {
+      setLoadingStates(prev => ({ ...prev, datasetDetail: false }));
+    }
   };
 
   const handleAddFilesToDataset = async () => {
@@ -802,7 +823,12 @@ export default function TrainingPage() {
                   <button onClick={() => setShowCreateDataset(true)} className="flex items-center gap-1 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm"><Plus className="w-4 h-4" /> New</button>
                 </div>
                 <div className="space-y-2">
-                  {datasets.length === 0 ? (
+                  {loadingStates.datasets ? (
+                    <div className="text-center py-8 bg-slate-800/50 rounded-xl border border-slate-700">
+                      <Loader2 className="w-12 h-12 text-indigo-400 mx-auto mb-3 animate-spin" />
+                      <p className="text-slate-400">Loading datasets...</p>
+                    </div>
+                  ) : datasets.length === 0 ? (
                     <div className="text-center py-8 bg-slate-800/50 rounded-xl border border-slate-700">
                       <Database className="w-12 h-12 text-slate-500 mx-auto mb-3" />
                       <p className="text-slate-400">No datasets yet</p>
@@ -817,7 +843,13 @@ export default function TrainingPage() {
                 </div>
               </div>
               <div className="lg:col-span-2">
-                {selectedDataset ? (
+                {loadingStates.datasetDetail ? (
+                  <div className="bg-slate-800/50 rounded-xl border border-slate-700 p-12 text-center">
+                    <Loader2 className="w-16 h-16 text-indigo-400 mx-auto mb-4 animate-spin" />
+                    <h3 className="text-xl font-medium text-white mb-2">Loading Dataset</h3>
+                    <p className="text-slate-400">Fetching dataset details...</p>
+                  </div>
+                ) : selectedDataset ? (
                   <div className="bg-slate-800/50 rounded-xl border border-slate-700 p-6">
                     <div className="flex items-center justify-between mb-6">
                       <div><h2 className="text-xl font-semibold text-white">{selectedDataset.name}</h2>{selectedDataset.description && <p className="text-slate-400 text-sm mt-1">{selectedDataset.description}</p>}</div>
