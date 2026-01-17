@@ -200,31 +200,33 @@ export default function TrainingPage() {
       setError(null);
       
       // Only fetch the requested data
-      const promises = [];
-      if (opts.datasets) promises.push(get('/datasets/list').catch(() => null));
-      if (opts.jobs) promises.push(get('/datasets/train/jobs').catch(() => null));
-      if (opts.models) promises.push(get('/datasets/models').catch(() => null));
-      if (opts.files) promises.push(get('/file/files').catch(() => null));
+      const promises: { type: string; promise: Promise<any> }[] = [];
+      if (opts.datasets) promises.push({ type: 'datasets', promise: get('/datasets/list').catch(() => null) });
+      if (opts.jobs) promises.push({ type: 'jobs', promise: get('/datasets/train/jobs').catch(() => null) });
+      if (opts.models) promises.push({ type: 'models', promise: get('/datasets/models').catch(() => null) });
+      if (opts.files) promises.push({ type: 'files', promise: get('/file/files').catch(() => null) });
       
-      const results = await Promise.all(promises);
-      let resultIndex = 0;
+      const results = await Promise.all(promises.map(p => p.promise));
       
-      if (opts.datasets && results[resultIndex]) {
-        const datasetsRes = results[resultIndex++];
-        if (datasetsRes?.datasets) setDatasets(datasetsRes.datasets);
-      }
-      if (opts.jobs && results[resultIndex]) {
-        const jobsRes = results[resultIndex++];
-        if (jobsRes?.jobs) setTrainingJobs(jobsRes.jobs);
-      }
-      if (opts.models && results[resultIndex]) {
-        const modelsRes = results[resultIndex++];
-        if (modelsRes?.models) setTrainedModels(modelsRes.models);
-      }
-      if (opts.files && results[resultIndex]) {
-        const filesRes = results[resultIndex++];
-        if (filesRes?.files) setCloudFiles(filesRes.files);
-      }
+      promises.forEach((p, index) => {
+        const result = results[index];
+        if (!result) return;
+        
+        switch (p.type) {
+          case 'datasets':
+            if (result?.datasets) setDatasets(result.datasets);
+            break;
+          case 'jobs':
+            if (result?.jobs) setTrainingJobs(result.jobs);
+            break;
+          case 'models':
+            if (result?.models) setTrainedModels(result.models);
+            break;
+          case 'files':
+            if (result?.files) setCloudFiles(result.files);
+            break;
+        }
+      });
     } catch (err) {
       setError('Failed to load training data');
     } finally {
@@ -790,7 +792,7 @@ export default function TrainingPage() {
                   ) : datasets.map(dataset => (
                     <button key={dataset.id} onClick={() => handleSelectDataset(dataset)} className={`w-full p-4 rounded-xl border text-left transition-all ${selectedDataset?.id === dataset.id ? 'border-indigo-500 bg-indigo-500/10' : 'border-slate-700 bg-slate-800/50 hover:border-slate-600'}`}>
                       <div className="flex items-center justify-between mb-2"><h3 className="font-medium text-white">{dataset.name}</h3><ChevronRight className="w-4 h-4 text-slate-400" /></div>
-                      <div className="flex items-center gap-3 text-sm text-slate-400"><span className="flex items-center gap-1"><FileText className="w-3 h-3" />{dataset.file_count} files</span><span className="flex items-center gap-1"><Tag className="w-3 h-3" />{dataset.labels.length} labels</span></div>
+                      <div className="flex items-center gap-3 text-sm text-slate-400"><span className="flex items-center gap-1"><FileText className="w-3 h-3" />{dataset.file_count} files</span><span className="flex items-center gap-1"><Tag className="w-3 h-3" />{dataset.labels?.length || 0} labels</span></div>
                     </button>
                   ))}
                 </div>
@@ -843,7 +845,7 @@ export default function TrainingPage() {
                                       <span className="text-slate-400 text-xs">Label:</span>
                                       <div className="flex items-center gap-2">
                                         <select value={file.label} onChange={(e) => handleUpdateLabel(file.file_id, e.target.value)} className="px-2 py-1 bg-slate-800 border border-slate-600 rounded text-sm text-white">
-                                          {availableLabels.map(l => <option key={l} value={l}>{l}</option>)}
+                                          {(availableLabels || []).map(l => <option key={l} value={l}>{l}</option>)}
                                         </select>
                                         <button onClick={() => handleRemoveFile(file.file_id)} className="p-1 text-red-400 hover:text-red-300">
                                           <Trash2 className="w-3 h-3" />
@@ -1084,7 +1086,7 @@ export default function TrainingPage() {
             <div className="mb-4">
               <label className="block text-sm text-slate-300 mb-2">Add New Label</label>
               <div className="flex gap-2"><input type="text" value={newLabel} onChange={(e) => setNewLabel(e.target.value)} placeholder="New label name" className="flex-1 px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white placeholder-slate-500" /><button onClick={handleAddLabel} className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg">Add</button></div>
-              <div className="flex flex-wrap gap-2 mt-2">{availableLabels.map(l => <span key={l} className="px-2 py-1 bg-indigo-500/20 text-indigo-300 rounded text-sm">{l}</span>)}</div>
+              <div className="flex flex-wrap gap-2 mt-2">{(availableLabels || []).map(l => <span key={l} className="px-2 py-1 bg-indigo-500/20 text-indigo-300 rounded text-sm">{l}</span>)}</div>
             </div>
             <div className="flex-1 overflow-y-auto mb-4">
               <label className="block text-sm text-slate-300 mb-2">Select Files & Assign Labels</label>
@@ -1092,8 +1094,8 @@ export default function TrainingPage() {
                 <div className="space-y-2">
                   {cloudFiles.map(file => (
                     <div key={file.file_id} className={`flex items-center justify-between p-3 rounded-lg border ${selectedFiles.has(file.file_id) ? 'border-indigo-500 bg-indigo-500/10' : 'border-slate-700 bg-slate-800/50'}`}>
-                      <div className="flex items-center gap-3"><input type="checkbox" checked={selectedFiles.has(file.file_id)} onChange={() => toggleFileSelection(file.file_id, availableLabels[0])} className="w-4 h-4" /><div><p className="text-white text-sm">{file.filename}</p><p className="text-slate-500 text-xs">{(file.size / 1024).toFixed(1)} KB</p></div></div>
-                      {selectedFiles.has(file.file_id) && <select value={selectedFiles.get(file.file_id)} onChange={(e) => { const m = new Map(selectedFiles); m.set(file.file_id, e.target.value); setSelectedFiles(m); }} className="px-2 py-1 bg-slate-800 border border-slate-600 rounded text-sm text-white">{availableLabels.map(l => <option key={l} value={l}>{l}</option>)}</select>}
+                      <div className="flex items-center gap-3"><input type="checkbox" checked={selectedFiles.has(file.file_id)} onChange={() => toggleFileSelection(file.file_id, (availableLabels || [])[0] || '')} className="w-4 h-4" /><div><p className="text-white text-sm">{file.filename}</p><p className="text-slate-500 text-xs">{(file.size / 1024).toFixed(1)} KB</p></div></div>
+                      {selectedFiles.has(file.file_id) && <select value={selectedFiles.get(file.file_id)} onChange={(e) => { const m = new Map(selectedFiles); m.set(file.file_id, e.target.value); setSelectedFiles(m); }} className="px-2 py-1 bg-slate-800 border border-slate-600 rounded text-sm text-white">{(availableLabels || []).map(l => <option key={l} value={l}>{l}</option>)}</select>}
                     </div>
                   ))}
                 </div>
