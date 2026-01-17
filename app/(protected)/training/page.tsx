@@ -25,6 +25,19 @@ type Dataset = {
 type DatasetFile = { id: number; file_id: number; filename: string; label: string; size?: number; content_type?: string; created_at?: string; file_missing?: boolean };
 type CloudFile = { file_id: number; filename: string; size: number; content_type: string; uploaded_at: string };
 type ModelOption = { value: string; label: string; description: string; supported_data: string[] };
+type PreprocessingPipelineSummary = {
+  id: number;
+  name: string;
+  description?: string | null;
+  data_type: string;
+  output_shape: string;
+  include_phase: boolean;
+  window_size: number;
+  filter_subcarriers: boolean;
+  subcarrier_start: number;
+  subcarrier_end: number;
+  is_default: boolean;
+};
 type BayesianTrialData = {
   trial: number;
   learning_rate: number;
@@ -150,6 +163,8 @@ export default function TrainingPage() {
   const [trainingJobs, setTrainingJobs] = useState<TrainingJob[]>([]);
   const [trainedModels, setTrainedModels] = useState<TrainedModel[]>([]);
   const [showTrainingConfig, setShowTrainingConfig] = useState(false);
+  const [preprocessingPipelines, setPreprocessingPipelines] = useState<PreprocessingPipelineSummary[]>([]);
+  const [pipelinesLoading, setPipelinesLoading] = useState(false);
   const [trainingConfig, setTrainingConfig] = useState({ 
     model_type: 'dl_cnn_lstm', 
     model_architecture: 'medium',
@@ -161,6 +176,34 @@ export default function TrainingPage() {
     test_dataset_id: null as number | null,
     window_size: 128,
     test_split: 0.2,
+    preprocessing_pipeline_id: null as number | null,
+    data_type: 'auto' as 'auto' | 'csi' | 'imu',
+    include_phase: true,
+    filter_subcarriers: true,
+    subcarrier_start: 5,
+    subcarrier_end: 32,
+    output_shape: 'flattened' as 'flattened' | 'sequence',
+    knn_params: {
+      n_neighbors: 5,
+      weights: 'uniform',
+      metric: 'euclidean',
+      algorithm: 'auto',
+      p: 2,
+    },
+    svc_params: {
+      C: 1.0,
+      kernel: 'rbf',
+      gamma: 'scale',
+      degree: 3,
+      probability: true,
+      max_iter: -1,
+    },
+    adaboost_params: {
+      n_estimators: 50,
+      learning_rate: 1.0,
+      algorithm: 'SAMME.R',
+      max_depth: 1,
+    },
     early_stopping: true,
     augment_data: false,
     use_transfer_learning: false,
@@ -291,6 +334,22 @@ export default function TrainingPage() {
     fetchData({ datasets: true, jobs: false, models: false, files: false });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (!showTrainingConfig) return;
+
+    const loadPipelines = async () => {
+      setPipelinesLoading(true);
+      try {
+        const res = await get('/enhanced-processing/db-pipelines').catch(() => null);
+        if (res?.pipelines) setPreprocessingPipelines(res.pipelines);
+      } catch {}
+      finally { setPipelinesLoading(false); }
+    };
+
+    loadPipelines();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showTrainingConfig]);
 
   useEffect(() => {
     if (activeTab === 'jobs') {
@@ -449,6 +508,15 @@ export default function TrainingPage() {
     
     setOperations(prev => ({ ...prev, startingTraining: true }));
     try {
+      const ml_params =
+        trainingConfig.model_type === 'knn'
+          ? trainingConfig.knn_params
+          : trainingConfig.model_type === 'svc'
+            ? trainingConfig.svc_params
+            : trainingConfig.model_type === 'adaboost'
+              ? trainingConfig.adaboost_params
+              : {};
+
       await post('/datasets/train/cloud', {
         dataset_id: selectedDataset.id,
         test_dataset_id: trainingConfig.test_dataset_id,
@@ -461,6 +529,14 @@ export default function TrainingPage() {
         test_split: trainingConfig.test_split,
         model_name: trainingConfig.model_name || undefined,
         window_size: trainingConfig.window_size,
+        preprocessing_pipeline_id: trainingConfig.preprocessing_pipeline_id,
+        data_type: trainingConfig.data_type,
+        include_phase: trainingConfig.include_phase,
+        filter_subcarriers: trainingConfig.filter_subcarriers,
+        subcarrier_start: trainingConfig.subcarrier_start,
+        subcarrier_end: trainingConfig.subcarrier_end,
+        output_shape: trainingConfig.output_shape,
+        ml_params,
         use_bayesian_optimization: trainingConfig.use_bayesian_optimization,
         bayesian_trials: trainingConfig.bayesian_trials,
         bayesian_epochs_per_trial: trainingConfig.bayesian_epochs_per_trial,
@@ -897,6 +973,169 @@ export default function TrainingPage() {
                   <h2 className="text-xl font-semibold text-white">Datasets</h2>
                   <button onClick={() => setShowCreateDataset(true)} className="flex items-center gap-1 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm"><Plus className="w-4 h-4" /> New</button>
                 </div>
+              <div className="p-4 bg-slate-800/30 rounded-lg border border-slate-700">
+                <div className="flex items-center justify-between mb-3">
+                  <h4 className="text-sm font-medium text-indigo-400">Preprocessing</h4>
+                  {pipelinesLoading ? <span className="text-xs text-slate-500">Loading pipelines...</span> : null}
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm text-slate-300 mb-1">Preprocessing Pipeline</label>
+                    <select
+                      value={trainingConfig.preprocessing_pipeline_id ?? ''}
+                      onChange={(e) => {
+                        const raw = e.target.value;
+                        const id = raw ? parseInt(raw) : null;
+                        const pipeline = preprocessingPipelines.find(p => p.id === id) || null;
+
+                        if (pipeline) {
+                          setTrainingConfig({
+                            ...trainingConfig,
+                            preprocessing_pipeline_id: pipeline.id,
+                            data_type: (pipeline.data_type as any) || 'auto',
+                            include_phase: !!pipeline.include_phase,
+                            filter_subcarriers: !!pipeline.filter_subcarriers,
+                            subcarrier_start: pipeline.subcarrier_start,
+                            subcarrier_end: pipeline.subcarrier_end,
+                            output_shape: (pipeline.output_shape as any) || 'flattened',
+                            window_size: pipeline.window_size,
+                          });
+                        } else {
+                          setTrainingConfig({ ...trainingConfig, preprocessing_pipeline_id: null });
+                        }
+                      }}
+                      className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white"
+                    >
+                      <option value="">Inline (no saved pipeline)</option>
+                      {preprocessingPipelines.map(p => (
+                        <option key={p.id} value={p.id}>
+                          {p.name}{p.is_default ? ' (default)' : ''} · {p.data_type}/{p.output_shape}
+                        </option>
+                      ))}
+                    </select>
+                    <p className="text-xs text-slate-500 mt-1">
+                      {trainingConfig.preprocessing_pipeline_id
+                        ? 'Using a saved preprocessing pipeline (settings below are locked to that pipeline).'
+                        : 'Configure preprocessing inline below.'}
+                    </p>
+                  </div>
+                  <div>
+                    <label className="block text-sm text-slate-300 mb-1">Data Type</label>
+                    <select
+                      value={trainingConfig.data_type}
+                      disabled={trainingConfig.preprocessing_pipeline_id != null}
+                      onChange={(e) => {
+                        const dt = e.target.value as 'auto' | 'csi' | 'imu';
+                        setTrainingConfig({
+                          ...trainingConfig,
+                          data_type: dt,
+                          window_size: trainingConfig.preprocessing_pipeline_id != null
+                            ? trainingConfig.window_size
+                            : dt === 'csi'
+                              ? 1000
+                              : dt === 'imu'
+                                ? 128
+                                : trainingConfig.window_size,
+                        });
+                      }}
+                      className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white disabled:opacity-60"
+                    >
+                      <option value="auto">Auto-detect</option>
+                      <option value="csi">CSI</option>
+                      <option value="imu">IMU</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+                  <div>
+                    <label className="block text-sm text-slate-300 mb-1">Output Shape</label>
+                    <select
+                      value={trainingConfig.output_shape}
+                      disabled={trainingConfig.preprocessing_pipeline_id != null}
+                      onChange={(e) => setTrainingConfig({ ...trainingConfig, output_shape: e.target.value as 'flattened' | 'sequence' })}
+                      className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white disabled:opacity-60"
+                    >
+                      <option value="flattened">Flattened (ML)</option>
+                      <option value="sequence">Sequence (DL)</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm text-slate-300 mb-1">Window Size</label>
+                    <input
+                      type="number"
+                      value={trainingConfig.window_size}
+                      disabled={trainingConfig.preprocessing_pipeline_id != null}
+                      onChange={(e) => setTrainingConfig({ ...trainingConfig, window_size: parseInt(e.target.value) || trainingConfig.window_size })}
+                      className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white disabled:opacity-60"
+                      min="1"
+                    />
+                    <p className="text-xs text-slate-500 mt-1">IMU default: 128 · CSI default: 1000</p>
+                  </div>
+                </div>
+
+                <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div className="flex items-center justify-between p-3 bg-slate-800/40 rounded-lg border border-slate-700 md:col-span-1">
+                    <div>
+                      <label className="block text-sm text-slate-300 font-medium">Include Phase</label>
+                      <p className="text-xs text-slate-500 mt-1">CSI only</p>
+                    </div>
+                    <label className="relative inline-flex items-center cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={trainingConfig.include_phase}
+                        disabled={trainingConfig.preprocessing_pipeline_id != null}
+                        onChange={(e) => setTrainingConfig({ ...trainingConfig, include_phase: e.target.checked })}
+                        className="sr-only peer"
+                      />
+                      <div className="w-11 h-6 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
+                    </label>
+                  </div>
+                  <div className="flex items-center justify-between p-3 bg-slate-800/40 rounded-lg border border-slate-700 md:col-span-2">
+                    <div>
+                      <label className="block text-sm text-slate-300 font-medium">Subcarrier Filtering</label>
+                      <p className="text-xs text-slate-500 mt-1">Removes guard bands (CSI only)</p>
+                    </div>
+                    <label className="relative inline-flex items-center cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={trainingConfig.filter_subcarriers}
+                        disabled={trainingConfig.preprocessing_pipeline_id != null}
+                        onChange={(e) => setTrainingConfig({ ...trainingConfig, filter_subcarriers: e.target.checked })}
+                        className="sr-only peer"
+                      />
+                      <div className="w-11 h-6 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
+                    </label>
+                  </div>
+                </div>
+
+                {trainingConfig.filter_subcarriers && (
+                  <div className="grid grid-cols-2 gap-4 mt-4">
+                    <div>
+                      <label className="block text-sm text-slate-300 mb-1">Subcarrier Start</label>
+                      <input
+                        type="number"
+                        value={trainingConfig.subcarrier_start}
+                        disabled={trainingConfig.preprocessing_pipeline_id != null}
+                        onChange={(e) => setTrainingConfig({ ...trainingConfig, subcarrier_start: parseInt(e.target.value) || 0 })}
+                        className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white disabled:opacity-60"
+                        min="0"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm text-slate-300 mb-1">Subcarrier End</label>
+                      <input
+                        type="number"
+                        value={trainingConfig.subcarrier_end}
+                        disabled={trainingConfig.preprocessing_pipeline_id != null}
+                        onChange={(e) => setTrainingConfig({ ...trainingConfig, subcarrier_end: parseInt(e.target.value) || 0 })}
+                        className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white disabled:opacity-60"
+                        min="0"
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
                 <div className="space-y-2">
                   {loadingStates.datasets ? (
                     <div className="text-center py-8 bg-slate-800/50 rounded-xl border border-slate-700">
@@ -1308,7 +1547,7 @@ export default function TrainingPage() {
       {/* Training Config Modal */}
       {showTrainingConfig && selectedDataset && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-slate-900 rounded-xl p-6 w-full max-w-md border border-slate-700 max-h-[90vh] overflow-y-auto">
+          <div className="bg-slate-900 rounded-xl p-6 w-full max-w-2xl border border-slate-700 max-h-[90vh] overflow-y-auto">
             <h3 className="text-xl font-semibold text-white mb-4">Configure Training</h3>
             <p className="text-slate-400 text-sm mb-4">Dataset: <span className="text-white">{selectedDataset.name}</span> ({selectedDataset.files?.length} files)</p>
             <div className="space-y-4">
@@ -1351,6 +1590,111 @@ export default function TrainingPage() {
                 <div><label className="block text-sm text-slate-300 mb-1">Batch Size</label><input type="number" value={trainingConfig.batch_size} onChange={(e) => setTrainingConfig({ ...trainingConfig, batch_size: parseInt(e.target.value) || 32 })} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white" /></div>
               </div>
               <div><label className="block text-sm text-slate-300 mb-1">Learning Rate</label><input type="number" step="0.0001" value={trainingConfig.learning_rate} onChange={(e) => setTrainingConfig({ ...trainingConfig, learning_rate: parseFloat(e.target.value) || 0.001 })} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white" /></div>
+              {(trainingConfig.model_type === 'knn' || trainingConfig.model_type === 'svc' || trainingConfig.model_type === 'adaboost') && (
+                <div className="p-4 bg-slate-800/30 rounded-lg border border-slate-700">
+                  <h4 className="text-sm font-medium text-indigo-400 mb-3">ML Model Parameters</h4>
+
+                  {trainingConfig.model_type === 'knn' && (
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-sm text-slate-300 mb-1">n_neighbors</label>
+                        <input type="number" min="1" value={trainingConfig.knn_params.n_neighbors} onChange={(e) => setTrainingConfig({ ...trainingConfig, knn_params: { ...trainingConfig.knn_params, n_neighbors: parseInt(e.target.value) || 1 } })} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white" />
+                      </div>
+                      <div>
+                        <label className="block text-sm text-slate-300 mb-1">weights</label>
+                        <select value={trainingConfig.knn_params.weights} onChange={(e) => setTrainingConfig({ ...trainingConfig, knn_params: { ...trainingConfig.knn_params, weights: e.target.value } })} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white">
+                          <option value="uniform">uniform</option>
+                          <option value="distance">distance</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-sm text-slate-300 mb-1">metric</label>
+                        <select value={trainingConfig.knn_params.metric} onChange={(e) => setTrainingConfig({ ...trainingConfig, knn_params: { ...trainingConfig.knn_params, metric: e.target.value } })} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white">
+                          <option value="euclidean">euclidean</option>
+                          <option value="manhattan">manhattan</option>
+                          <option value="minkowski">minkowski</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-sm text-slate-300 mb-1">algorithm</label>
+                        <select value={trainingConfig.knn_params.algorithm} onChange={(e) => setTrainingConfig({ ...trainingConfig, knn_params: { ...trainingConfig.knn_params, algorithm: e.target.value } })} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white">
+                          <option value="auto">auto</option>
+                          <option value="ball_tree">ball_tree</option>
+                          <option value="kd_tree">kd_tree</option>
+                          <option value="brute">brute</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-sm text-slate-300 mb-1">p (Minkowski)</label>
+                        <input type="number" min="1" value={trainingConfig.knn_params.p} onChange={(e) => setTrainingConfig({ ...trainingConfig, knn_params: { ...trainingConfig.knn_params, p: parseInt(e.target.value) || 2 } })} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white" />
+                      </div>
+                    </div>
+                  )}
+
+                  {trainingConfig.model_type === 'svc' && (
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-sm text-slate-300 mb-1">C</label>
+                        <input type="number" step="0.1" value={trainingConfig.svc_params.C} onChange={(e) => setTrainingConfig({ ...trainingConfig, svc_params: { ...trainingConfig.svc_params, C: parseFloat(e.target.value) || 1 } })} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white" />
+                      </div>
+                      <div>
+                        <label className="block text-sm text-slate-300 mb-1">kernel</label>
+                        <select value={trainingConfig.svc_params.kernel} onChange={(e) => setTrainingConfig({ ...trainingConfig, svc_params: { ...trainingConfig.svc_params, kernel: e.target.value } })} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white">
+                          <option value="rbf">rbf</option>
+                          <option value="linear">linear</option>
+                          <option value="poly">poly</option>
+                          <option value="sigmoid">sigmoid</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-sm text-slate-300 mb-1">gamma</label>
+                        <select value={trainingConfig.svc_params.gamma} onChange={(e) => setTrainingConfig({ ...trainingConfig, svc_params: { ...trainingConfig.svc_params, gamma: e.target.value } })} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white">
+                          <option value="scale">scale</option>
+                          <option value="auto">auto</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-sm text-slate-300 mb-1">degree</label>
+                        <input type="number" min="1" value={trainingConfig.svc_params.degree} onChange={(e) => setTrainingConfig({ ...trainingConfig, svc_params: { ...trainingConfig.svc_params, degree: parseInt(e.target.value) || 3 } })} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white" />
+                      </div>
+                      <div className="flex items-center justify-between p-3 bg-slate-800/40 rounded-lg border border-slate-700 col-span-2">
+                        <div>
+                          <label className="block text-sm text-slate-300 font-medium">probability</label>
+                          <p className="text-xs text-slate-500 mt-1">Needed for ROC/PR curves</p>
+                        </div>
+                        <label className="relative inline-flex items-center cursor-pointer">
+                          <input type="checkbox" checked={trainingConfig.svc_params.probability} onChange={(e) => setTrainingConfig({ ...trainingConfig, svc_params: { ...trainingConfig.svc_params, probability: e.target.checked } })} className="sr-only peer" />
+                          <div className="w-11 h-6 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
+                        </label>
+                      </div>
+                    </div>
+                  )}
+
+                  {trainingConfig.model_type === 'adaboost' && (
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-sm text-slate-300 mb-1">n_estimators</label>
+                        <input type="number" min="1" value={trainingConfig.adaboost_params.n_estimators} onChange={(e) => setTrainingConfig({ ...trainingConfig, adaboost_params: { ...trainingConfig.adaboost_params, n_estimators: parseInt(e.target.value) || 1 } })} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white" />
+                      </div>
+                      <div>
+                        <label className="block text-sm text-slate-300 mb-1">learning_rate</label>
+                        <input type="number" step="0.1" value={trainingConfig.adaboost_params.learning_rate} onChange={(e) => setTrainingConfig({ ...trainingConfig, adaboost_params: { ...trainingConfig.adaboost_params, learning_rate: parseFloat(e.target.value) || 1 } })} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white" />
+                      </div>
+                      <div>
+                        <label className="block text-sm text-slate-300 mb-1">algorithm</label>
+                        <select value={trainingConfig.adaboost_params.algorithm} onChange={(e) => setTrainingConfig({ ...trainingConfig, adaboost_params: { ...trainingConfig.adaboost_params, algorithm: e.target.value } })} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white">
+                          <option value="SAMME.R">SAMME.R</option>
+                          <option value="SAMME">SAMME</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-sm text-slate-300 mb-1">base max_depth</label>
+                        <input type="number" min="1" value={trainingConfig.adaboost_params.max_depth} onChange={(e) => setTrainingConfig({ ...trainingConfig, adaboost_params: { ...trainingConfig.adaboost_params, max_depth: parseInt(e.target.value) || 1 } })} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white" />
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm text-slate-300 mb-1">Validation Split</label>
