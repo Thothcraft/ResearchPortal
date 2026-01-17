@@ -18,10 +18,11 @@ type Dataset = {
   file_count: number;
   labels: string[];
   label_distribution?: Record<string, number>;
+  stats?: Record<string, any>;
   created_at: string;
   files?: DatasetFile[];
 };
-type DatasetFile = { id: number; file_id: number; filename: string; label: string; size?: number };
+type DatasetFile = { id: number; file_id: number; filename: string; label: string; size?: number; content_type?: string; created_at?: string; file_missing?: boolean };
 type CloudFile = { file_id: number; filename: string; size: number; content_type: string; uploaded_at: string };
 type ModelOption = { value: string; label: string; description: string; supported_data: string[] };
 type BayesianTrialData = {
@@ -78,11 +79,29 @@ const STATUS_CONFIG: Record<string, { color: string; bg: string; icon: React.Ele
 // Model configurations for different data types
 const MODEL_OPTIONS: ModelOption[] = [
   {
-    value: 'imu_classifier',
-    label: 'IMU Classifier',
-    description: 'CNN+LSTM hybrid for IMU time-series data (accel, gyro, mag)',
-    supported_data: ['imu']
-  }
+    value: 'dl_cnn_lstm',
+    label: 'DL: CNN-LSTM (IMU)',
+    description: 'Deep learning CNN+LSTM for IMU time-series classification',
+    supported_data: ['imu', 'other']
+  },
+  {
+    value: 'knn',
+    label: 'ML: KNN',
+    description: 'K-Nearest Neighbors baseline (fast, interpretable)',
+    supported_data: ['imu', 'other']
+  },
+  {
+    value: 'svc',
+    label: 'ML: SVC',
+    description: 'Support Vector Classifier baseline (strong for smaller datasets)',
+    supported_data: ['imu', 'other']
+  },
+  {
+    value: 'adaboost',
+    label: 'ML: AdaBoost',
+    description: 'AdaBoost baseline (ensemble of weak learners)',
+    supported_data: ['imu', 'other']
+  },
 ];
 
 // Detect data type from filename
@@ -132,7 +151,7 @@ export default function TrainingPage() {
   const [trainedModels, setTrainedModels] = useState<TrainedModel[]>([]);
   const [showTrainingConfig, setShowTrainingConfig] = useState(false);
   const [trainingConfig, setTrainingConfig] = useState({ 
-    model_type: 'cnn', 
+    model_type: 'dl_cnn_lstm', 
     model_architecture: 'medium',
     epochs: 10, 
     batch_size: 32, 
@@ -307,7 +326,7 @@ export default function TrainingPage() {
   // Get available models based on dataset file types
   const getAvailableModels = useCallback((dataset: Dataset | null): ModelOption[] => {
     if (!dataset || !dataset.files || dataset.files.length === 0) {
-      return MODEL_OPTIONS.filter(m => m.supported_data.includes('other'));
+      return MODEL_OPTIONS;
     }
 
     // Detect data types from files
@@ -324,7 +343,7 @@ export default function TrainingPage() {
 
     // If no specific models found, return general ones
     if (availableModels.length === 0) {
-      return MODEL_OPTIONS.filter(m => m.supported_data.includes('other'));
+      return MODEL_OPTIONS;
     }
 
     return availableModels;
@@ -430,22 +449,31 @@ export default function TrainingPage() {
     
     setOperations(prev => ({ ...prev, startingTraining: true }));
     try {
-      const config = {
+      await post('/datasets/train/cloud', {
+        dataset_id: selectedDataset.id,
+        test_dataset_id: trainingConfig.test_dataset_id,
         model_type: trainingConfig.model_type,
-        training_mode: selectedMode,
+        model_architecture: trainingConfig.model_architecture,
         epochs: trainingConfig.epochs,
         batch_size: trainingConfig.batch_size,
         learning_rate: trainingConfig.learning_rate,
-        test_split: trainingConfig.test_split,
         validation_split: trainingConfig.validation_split,
-        early_stopping: trainingConfig.early_stopping,
-        augment_data: trainingConfig.augment_data,
-        use_transfer_learning: trainingConfig.use_transfer_learning,
-        bayesian_search: trainingConfig.bayesian_search,
+        test_split: trainingConfig.test_split,
+        model_name: trainingConfig.model_name || undefined,
+        window_size: trainingConfig.window_size,
+        use_bayesian_optimization: trainingConfig.use_bayesian_optimization,
         bayesian_trials: trainingConfig.bayesian_trials,
-        bayesian_search_architecture: trainingConfig.bayesian_search_architecture
-      };
-      await post('/datasets/train', { dataset_id: selectedDataset.id, config });
+        bayesian_epochs_per_trial: trainingConfig.bayesian_epochs_per_trial,
+        bayesian_lr_min: trainingConfig.bayesian_lr_min,
+        bayesian_lr_max: trainingConfig.bayesian_lr_max,
+        bayesian_lr_scale: trainingConfig.bayesian_lr_scale,
+        bayesian_batch_sizes: trainingConfig.bayesian_batch_sizes,
+        bayesian_weight_decay_min: trainingConfig.bayesian_weight_decay_min,
+        bayesian_weight_decay_max: trainingConfig.bayesian_weight_decay_max,
+        bayesian_optimizers: trainingConfig.bayesian_optimizers,
+        bayesian_exploration_rate: trainingConfig.bayesian_exploration_rate,
+        bayesian_search_architecture: trainingConfig.bayesian_search_architecture,
+      });
       setShowTrainingConfig(false);
       await fetchData({ jobs: true }); // Only refresh jobs
     } catch { setError('Failed to start training'); }
@@ -1323,6 +1351,36 @@ export default function TrainingPage() {
                 <div><label className="block text-sm text-slate-300 mb-1">Batch Size</label><input type="number" value={trainingConfig.batch_size} onChange={(e) => setTrainingConfig({ ...trainingConfig, batch_size: parseInt(e.target.value) || 32 })} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white" /></div>
               </div>
               <div><label className="block text-sm text-slate-300 mb-1">Learning Rate</label><input type="number" step="0.0001" value={trainingConfig.learning_rate} onChange={(e) => setTrainingConfig({ ...trainingConfig, learning_rate: parseFloat(e.target.value) || 0.001 })} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white" /></div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm text-slate-300 mb-1">Validation Split</label>
+                  <input
+                    type="number"
+                    step="0.05"
+                    min="0"
+                    max="0.9"
+                    value={trainingConfig.validation_split}
+                    onChange={(e) => setTrainingConfig({ ...trainingConfig, validation_split: Math.max(0, Math.min(0.9, parseFloat(e.target.value) || 0)) })}
+                    className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm text-slate-300 mb-1">Test Split</label>
+                  <input
+                    type="number"
+                    step="0.05"
+                    min="0"
+                    max="0.9"
+                    value={trainingConfig.test_split}
+                    onChange={(e) => setTrainingConfig({ ...trainingConfig, test_split: Math.max(0, Math.min(0.9, parseFloat(e.target.value) || 0)) })}
+                    className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white"
+                  />
+                </div>
+              </div>
+              <p className="text-xs text-slate-500">
+                Train split: {Math.max(0, 1 - trainingConfig.validation_split - trainingConfig.test_split).toFixed(2)}
+                {trainingConfig.validation_split + trainingConfig.test_split >= 1 ? ' (invalid: must be < 1)' : ''}
+              </p>
               <div className="flex items-center justify-between p-3 bg-slate-800/50 rounded-lg border border-slate-700">
                 <div>
                   <label className="block text-sm text-slate-300 font-medium">Bayesian Optimization</label>
