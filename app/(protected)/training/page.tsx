@@ -872,7 +872,13 @@ export default function TrainingPage() {
                 ) : selectedDataset ? (
                   <div className="bg-slate-800/50 rounded-xl border border-slate-700 p-6">
                     <div className="flex items-center justify-between mb-6">
-                      <div><h2 className="text-xl font-semibold text-white">{selectedDataset.name}</h2>{selectedDataset.description && <p className="text-slate-400 text-sm mt-1">{selectedDataset.description}</p>}</div>
+                      <div>
+                        <div className="flex items-center gap-3">
+                          <h2 className="text-xl font-semibold text-white">{selectedDataset.name}</h2>
+                          <span className="px-2 py-0.5 bg-indigo-500/20 text-indigo-300 text-xs rounded-full border border-indigo-500/30">Current Dataset</span>
+                        </div>
+                        {selectedDataset.description && <p className="text-slate-400 text-sm mt-1">{selectedDataset.description}</p>}
+                      </div>
                       <div className="flex gap-2">
                         <button onClick={() => setShowAddFiles(true)} className="flex items-center gap-1 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm"><Plus className="w-4 h-4" /> Add Files</button>
                         <button onClick={() => setShowTrainingConfig(true)} disabled={!selectedDataset.files || selectedDataset.files.length < 2} className="flex items-center gap-1 px-3 py-1.5 bg-green-600 hover:bg-green-700 disabled:bg-slate-600 disabled:cursor-not-allowed text-white rounded-lg text-sm"><Play className="w-4 h-4" /> Train</button>
