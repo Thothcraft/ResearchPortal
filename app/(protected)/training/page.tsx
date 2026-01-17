@@ -240,6 +240,26 @@ export default function TrainingPage() {
   };
 
   useEffect(() => {
+    if (!showAddFiles) return;
+
+    const loadCloudFiles = async () => {
+      if (cloudFiles.length > 0) return;
+      try {
+        setLoadingStates(prev => ({ ...prev, files: true }));
+        const res = await get('/file/files');
+        if (res?.files) setCloudFiles(res.files);
+      } catch {
+        setError('Failed to load cloud files');
+      } finally {
+        setLoadingStates(prev => ({ ...prev, files: false }));
+      }
+    };
+
+    loadCloudFiles();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showAddFiles]);
+
+  useEffect(() => {
     fetchData({ datasets: true, jobs: false, models: false, files: false });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -1133,15 +1153,20 @@ export default function TrainingPage() {
       {showAddFiles && selectedDataset && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
           <div className="bg-slate-900 rounded-xl p-6 w-full max-w-2xl border border-slate-700 max-h-[80vh] overflow-hidden flex flex-col">
-            <h3 className="text-xl font-semibold text-white mb-4">Add Files to Dataset</h3>
-            <div className="mb-4">
-              <label className="block text-sm text-slate-300 mb-2">Add New Label</label>
-              <div className="flex gap-2"><input type="text" value={newLabel} onChange={(e) => setNewLabel(e.target.value)} placeholder="New label name" className="flex-1 px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white placeholder-slate-500" /><button onClick={handleAddLabel} className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg">Add</button></div>
-              <div className="flex flex-wrap gap-2 mt-2">{(availableLabels || []).map(l => <span key={l} className="px-2 py-1 bg-indigo-500/20 text-indigo-300 rounded text-sm">{l}</span>)}</div>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-xl font-semibold text-white">Add Files to Dataset</h3>
+              <button onClick={() => { setShowAddFiles(false); setSelectedFiles(new Map()); }} className="text-slate-400 hover:text-white"><X className="w-5 h-5" /></button>
             </div>
             <div className="flex-1 overflow-y-auto mb-4">
               <label className="block text-sm text-slate-300 mb-2">Select Files & Assign Labels</label>
-              {cloudFiles.length === 0 ? <p className="text-slate-400 text-center py-4">No files in cloud storage</p> : (
+              {loadingStates.files ? (
+                <div className="text-center py-8 bg-slate-800/50 rounded-xl border border-slate-700">
+                  <Loader2 className="w-10 h-10 text-indigo-400 mx-auto mb-3 animate-spin" />
+                  <p className="text-slate-400">Loading cloud files...</p>
+                </div>
+              ) : cloudFiles.length === 0 ? (
+                <p className="text-slate-400 text-center py-4">No files in cloud storage</p>
+              ) : (
                 <div className="space-y-2">
                   {cloudFiles.map(file => (
                     <div key={file.file_id} className={`flex items-center justify-between p-3 rounded-lg border ${selectedFiles.has(file.file_id) ? 'border-indigo-500 bg-indigo-500/10' : 'border-slate-700 bg-slate-800/50'}`}>
