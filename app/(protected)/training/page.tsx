@@ -243,14 +243,20 @@ export default function TrainingPage() {
     
     // Set up polling for jobs and models only (more frequent)
     const interval = setInterval(async () => {
+      // Don't poll if any operation is in progress
+      const hasActiveOperation = Object.values(operations).some(v => v === true || v !== null);
+      if (hasActiveOperation) {
+        return; // Skip this poll cycle
+      }
+      
       try {
         await fetchData({ jobs: true, models: true }); // Only fetch jobs and models
       } catch {}
-    }, 5000); // Reduced to 5 seconds for better UX
+    }, 10000); // Increased to 10 seconds to reduce load
     
     return () => clearInterval(interval);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [operations]);
 
   // Get available models based on dataset file types
   const getAvailableModels = useCallback((dataset: Dataset | null): ModelOption[] => {
@@ -318,14 +324,27 @@ export default function TrainingPage() {
     if (!selectedDataset || selectedFiles.size === 0) return;
     
     setOperations(prev => ({ ...prev, addingFiles: true }));
+    setError(null);
+    
     try {
       const files = Array.from(selectedFiles.entries()).map(([fileId, label]) => ({ file_id: fileId, label }));
-      await post(`/datasets/${selectedDataset.id}/files`, { files });
+      console.log(`Adding ${files.length} files to dataset ${selectedDataset.id}`);
+      
+      const result = await post(`/datasets/${selectedDataset.id}/files`, { files });
+      console.log('Add files result:', result);
+      
       setSelectedFiles(new Map());
       setShowAddFiles(false);
-      await fetchData({ datasets: true }); // Only refresh datasets
-    } catch { setError('Failed to add files to dataset'); }
-    finally { setOperations(prev => ({ ...prev, addingFiles: false })); }
+      
+      // Refresh dataset to show updated file count
+      await handleSelectDataset(selectedDataset);
+      await fetchData({ datasets: true });
+    } catch (err) {
+      console.error('Failed to add files:', err);
+      setError(`Failed to add files to dataset: ${err instanceof Error ? err.message : 'Unknown error'}`);
+    } finally {
+      setOperations(prev => ({ ...prev, addingFiles: false }));
+    }
   };
 
   const handleRemoveFile = async (fileId: number) => {
@@ -1102,19 +1121,31 @@ export default function TrainingPage() {
               )}
             </div>
             <div className="flex gap-3">
-              <button onClick={handleAddFilesToDataset} disabled={selectedFiles.size === 0 || operations.addingFiles} className="flex-1 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-600 text-white rounded-lg font-medium flex items-center justify-center gap-2">
+              <button 
+                onClick={handleAddFilesToDataset} 
+                disabled={selectedFiles.size === 0 || operations.addingFiles} 
+                className="flex-1 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-600 text-white rounded-lg font-medium flex items-center justify-center gap-2"
+              >
                 {operations.addingFiles ? (
-                  <><Loader2 className="w-4 h-4 animate-spin" /> Adding {selectedFiles.size} Files...</>
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    Adding {selectedFiles.size} file{selectedFiles.size !== 1 ? 's' : ''}...
+                  </>
                 ) : (
-                  <>Add {selectedFiles.size} Files</>
+                  `Add ${selectedFiles.size} file${selectedFiles.size !== 1 ? 's' : ''} to Dataset`
                 )}
               </button>
-              <button onClick={() => { setShowAddFiles(false); setSelectedFiles(new Map()); }} className="flex-1 px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg font-medium">Cancel</button>
+              <button 
+                onClick={() => { setShowAddFiles(false); setSelectedFiles(new Map()); }} 
+                disabled={operations.addingFiles}
+                className="flex-1 px-4 py-2 bg-slate-700 hover:bg-slate-600 disabled:bg-slate-600 text-white rounded-lg font-medium"
+              >
+                Cancel
+              </button>
             </div>
           </div>
         </div>
       )}
-
       {/* Training Config Modal */}
       {showTrainingConfig && selectedDataset && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
