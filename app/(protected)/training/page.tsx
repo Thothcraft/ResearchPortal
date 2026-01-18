@@ -1690,72 +1690,71 @@ export default function TrainingPage() {
                   <h4 className="text-sm font-medium text-indigo-400 mb-3">Train/Test Summary</h4>
                   {(() => {
                     const files = selectedDataset?.files || [];
-                    const trainFiles = files.filter((f: any) => {
+                    
+                    // Calculate actual train/test data based on assignments
+                    let trainOnlyFiles: any[] = [];
+                    let testOnlyFiles: any[] = [];
+                    let splitFiles: any[] = [];
+                    
+                    files.forEach((f: any) => {
                       const a = trainingConfig.file_assignments[f.file_id];
-                      return !a || a.split === 'train' || a.split === 'split';
+                      if (!a || a.split === 'split') {
+                        splitFiles.push({ ...f, ratio: a?.split_ratio || 0.8 });
+                      } else if (a.split === 'train') {
+                        trainOnlyFiles.push(f);
+                      } else if (a.split === 'test') {
+                        testOnlyFiles.push(f);
+                      }
                     });
-                    const testFiles = files.filter((f: any) => {
-                      const a = trainingConfig.file_assignments[f.file_id];
-                      return a?.split === 'test' || a?.split === 'split';
-                    });
-                    const trainLabels = new Set(trainFiles.map((f: any) => f.label));
-                    const testLabels = new Set(testFiles.map((f: any) => f.label));
+                    
+                    // Calculate sizes
+                    const trainOnlySize = trainOnlyFiles.reduce((sum, f) => sum + (f.size || 0), 0);
+                    const testOnlySize = testOnlyFiles.reduce((sum, f) => sum + (f.size || 0), 0);
+                    const splitTrainSize = splitFiles.reduce((sum, f) => sum + ((f.size || 0) * f.ratio), 0);
+                    const splitTestSize = splitFiles.reduce((sum, f) => sum + ((f.size || 0) * (1 - f.ratio)), 0);
+                    
+                    const totalTrainSize = trainOnlySize + splitTrainSize;
+                    const totalTestSize = testOnlySize + splitTestSize;
+                    
+                    const trainLabels = new Set([
+                      ...trainOnlyFiles.map((f: any) => f.label),
+                      ...splitFiles.map((f: any) => f.label)
+                    ]);
+                    const testLabels = new Set([
+                      ...testOnlyFiles.map((f: any) => f.label),
+                      ...splitFiles.map((f: any) => f.label)
+                    ]);
+                    
+                    const formatSize = (bytes: number) => {
+                      if (bytes === 0) return '0 B';
+                      if (bytes < 1024) return `${bytes} B`;
+                      if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+                      return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+                    };
                     
                     return (
                       <div className="grid grid-cols-2 gap-4">
                         <div className="p-3 bg-green-500/10 border border-green-500/30 rounded-lg">
                           <div className="text-sm font-medium text-green-400 mb-2">Training Set</div>
-                          <div className="text-xs text-slate-300">Files: {trainFiles.length}</div>
-                          <div className="text-xs text-slate-300">Labels: {Array.from(trainLabels).join(', ') || 'None'}</div>
+                          <div className="text-xs text-slate-300 space-y-1">
+                            <div>Train-only files: <span className="text-white font-medium">{trainOnlyFiles.length}</span></div>
+                            <div>From split files: <span className="text-white font-medium">{splitFiles.length}</span> (partial)</div>
+                            <div>Est. size: <span className="text-white font-medium">{formatSize(totalTrainSize)}</span></div>
+                            <div>Labels: <span className="text-green-300">{Array.from(trainLabels).join(', ') || 'None'}</span></div>
+                          </div>
                         </div>
                         <div className="p-3 bg-blue-500/10 border border-blue-500/30 rounded-lg">
                           <div className="text-sm font-medium text-blue-400 mb-2">Test Set</div>
-                          <div className="text-xs text-slate-300">Files: {testFiles.length}</div>
-                          <div className="text-xs text-slate-300">Labels: {Array.from(testLabels).join(', ') || 'None'}</div>
+                          <div className="text-xs text-slate-300 space-y-1">
+                            <div>Test-only files: <span className="text-white font-medium">{testOnlyFiles.length}</span></div>
+                            <div>From split files: <span className="text-white font-medium">{splitFiles.length}</span> (partial)</div>
+                            <div>Est. size: <span className="text-white font-medium">{formatSize(totalTestSize)}</span></div>
+                            <div>Labels: <span className="text-blue-300">{Array.from(testLabels).join(', ') || 'None'}</span></div>
+                          </div>
                         </div>
                       </div>
                     );
                   })()}
-                </div>
-
-                {/* Global Settings */}
-                <div className="p-4 bg-slate-800/30 rounded-lg border border-slate-700">
-                  <h4 className="text-sm font-medium text-indigo-400 mb-3">Global Settings</h4>
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    <div>
-                      <label className="block text-sm text-slate-300 mb-1">Data Type</label>
-                      <select
-                        value={trainingConfig.data_type}
-                        onChange={(e) => setTrainingConfig({ ...trainingConfig, data_type: e.target.value as 'auto' | 'csi' | 'imu' })}
-                        className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white"
-                      >
-                        <option value="auto">Auto-detect</option>
-                        <option value="csi">CSI</option>
-                        <option value="imu">IMU</option>
-                      </select>
-                    </div>
-                    <div>
-                      <label className="block text-sm text-slate-300 mb-1">Output Shape</label>
-                      <select
-                        value={trainingConfig.output_shape}
-                        onChange={(e) => setTrainingConfig({ ...trainingConfig, output_shape: e.target.value as 'flattened' | 'sequence' })}
-                        className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white"
-                      >
-                        <option value="flattened">Flattened (ML)</option>
-                        <option value="sequence">Sequence (DL)</option>
-                      </select>
-                    </div>
-                    <div>
-                      <label className="block text-sm text-slate-300 mb-1">Window Size</label>
-                      <input
-                        type="number"
-                        value={trainingConfig.window_size}
-                        onChange={(e) => setTrainingConfig({ ...trainingConfig, window_size: parseInt(e.target.value) || 128 })}
-                        className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white"
-                        min="1"
-                      />
-                    </div>
-                  </div>
                 </div>
               </div>
             )}

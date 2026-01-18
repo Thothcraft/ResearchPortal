@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useApi } from '@/hooks/useApi';
 import {
   Workflow,
@@ -24,6 +24,8 @@ import {
   Zap,
   BarChart3,
   X,
+  RefreshCw,
+  GripVertical,
 } from 'lucide-react';
 
 type DataType = 'imu' | 'csi' | 'mfcw' | 'image' | 'video';
@@ -267,7 +269,13 @@ export default function ProcessingPage() {
   const [draggedBlock, setDraggedBlock] = useState<string | null>(null);
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
   const [shapeErrors, setShapeErrors] = useState<Record<string, string>>({});
+  const canvasRef = useRef<HTMLDivElement>(null);
+  const [canvasOffset, setCanvasOffset] = useState({ x: 0, y: 0 });
   const { get, post, put } = useApi();
+
+  // Block dimensions for arrow calculations
+  const BLOCK_WIDTH = 220;
+  const BLOCK_HEIGHT = 140;
 
   useEffect(() => {
     fetchPipelines();
@@ -275,7 +283,7 @@ export default function ProcessingPage() {
 
   const fetchPipelines = async () => {
     try {
-      const res = await get('/processing/pipelines');
+      const res = await get('/enhanced-processing/db-pipelines');
       if (res?.pipelines) setPipelines(res.pipelines);
     } catch (err) {
       console.error('Failed to fetch pipelines:', err);
@@ -299,7 +307,7 @@ export default function ProcessingPage() {
       return;
     }
     try {
-      const res = await post('/processing/pipelines', {
+      const res = await post('/enhanced-processing/db-pipelines', {
         name: newPipelineName,
         description: newPipelineDesc,
         blocks,
@@ -333,7 +341,7 @@ export default function ProcessingPage() {
   const handleCreatePipeline = async () => {
     if (!newPipelineName.trim()) return;
     try {
-      const res = await post('/processing/pipelines', {
+      const res = await post('/enhanced-processing/db-pipelines', {
         name: newPipelineName,
         description: newPipelineDesc,
       });
@@ -457,39 +465,64 @@ export default function ProcessingPage() {
     setConnections(connections.filter(c => c.from !== blockId && c.to !== blockId));
   };
 
-  // Drag handlers for blocks
+  // Drag handlers for blocks - improved with canvas-relative positioning
   const handleBlockMouseDown = (e: React.MouseEvent, blockId: string) => {
+    e.preventDefault();
+    e.stopPropagation();
     const block = blocks.find(b => b.id === blockId);
-    if (!block) return;
+    if (!block || !canvasRef.current) return;
     
+    const canvasRect = canvasRef.current.getBoundingClientRect();
     setDraggedBlock(blockId);
     setDragOffset({
-      x: e.clientX - block.position.x,
-      y: e.clientY - block.position.y,
+      x: e.clientX - canvasRect.left - block.position.x,
+      y: e.clientY - canvasRect.top - block.position.y,
     });
   };
 
-  const handleMouseMove = (e: React.MouseEvent) => {
-    if (!draggedBlock) return;
+  const handleMouseMove = useCallback((e: React.MouseEvent) => {
+    if (!draggedBlock || !canvasRef.current) return;
     
-    const updatedBlocks = blocks.map(block => {
+    const canvasRect = canvasRef.current.getBoundingClientRect();
+    const newX = Math.max(10, Math.min(e.clientX - canvasRect.left - dragOffset.x, canvasRect.width - BLOCK_WIDTH - 10));
+    const newY = Math.max(10, Math.min(e.clientY - canvasRect.top - dragOffset.y, canvasRect.height - BLOCK_HEIGHT - 10));
+    
+    setBlocks(prevBlocks => prevBlocks.map(block => {
       if (block.id === draggedBlock) {
         return {
           ...block,
-          position: {
-            x: Math.max(0, e.clientX - dragOffset.x),
-            y: Math.max(0, e.clientY - dragOffset.y),
-          },
+          position: { x: newX, y: newY },
         };
       }
       return block;
-    });
+    }));
+  }, [draggedBlock, dragOffset, BLOCK_WIDTH, BLOCK_HEIGHT]);
+
+  const handleMouseUp = useCallback(() => {
+    if (draggedBlock) {
+      setDraggedBlock(null);
+      // Recalculate shapes after drag ends
+      setBlocks(prevBlocks => recalculateShapes(prevBlocks));
+    }
+  }, [draggedBlock]);
+
+  // Generate SVG path for connection arrow between two blocks
+  const getConnectionPath = (fromBlock: ProcessingBlock, toBlock: ProcessingBlock) => {
+    const fromX = fromBlock.position.x + BLOCK_WIDTH;
+    const fromY = fromBlock.position.y + BLOCK_HEIGHT / 2;
+    const toX = toBlock.position.x;
+    const toY = toBlock.position.y + BLOCK_HEIGHT / 2;
     
-    setBlocks(updatedBlocks);
+    // Bezier curve control points
+    const midX = (fromX + toX) / 2;
+    const controlOffset = Math.min(80, Math.abs(toX - fromX) / 3);
+    
+    return `M ${fromX} ${fromY} C ${fromX + controlOffset} ${fromY}, ${toX - controlOffset} ${toY}, ${toX} ${toY}`;
   };
 
-  const handleMouseUp = () => {
-    setDraggedBlock(null);
+  // Refresh pipeline shapes
+  const handleRefreshShapes = () => {
+    setBlocks(recalculateShapes([...blocks]));
   };
 
   // Update block config and recalculate shapes
@@ -506,7 +539,7 @@ export default function ProcessingPage() {
   const handleSavePipeline = async () => {
     if (!selectedPipeline) return;
     try {
-      await put(`/processing/pipelines/${selectedPipeline.id}`, {
+      await put(`/enhanced-processing/db-pipelines/${selectedPipeline.id}`, {
         blocks,
         connections,
       });
@@ -635,6 +668,14 @@ export default function ProcessingPage() {
                     <Plus className="w-4 h-4" />
                     Add Block
                   </button>
+                  <button
+                    onClick={handleRefreshShapes}
+                    className="flex items-center gap-1 px-3 py-1.5 bg-slate-600 hover:bg-slate-500 text-white rounded-lg text-sm"
+                    title="Recalculate data shapes"
+                  >
+                    <RefreshCw className="w-4 h-4" />
+                    Refresh
+                  </button>
                   {isCreatingNew ? (
                     <>
                       <button
@@ -693,74 +734,153 @@ export default function ProcessingPage() {
                 </div>
               )}
 
-              {/* Pipeline Blocks */}
+              {/* Pipeline Canvas - SVG-based with draggable blocks */}
               <div 
-                className="min-h-[400px] bg-slate-900/50 rounded-lg border border-slate-700 p-6 relative overflow-auto"
+                ref={canvasRef}
+                className="min-h-[500px] bg-slate-900/50 rounded-lg border border-slate-700 relative overflow-hidden"
                 onMouseMove={handleMouseMove}
                 onMouseUp={handleMouseUp}
                 onMouseLeave={handleMouseUp}
+                style={{ cursor: draggedBlock ? 'grabbing' : 'default' }}
               >
+                {/* Grid background */}
+                <div className="absolute inset-0 opacity-20" style={{
+                  backgroundImage: 'radial-gradient(circle, #475569 1px, transparent 1px)',
+                  backgroundSize: '20px 20px'
+                }} />
+
                 {blocks.length === 0 ? (
                   <div className="absolute inset-0 flex items-center justify-center">
                     <div className="text-center">
                       <Workflow className="w-16 h-16 text-slate-500 mx-auto mb-4" />
                       <p className="text-slate-400">Add blocks to build your pipeline</p>
-                      <p className="text-slate-500 text-sm mt-2">Click "Add Block" to start building your pipeline</p>
+                      <p className="text-slate-500 text-sm mt-2">Start with a data loader block (CSI, IMU, or MFCW)</p>
                     </div>
                   </div>
                 ) : (
-                  <div className="flex flex-wrap gap-4 items-start">
+                  <>
+                    {/* SVG Layer for connection arrows */}
+                    <svg className="absolute inset-0 w-full h-full pointer-events-none" style={{ zIndex: 1 }}>
+                      <defs>
+                        <marker
+                          id="arrowhead"
+                          markerWidth="10"
+                          markerHeight="7"
+                          refX="9"
+                          refY="3.5"
+                          orient="auto"
+                        >
+                          <polygon points="0 0, 10 3.5, 0 7" fill="#818cf8" />
+                        </marker>
+                        <linearGradient id="connectionGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+                          <stop offset="0%" stopColor="#6366f1" />
+                          <stop offset="100%" stopColor="#818cf8" />
+                        </linearGradient>
+                      </defs>
+                      {/* Draw connections between sequential blocks */}
+                      {blocks.map((block, index) => {
+                        if (index < blocks.length - 1) {
+                          const nextBlock = blocks[index + 1];
+                          const path = getConnectionPath(block, nextBlock);
+                          return (
+                            <g key={`conn-${block.id}-${nextBlock.id}`}>
+                              <path
+                                d={path}
+                                fill="none"
+                                stroke="url(#connectionGradient)"
+                                strokeWidth="3"
+                                strokeLinecap="round"
+                                markerEnd="url(#arrowhead)"
+                                className="transition-all duration-150"
+                              />
+                              {/* Animated flow indicator */}
+                              <circle r="4" fill="#818cf8">
+                                <animateMotion dur="2s" repeatCount="indefinite" path={path} />
+                              </circle>
+                            </g>
+                          );
+                        }
+                        return null;
+                      })}
+                    </svg>
+
+                    {/* Blocks Layer */}
                     {blocks.map((block, index) => {
                       const Icon = getBlockIcon(block.type);
                       const colorClass = getBlockColor(block.type);
                       const hasError = shapeErrors[block.id];
                       const isDragging = draggedBlock === block.id;
+                      const blockDef = BLOCK_TYPES[block.type as keyof typeof BLOCK_TYPES];
+                      const isSource = (blockDef as any)?.isSource;
                       
                       return (
-                        <div key={block.id} className="flex items-center gap-2">
+                        <div
+                          key={block.id}
+                          className={`absolute transition-shadow duration-150 ${isDragging ? 'z-50' : 'z-10'}`}
+                          style={{
+                            left: block.position.x,
+                            top: block.position.y,
+                            width: BLOCK_WIDTH,
+                          }}
+                        >
                           <div 
-                            className={`relative p-4 rounded-xl border-2 min-w-[200px] transition-all cursor-move select-none ${
+                            className={`relative p-3 rounded-xl border-2 transition-all select-none ${
                               hasError 
                                 ? 'border-red-500 bg-red-500/10' 
                                 : colorClass
-                            } ${isDragging ? 'opacity-70 scale-105 shadow-xl' : ''}`}
-                            onMouseDown={(e) => handleBlockMouseDown(e, block.id)}
+                            } ${isDragging ? 'shadow-2xl shadow-indigo-500/30 scale-105' : 'hover:shadow-lg'}`}
                           >
+                            {/* Drag handle */}
+                            <div 
+                              className="absolute top-0 left-0 right-0 h-8 cursor-grab active:cursor-grabbing flex items-center justify-center"
+                              onMouseDown={(e) => handleBlockMouseDown(e, block.id)}
+                            >
+                              <GripVertical className="w-4 h-4 text-slate-500" />
+                            </div>
+
                             {/* Block number badge */}
-                            <div className="absolute -top-3 -left-3 w-6 h-6 bg-slate-700 rounded-full flex items-center justify-center text-xs text-white font-bold">
+                            <div className="absolute -top-3 -left-3 w-6 h-6 bg-slate-700 rounded-full flex items-center justify-center text-xs text-white font-bold border-2 border-slate-600">
                               {index + 1}
                             </div>
                             
+                            {/* Source badge */}
+                            {isSource && (
+                              <div className="absolute -top-2 left-6 px-1.5 py-0.5 bg-cyan-500/20 border border-cyan-500/50 rounded text-[10px] text-cyan-400 font-medium">
+                                SOURCE
+                              </div>
+                            )}
+                            
                             <button
                               onClick={(e) => { e.stopPropagation(); handleDeleteBlock(block.id); }}
-                              className="absolute -top-2 -right-2 p-1 bg-red-500 hover:bg-red-600 text-white rounded-full z-10"
+                              className="absolute -top-2 -right-2 p-1 bg-red-500 hover:bg-red-600 text-white rounded-full z-10 transition-colors"
                             >
                               <X className="w-3 h-3" />
                             </button>
                             
-                            <div className="flex items-center gap-2 mb-3">
+                            <div className="flex items-center gap-2 mb-2 mt-4">
                               <Icon className="w-5 h-5" />
-                              <span className="font-medium text-white">{block.name}</span>
+                              <span className="font-medium text-white text-sm">{block.name}</span>
                             </div>
                             
-                            <div className="space-y-1 text-xs">
-                              <div className="flex items-center justify-between gap-4">
-                                <span className="text-slate-400">Input:</span>
-                                <span className="text-white font-mono bg-slate-800/50 px-2 py-0.5 rounded">
-                                  ({block.inputShape.join(', ')})
+                            {/* Data shape info */}
+                            <div className="space-y-1 text-xs bg-slate-800/50 rounded-lg p-2">
+                              <div className="flex items-center justify-between gap-2">
+                                <span className="text-slate-400">In:</span>
+                                <span className="text-white font-mono text-[11px]">
+                                  [{block.inputShape.join(' × ')}]
                                 </span>
                               </div>
-                              <div className="flex items-center justify-between gap-4">
-                                <span className="text-slate-400">Output:</span>
-                                <span className="text-green-400 font-mono bg-slate-800/50 px-2 py-0.5 rounded">
-                                  ({block.outputShape.join(', ')})
+                              <div className="flex items-center justify-between gap-2">
+                                <span className="text-slate-400">Out:</span>
+                                <span className="text-green-400 font-mono text-[11px]">
+                                  [{block.outputShape.join(' × ')}]
                                 </span>
                               </div>
                             </div>
                             
                             {/* Shape error message */}
                             {hasError && (
-                              <div className="mt-2 p-2 bg-red-500/20 rounded text-xs text-red-300">
+                              <div className="mt-2 p-1.5 bg-red-500/20 rounded text-[10px] text-red-300">
                                 {hasError}
                               </div>
                             )}
@@ -771,23 +891,21 @@ export default function ProcessingPage() {
                                 setSelectedBlock(block);
                                 setShowBlockConfig(true);
                               }}
-                              className="mt-3 w-full px-2 py-1.5 bg-slate-700 hover:bg-slate-600 text-white rounded text-xs font-medium"
+                              className="mt-2 w-full px-2 py-1 bg-slate-700 hover:bg-slate-600 text-white rounded text-xs font-medium transition-colors"
                             >
                               ⚙️ Configure
                             </button>
+
+                            {/* Connection ports */}
+                            {!isSource && (
+                              <div className="absolute left-0 top-1/2 -translate-x-1/2 -translate-y-1/2 w-3 h-3 bg-indigo-500 rounded-full border-2 border-slate-800" />
+                            )}
+                            <div className="absolute right-0 top-1/2 translate-x-1/2 -translate-y-1/2 w-3 h-3 bg-green-500 rounded-full border-2 border-slate-800" />
                           </div>
-                          
-                          {/* Connection arrow */}
-                          {index < blocks.length - 1 && (
-                            <div className="flex flex-col items-center">
-                              <ArrowRight className="w-8 h-8 text-indigo-400" />
-                              <span className="text-xs text-slate-500 mt-1">→</span>
-                            </div>
-                          )}
                         </div>
                       );
                     })}
-                  </div>
+                  </>
                 )}
               </div>
             </div>
