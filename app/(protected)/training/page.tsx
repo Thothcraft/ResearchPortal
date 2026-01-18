@@ -10,6 +10,53 @@ import {
   Download, Rocket, Loader2, X, XCircle, Edit2, TrendingUp,
 } from 'lucide-react';
 
+const PREPROCESSING_STEP_HELP: Record<string, { title: string; details: string }> = {
+  csi_loader: {
+    title: 'CSI Loader',
+    details:
+      'Reads CSI rows from the CSV and extracts the bracketed I/Q list from each line.\n' +
+      'It also cleans malformed/ragged rows so downstream steps don\'t receive NaNs.\n' +
+      'Output: numeric matrix shaped like [num_rows, 2*num_subcarriers].',
+  },
+  amplitude_extractor: {
+    title: 'Amplitude Extractor',
+    details:
+      'Converts each complex subcarrier value (I, Q) into amplitude: sqrt(I^2 + Q^2).\n' +
+      'Amplitude is typically more stable than raw I/Q and often works well for classification.',
+  },
+  phase_extractor: {
+    title: 'Phase Extractor',
+    details:
+      'Converts each complex subcarrier value (I, Q) into phase: atan2(I, Q).\n' +
+      'Phase can capture motion-induced changes but can be noisy; combining amplitude+phase increases feature count.',
+  },
+  subcarrier_filter: {
+    title: 'Subcarrier Filter',
+    details:
+      'Removes guard-band / low-quality subcarriers by selecting two useful ranges and concatenating them.\n' +
+      'This reduces noise and dimensionality while keeping the informative spectrum region.',
+  },
+  feature_concat: {
+    title: 'Feature Combine',
+    details:
+      'Concatenates feature channels into a single per-row feature vector.\n' +
+      'If Include Phase = ON, output is [amplitude | phase]. If OFF, output is amplitude only.',
+  },
+  data_portion_selector: {
+    title: 'Windowing / Flattening',
+    details:
+      'Groups the time series into non-overlapping windows of Window Size rows.\n' +
+      'If Output Shape = flattened, each window becomes one long feature vector (best for KNN/SVC/AdaBoost).\n' +
+      'If Output Shape = sequence, each window stays [window_size, features] (best for DL sequence models).',
+  },
+  imu_loader: {
+    title: 'IMU Loader',
+    details:
+      'Parses IMU JSON/JSONL/CSV into time-series windows.\n' +
+      'Output: windows shaped like [window_size, 6] (accel+gyro).',
+  },
+};
+
 type TrainingMode = 'cloud' | 'on-device' | 'federated';
 type Dataset = {
   id: number;
@@ -37,6 +84,26 @@ type PreprocessingPipelineSummary = {
   subcarrier_start: number;
   subcarrier_end: number;
   is_default: boolean;
+};
+type PreprocessingPreviewStage = {
+  block: string;
+  name: string;
+  shape?: number[] | null;
+  sample?: any;
+  metadata?: any;
+  error?: string;
+};
+type PreprocessingPreview = {
+  dataset_id: number;
+  file: {
+    file_id: number;
+    filename: string;
+    size: number;
+    content_type?: string | null;
+  };
+  data_type: 'csi' | 'imu' | string;
+  effective_config: Record<string, any>;
+  stages: PreprocessingPreviewStage[];
 };
 type BayesianTrialData = {
   trial: number;
@@ -165,6 +232,10 @@ export default function TrainingPage() {
   const [showTrainingConfig, setShowTrainingConfig] = useState(false);
   const [preprocessingPipelines, setPreprocessingPipelines] = useState<PreprocessingPipelineSummary[]>([]);
   const [pipelinesLoading, setPipelinesLoading] = useState(false);
+  const [trainingWizardStep, setTrainingWizardStep] = useState<0 | 1 | 2 | 3>(0);
+  const [preprocessingPreview, setPreprocessingPreview] = useState<PreprocessingPreview | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewError, setPreviewError] = useState<string | null>(null);
   const [trainingConfig, setTrainingConfig] = useState({ 
     model_type: 'dl_cnn_lstm', 
     model_architecture: 'medium',
@@ -183,6 +254,19 @@ export default function TrainingPage() {
     subcarrier_start: 5,
     subcarrier_end: 32,
     output_shape: 'flattened' as 'flattened' | 'sequence',
+    optimization_method: 'none' as 'none' | 'bayesian' | 'grid',
+    grid_knn: {
+      n_neighbors: [3, 5, 7] as number[],
+      weights: ['uniform', 'distance'] as string[],
+    },
+    grid_svc: {
+      C: [0.1, 1.0, 10.0] as number[],
+      kernel: ['rbf', 'linear'] as string[],
+    },
+    grid_adaboost: {
+      n_estimators: [50, 100, 200] as number[],
+      learning_rate: [0.5, 1.0] as number[],
+    },
     knn_params: {
       n_neighbors: 5,
       weights: 'uniform',
@@ -220,7 +304,17 @@ export default function TrainingPage() {
     bayesian_optimizers: ['adam', 'adamw', 'sgd'],
     bayesian_exploration_rate: 0.3,
     bayesian_search: false,
-    bayesian_search_architecture: false
+    bayesian_search_architecture: false,
+    // Explicit preprocessing blocks (for block-level control)
+    preprocessing_blocks: [
+      { type: 'csi_loader', enabled: true, params: {} },
+      { type: 'amplitude_extractor', enabled: true, params: {} },
+      { type: 'phase_extractor', enabled: true, params: {} },
+      { type: 'subcarrier_filter', enabled: true, params: {} },
+      { type: 'moving_average', enabled: false, params: { ma_window: 5 } },
+      { type: 'feature_concat', enabled: true, params: {} },
+      { type: 'data_portion_selector', enabled: true, params: {} },
+    ] as Array<{ type: string; enabled: boolean; params: Record<string, any> }>,
   });
   const [showAdvancedBayesian, setShowAdvancedBayesian] = useState(false);
   const [compareModels, setCompareModels] = useState<number[]>([]);
@@ -350,6 +444,63 @@ export default function TrainingPage() {
     loadPipelines();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showTrainingConfig]);
+
+  useEffect(() => {
+    if (!showTrainingConfig) return;
+    setTrainingWizardStep(0);
+    setPreprocessingPreview(null);
+    setPreviewError(null);
+  }, [showTrainingConfig]);
+
+  useEffect(() => {
+    if (!showTrainingConfig || !selectedDataset) return;
+
+    const t = setTimeout(async () => {
+      setPreviewLoading(true);
+      setPreviewError(null);
+      try {
+        const res = await post(`/datasets/${selectedDataset.id}/preprocessing/preview`, {
+          preprocessing_pipeline_id: trainingConfig.preprocessing_pipeline_id,
+          preprocessing_blocks: trainingConfig.preprocessing_blocks.filter(b => b.enabled),
+          data_type: trainingConfig.data_type,
+          include_phase: trainingConfig.include_phase,
+          filter_subcarriers: trainingConfig.filter_subcarriers,
+          subcarrier_start: trainingConfig.subcarrier_start,
+          subcarrier_end: trainingConfig.subcarrier_end,
+          output_shape: trainingConfig.output_shape,
+          window_size: trainingConfig.window_size,
+          max_preview_values: 32,
+        }).catch(() => null);
+
+        if (res?.preview) {
+          setPreprocessingPreview(res.preview);
+        } else {
+          setPreprocessingPreview(null);
+          setPreviewError('Failed to load preprocessing preview');
+        }
+      } catch (e) {
+        setPreprocessingPreview(null);
+        setPreviewError(e instanceof Error ? e.message : 'Failed to load preprocessing preview');
+      } finally {
+        setPreviewLoading(false);
+      }
+    }, 600);
+
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    showTrainingConfig,
+    selectedDataset?.id,
+    trainingConfig.preprocessing_pipeline_id,
+    trainingConfig.preprocessing_blocks,
+    trainingConfig.data_type,
+    trainingConfig.include_phase,
+    trainingConfig.filter_subcarriers,
+    trainingConfig.subcarrier_start,
+    trainingConfig.subcarrier_end,
+    trainingConfig.output_shape,
+    trainingConfig.window_size,
+  ]);
 
   useEffect(() => {
     if (activeTab === 'jobs') {
@@ -517,6 +668,20 @@ export default function TrainingPage() {
               ? trainingConfig.adaboost_params
               : {};
 
+      const grid_search = (() => {
+        if (trainingConfig.optimization_method !== 'grid') return null;
+        if (trainingConfig.model_type === 'knn') {
+          return { enabled: true, model_type: 'knn', params: trainingConfig.grid_knn };
+        }
+        if (trainingConfig.model_type === 'svc') {
+          return { enabled: true, model_type: 'svc', params: trainingConfig.grid_svc };
+        }
+        if (trainingConfig.model_type === 'adaboost') {
+          return { enabled: true, model_type: 'adaboost', params: trainingConfig.grid_adaboost };
+        }
+        return { enabled: true, model_type: trainingConfig.model_type, params: {} };
+      })();
+
       await post('/datasets/train/cloud', {
         dataset_id: selectedDataset.id,
         test_dataset_id: trainingConfig.test_dataset_id,
@@ -530,6 +695,7 @@ export default function TrainingPage() {
         model_name: trainingConfig.model_name || undefined,
         window_size: trainingConfig.window_size,
         preprocessing_pipeline_id: trainingConfig.preprocessing_pipeline_id,
+        preprocessing_blocks: trainingConfig.preprocessing_blocks.filter(b => b.enabled),
         data_type: trainingConfig.data_type,
         include_phase: trainingConfig.include_phase,
         filter_subcarriers: trainingConfig.filter_subcarriers,
@@ -537,7 +703,8 @@ export default function TrainingPage() {
         subcarrier_end: trainingConfig.subcarrier_end,
         output_shape: trainingConfig.output_shape,
         ml_params,
-        use_bayesian_optimization: trainingConfig.use_bayesian_optimization,
+        grid_search: grid_search || undefined,
+        use_bayesian_optimization: trainingConfig.optimization_method === 'bayesian' && trainingConfig.use_bayesian_optimization,
         bayesian_trials: trainingConfig.bayesian_trials,
         bayesian_epochs_per_trial: trainingConfig.bayesian_epochs_per_trial,
         bayesian_lr_min: trainingConfig.bayesian_lr_min,
@@ -1387,388 +1554,869 @@ export default function TrainingPage() {
           <div className="bg-slate-900 rounded-xl p-6 w-full max-w-2xl border border-slate-700 max-h-[90vh] overflow-y-auto">
             <h3 className="text-xl font-semibold text-white mb-4">Configure Training</h3>
             <p className="text-slate-400 text-sm mb-4">Dataset: <span className="text-white">{selectedDataset.name}</span> ({selectedDataset.files?.length} files)</p>
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm text-slate-300 mb-1">Model Type</label>
-                <select 
-                  value={trainingConfig.model_type} 
-                  onChange={(e) => setTrainingConfig({ ...trainingConfig, model_type: e.target.value })} 
-                  className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white"
-                >
-                  {getAvailableModels(selectedDataset).map(model => (
-                    <option key={model.value} value={model.value}>
-                      {model.label}
-                    </option>
-                  ))}
-                </select>
-                <p className="text-xs text-slate-500 mt-1">
-                  {getAvailableModels(selectedDataset).find(m => m.value === trainingConfig.model_type)?.description}
-                </p>
+            <div className="flex items-center justify-between mb-6">
+              <div className="flex gap-2">
+                {(['Preprocessing', 'Model', 'Optimization', 'Review'] as const).map((label, idx) => (
+                  <button
+                    key={label}
+                    type="button"
+                    onClick={() => setTrainingWizardStep(idx as 0 | 1 | 2 | 3)}
+                    className={`px-3 py-1.5 rounded-lg text-sm border transition-colors ${trainingWizardStep === idx ? 'bg-indigo-600/20 text-indigo-300 border-indigo-500/40' : 'bg-slate-800/40 text-slate-300 border-slate-700 hover:border-slate-600'}`}
+                  >
+                    {idx + 1}. {label}
+                  </button>
+                ))}
               </div>
-              <div>
-                <label className="block text-sm text-slate-300 mb-1">Model Architecture Size</label>
-                <select 
-                  value={trainingConfig.model_architecture} 
-                  onChange={(e) => setTrainingConfig({ ...trainingConfig, model_architecture: e.target.value })} 
-                  className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white"
-                >
-                  <option value="small">Small (Fast, Lower Accuracy)</option>
-                  <option value="medium">Medium (Balanced)</option>
-                  <option value="large">Large (Slower, Higher Accuracy)</option>
-                </select>
-                <p className="text-xs text-slate-500 mt-1">
-                  {trainingConfig.model_architecture === 'small' && 'Fewer layers, faster training, good for simple patterns'}
-                  {trainingConfig.model_architecture === 'medium' && 'Balanced architecture for most use cases'}
-                  {trainingConfig.model_architecture === 'large' && 'Deep architecture for complex patterns'}
-                </p>
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div><label className="block text-sm text-slate-300 mb-1">Epochs</label><input type="number" value={trainingConfig.epochs} onChange={(e) => setTrainingConfig({ ...trainingConfig, epochs: parseInt(e.target.value) || 10 })} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white" /></div>
-                <div><label className="block text-sm text-slate-300 mb-1">Batch Size</label><input type="number" value={trainingConfig.batch_size} onChange={(e) => setTrainingConfig({ ...trainingConfig, batch_size: parseInt(e.target.value) || 32 })} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white" /></div>
-              </div>
-              <div><label className="block text-sm text-slate-300 mb-1">Learning Rate</label><input type="number" step="0.0001" value={trainingConfig.learning_rate} onChange={(e) => setTrainingConfig({ ...trainingConfig, learning_rate: parseFloat(e.target.value) || 0.001 })} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white" /></div>
-              {(trainingConfig.model_type === 'knn' || trainingConfig.model_type === 'svc' || trainingConfig.model_type === 'adaboost') && (
-                <div className="p-4 bg-slate-800/30 rounded-lg border border-slate-700">
-                  <h4 className="text-sm font-medium text-indigo-400 mb-3">ML Model Parameters</h4>
+            </div>
 
-                  {trainingConfig.model_type === 'knn' && (
-                    <div className="grid grid-cols-2 gap-4">
+            {trainingWizardStep === 0 && (
+              <div className="space-y-4">
+                <div className="p-4 bg-slate-800/30 rounded-lg border border-slate-700">
+                  <div className="flex items-center justify-between mb-3">
+                    <h4 className="text-sm font-medium text-indigo-400">Preprocessing</h4>
+                    {pipelinesLoading ? <span className="text-xs text-slate-500">Loading pipelines...</span> : null}
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm text-slate-300 mb-1">Preprocessing Pipeline</label>
+                      <select
+                        value={trainingConfig.preprocessing_pipeline_id ?? ''}
+                        onChange={(e) => {
+                          const raw = e.target.value;
+                          const id = raw ? parseInt(raw) : null;
+                          const pipeline = preprocessingPipelines.find(p => p.id === id) || null;
+                          if (pipeline) {
+                            setTrainingConfig({
+                              ...trainingConfig,
+                              preprocessing_pipeline_id: pipeline.id,
+                              data_type: (pipeline.data_type as any) || 'auto',
+                              include_phase: !!pipeline.include_phase,
+                              filter_subcarriers: !!pipeline.filter_subcarriers,
+                              subcarrier_start: pipeline.subcarrier_start,
+                              subcarrier_end: pipeline.subcarrier_end,
+                              output_shape: (pipeline.output_shape as any) || 'flattened',
+                              window_size: pipeline.window_size,
+                            });
+                          } else {
+                            setTrainingConfig({ ...trainingConfig, preprocessing_pipeline_id: null });
+                          }
+                        }}
+                        className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white"
+                      >
+                        <option value="">Inline (no saved pipeline)</option>
+                        {preprocessingPipelines.map(p => (
+                          <option key={p.id} value={p.id}>
+                            {p.name}{p.is_default ? ' (default)' : ''} · {p.data_type}/{p.output_shape}
+                          </option>
+                        ))}
+                      </select>
+                      <p className="text-xs text-slate-500 mt-1">
+                        {trainingConfig.preprocessing_pipeline_id
+                          ? 'Using a saved preprocessing pipeline. Inline settings are locked to the pipeline.'
+                          : 'Configure preprocessing inline below.'}
+                      </p>
+                    </div>
+                    <div>
+                      <label className="block text-sm text-slate-300 mb-1">Input Data Type</label>
+                      <select
+                        value={trainingConfig.data_type}
+                        disabled={trainingConfig.preprocessing_pipeline_id != null}
+                        onChange={(e) => setTrainingConfig({ ...trainingConfig, data_type: e.target.value as any })}
+                        className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white disabled:opacity-60"
+                      >
+                        <option value="auto">Auto-detect</option>
+                        <option value="csi">CSI</option>
+                        <option value="imu">IMU</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+                    <div>
+                      <label className="block text-sm text-slate-300 mb-1">Output Shape</label>
+                      <select
+                        value={trainingConfig.output_shape}
+                        disabled={trainingConfig.preprocessing_pipeline_id != null}
+                        onChange={(e) => setTrainingConfig({ ...trainingConfig, output_shape: e.target.value as any })}
+                        className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white disabled:opacity-60"
+                      >
+                        <option value="flattened">Flattened (ML)</option>
+                        <option value="sequence">Sequence (DL)</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-sm text-slate-300 mb-1">Window Size</label>
+                      <input
+                        type="number"
+                        value={trainingConfig.window_size}
+                        disabled={trainingConfig.preprocessing_pipeline_id != null}
+                        onChange={(e) => setTrainingConfig({ ...trainingConfig, window_size: parseInt(e.target.value) || trainingConfig.window_size })}
+                        className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white disabled:opacity-60"
+                        min="1"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div className="flex items-center justify-between p-3 bg-slate-800/40 rounded-lg border border-slate-700 md:col-span-1">
                       <div>
-                        <label className="block text-sm text-slate-300 mb-1">n_neighbors</label>
-                        <input type="number" min="1" value={trainingConfig.knn_params.n_neighbors} onChange={(e) => setTrainingConfig({ ...trainingConfig, knn_params: { ...trainingConfig.knn_params, n_neighbors: parseInt(e.target.value) || 1 } })} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white" />
+                        <label className="block text-sm text-slate-300 font-medium">Include Phase</label>
+                        <p className="text-xs text-slate-500 mt-1">CSI only</p>
+                      </div>
+                      <label className="relative inline-flex items-center cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={trainingConfig.include_phase}
+                          disabled={trainingConfig.preprocessing_pipeline_id != null}
+                          onChange={(e) => setTrainingConfig({ ...trainingConfig, include_phase: e.target.checked })}
+                          className="sr-only peer"
+                        />
+                        <div className="w-11 h-6 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
+                      </label>
+                    </div>
+                    <div className="flex items-center justify-between p-3 bg-slate-800/40 rounded-lg border border-slate-700 md:col-span-2">
+                      <div>
+                        <label className="block text-sm text-slate-300 font-medium">Subcarrier Filtering</label>
+                        <p className="text-xs text-slate-500 mt-1">CSI only</p>
+                      </div>
+                      <label className="relative inline-flex items-center cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={trainingConfig.filter_subcarriers}
+                          disabled={trainingConfig.preprocessing_pipeline_id != null}
+                          onChange={(e) => setTrainingConfig({ ...trainingConfig, filter_subcarriers: e.target.checked })}
+                          className="sr-only peer"
+                        />
+                        <div className="w-11 h-6 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
+                      </label>
+                    </div>
+                  </div>
+
+                  {trainingConfig.filter_subcarriers && (
+                    <div className="grid grid-cols-2 gap-4 mt-4">
+                      <div>
+                        <label className="block text-sm text-slate-300 mb-1">Subcarrier Start</label>
+                        <input
+                          type="number"
+                          value={trainingConfig.subcarrier_start}
+                          disabled={trainingConfig.preprocessing_pipeline_id != null}
+                          onChange={(e) => setTrainingConfig({ ...trainingConfig, subcarrier_start: parseInt(e.target.value) || 0 })}
+                          className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white disabled:opacity-60"
+                          min="0"
+                        />
                       </div>
                       <div>
-                        <label className="block text-sm text-slate-300 mb-1">weights</label>
-                        <select value={trainingConfig.knn_params.weights} onChange={(e) => setTrainingConfig({ ...trainingConfig, knn_params: { ...trainingConfig.knn_params, weights: e.target.value } })} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white">
-                          <option value="uniform">uniform</option>
-                          <option value="distance">distance</option>
-                        </select>
-                      </div>
-                      <div>
-                        <label className="block text-sm text-slate-300 mb-1">metric</label>
-                        <select value={trainingConfig.knn_params.metric} onChange={(e) => setTrainingConfig({ ...trainingConfig, knn_params: { ...trainingConfig.knn_params, metric: e.target.value } })} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white">
-                          <option value="euclidean">euclidean</option>
-                          <option value="manhattan">manhattan</option>
-                          <option value="minkowski">minkowski</option>
-                        </select>
-                      </div>
-                      <div>
-                        <label className="block text-sm text-slate-300 mb-1">algorithm</label>
-                        <select value={trainingConfig.knn_params.algorithm} onChange={(e) => setTrainingConfig({ ...trainingConfig, knn_params: { ...trainingConfig.knn_params, algorithm: e.target.value } })} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white">
-                          <option value="auto">auto</option>
-                          <option value="ball_tree">ball_tree</option>
-                          <option value="kd_tree">kd_tree</option>
-                          <option value="brute">brute</option>
-                        </select>
-                      </div>
-                      <div>
-                        <label className="block text-sm text-slate-300 mb-1">p (Minkowski)</label>
-                        <input type="number" min="1" value={trainingConfig.knn_params.p} onChange={(e) => setTrainingConfig({ ...trainingConfig, knn_params: { ...trainingConfig.knn_params, p: parseInt(e.target.value) || 2 } })} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white" />
+                        <label className="block text-sm text-slate-300 mb-1">Subcarrier End</label>
+                        <input
+                          type="number"
+                          value={trainingConfig.subcarrier_end}
+                          disabled={trainingConfig.preprocessing_pipeline_id != null}
+                          onChange={(e) => setTrainingConfig({ ...trainingConfig, subcarrier_end: parseInt(e.target.value) || 0 })}
+                          className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white disabled:opacity-60"
+                          min="0"
+                        />
                       </div>
                     </div>
                   )}
+                </div>
 
-                  {trainingConfig.model_type === 'svc' && (
-                    <div className="grid grid-cols-2 gap-4">
-                      <div>
-                        <label className="block text-sm text-slate-300 mb-1">C</label>
-                        <input type="number" step="0.1" value={trainingConfig.svc_params.C} onChange={(e) => setTrainingConfig({ ...trainingConfig, svc_params: { ...trainingConfig.svc_params, C: parseFloat(e.target.value) || 1 } })} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white" />
+                {/* Block-level preprocessing controls */}
+                <div className="p-4 bg-slate-800/30 rounded-lg border border-slate-700">
+                  <div className="flex items-center justify-between mb-3">
+                    <h4 className="text-sm font-medium text-indigo-400">Preprocessing Blocks</h4>
+                    <span className="text-xs text-slate-500">Enable/disable and configure each block</span>
+                  </div>
+                  <div className="space-y-2">
+                    {trainingConfig.preprocessing_blocks.map((block, idx) => {
+                      const helpInfo = PREPROCESSING_STEP_HELP[block.type];
+                      return (
+                        <div key={`block-${block.type}-${idx}`} className={`p-3 rounded-lg border ${block.enabled ? 'border-indigo-500/40 bg-indigo-500/5' : 'border-slate-700 bg-slate-900/30 opacity-60'}`}>
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-3">
+                              <label className="relative inline-flex items-center cursor-pointer">
+                                <input
+                                  type="checkbox"
+                                  checked={block.enabled}
+                                  disabled={trainingConfig.preprocessing_pipeline_id != null || ['csi_loader', 'imu_loader'].includes(block.type)}
+                                  onChange={(e) => {
+                                    const updated = [...trainingConfig.preprocessing_blocks];
+                                    updated[idx] = { ...updated[idx], enabled: e.target.checked };
+                                    setTrainingConfig({ ...trainingConfig, preprocessing_blocks: updated });
+                                  }}
+                                  className="sr-only peer"
+                                />
+                                <div className="w-9 h-5 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-indigo-600"></div>
+                              </label>
+                              <div>
+                                <div className="text-sm text-white font-medium">{helpInfo?.title || block.type}</div>
+                                <div className="text-xs text-slate-500">{block.type}</div>
+                              </div>
+                            </div>
+                            <div className="relative group">
+                              <button type="button" className="w-5 h-5 rounded-full border border-slate-600 text-slate-300 text-xs flex items-center justify-center hover:border-slate-400 hover:text-white" aria-label={`Explain ${block.type}`}>?</button>
+                              <div className="hidden group-hover:block absolute right-0 top-6 w-80 max-w-[80vw] p-3 rounded-lg border border-slate-700 bg-slate-950 text-slate-200 z-50 shadow-xl">
+                                <div className="text-sm font-medium text-white">{helpInfo?.title || block.type}</div>
+                                <div className="text-xs text-slate-300 mt-2 whitespace-pre-line">{helpInfo?.details || 'No detailed explanation available.'}</div>
+                              </div>
+                            </div>
+                          </div>
+                          {/* Block-specific params */}
+                          {block.enabled && block.type === 'moving_average' && (
+                            <div className="mt-3 pt-3 border-t border-slate-700">
+                              <label className="block text-xs text-slate-400 mb-1">Window Size</label>
+                              <input
+                                type="number"
+                                min="2"
+                                max="50"
+                                value={block.params.ma_window || 5}
+                                disabled={trainingConfig.preprocessing_pipeline_id != null}
+                                onChange={(e) => {
+                                  const updated = [...trainingConfig.preprocessing_blocks];
+                                  updated[idx] = { ...updated[idx], params: { ...updated[idx].params, ma_window: parseInt(e.target.value) || 5 } };
+                                  setTrainingConfig({ ...trainingConfig, preprocessing_blocks: updated });
+                                }}
+                                className="w-24 px-2 py-1 bg-slate-800 border border-slate-600 rounded text-white text-sm disabled:opacity-60"
+                              />
+                            </div>
+                          )}
+                          {block.enabled && block.type === 'subcarrier_filter' && (
+                            <div className="mt-3 pt-3 border-t border-slate-700 grid grid-cols-2 gap-3">
+                              <div>
+                                <label className="block text-xs text-slate-400 mb-1">Start Index</label>
+                                <input
+                                  type="number"
+                                  min="0"
+                                  value={block.params.subcarrier_start ?? trainingConfig.subcarrier_start}
+                                  disabled={trainingConfig.preprocessing_pipeline_id != null}
+                                  onChange={(e) => {
+                                    const updated = [...trainingConfig.preprocessing_blocks];
+                                    updated[idx] = { ...updated[idx], params: { ...updated[idx].params, subcarrier_start: parseInt(e.target.value) || 0 } };
+                                    setTrainingConfig({ ...trainingConfig, preprocessing_blocks: updated });
+                                  }}
+                                  className="w-full px-2 py-1 bg-slate-800 border border-slate-600 rounded text-white text-sm disabled:opacity-60"
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-xs text-slate-400 mb-1">End Index</label>
+                                <input
+                                  type="number"
+                                  min="0"
+                                  value={block.params.subcarrier_end ?? trainingConfig.subcarrier_end}
+                                  disabled={trainingConfig.preprocessing_pipeline_id != null}
+                                  onChange={(e) => {
+                                    const updated = [...trainingConfig.preprocessing_blocks];
+                                    updated[idx] = { ...updated[idx], params: { ...updated[idx].params, subcarrier_end: parseInt(e.target.value) || 32 } };
+                                    setTrainingConfig({ ...trainingConfig, preprocessing_blocks: updated });
+                                  }}
+                                  className="w-full px-2 py-1 bg-slate-800 border border-slate-600 rounded text-white text-sm disabled:opacity-60"
+                                />
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <p className="text-xs text-slate-500 mt-3">Loader blocks cannot be disabled. Toggle optional blocks like Phase Extractor, Subcarrier Filter, or Moving Average.</p>
+                </div>
+
+                <div className="p-4 bg-slate-800/30 rounded-lg border border-slate-700">
+                  <div className="flex items-center justify-between mb-3">
+                    <h4 className="text-sm font-medium text-indigo-400">Preview (per preprocessing block)</h4>
+                    {previewLoading ? <span className="text-xs text-slate-500">Loading preview...</span> : null}
+                  </div>
+                  {previewError && <div className="text-sm text-red-400 mb-2">{previewError}</div>}
+                  {preprocessingPreview ? (
+                    <div className="space-y-3">
+                      <div className="text-xs text-slate-400">
+                        <div>File: <span className="text-slate-200">{preprocessingPreview.file.filename}</span> ({(preprocessingPreview.file.size / 1024).toFixed(1)} KB)</div>
+                        <div>Detected type: <span className="text-slate-200">{preprocessingPreview.data_type}</span></div>
                       </div>
-                      <div>
-                        <label className="block text-sm text-slate-300 mb-1">kernel</label>
-                        <select value={trainingConfig.svc_params.kernel} onChange={(e) => setTrainingConfig({ ...trainingConfig, svc_params: { ...trainingConfig.svc_params, kernel: e.target.value } })} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white">
-                          <option value="rbf">rbf</option>
-                          <option value="linear">linear</option>
-                          <option value="poly">poly</option>
-                          <option value="sigmoid">sigmoid</option>
-                        </select>
+                      <div className="space-y-2">
+                        {preprocessingPreview.stages.map((s, i) => (
+                          <div key={`${s.block}-${i}`} className="p-3 rounded-lg border border-slate-700 bg-slate-900/30">
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-2">
+                                <div className="text-sm text-white font-medium">{i + 1}. {s.name}</div>
+                                <div className="relative group">
+                                  <button
+                                    type="button"
+                                    className="w-5 h-5 rounded-full border border-slate-600 text-slate-300 text-xs flex items-center justify-center hover:border-slate-400 hover:text-white"
+                                    aria-label={`Explain ${s.name}`}
+                                  >
+                                    ?
+                                  </button>
+                                  <div className="hidden group-hover:block absolute right-0 top-6 w-96 max-w-[80vw] p-3 rounded-lg border border-slate-700 bg-slate-950 text-slate-200 z-50 shadow-xl">
+                                    <div className="text-sm font-medium text-white">
+                                      {PREPROCESSING_STEP_HELP[s.block]?.title || s.name}
+                                    </div>
+                                    <div className="text-xs text-slate-300 mt-2 whitespace-pre-line">
+                                      {PREPROCESSING_STEP_HELP[s.block]?.details || 'No detailed explanation available for this step.'}
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+                              {s.shape ? <div className="text-xs text-slate-400">shape: [{s.shape.join(', ')}]</div> : null}
+                            </div>
+                            {s.error ? (
+                              <div className="text-xs text-red-400 mt-2">{s.error}</div>
+                            ) : (
+                              <div className="text-xs text-slate-400 mt-2 break-words">
+                                sample: <span className="text-slate-300">{Array.isArray(s.sample) ? JSON.stringify(s.sample) : String(s.sample)}</span>
+                              </div>
+                            )}
+                          </div>
+                        ))}
                       </div>
-                      <div>
-                        <label className="block text-sm text-slate-300 mb-1">gamma</label>
-                        <select value={trainingConfig.svc_params.gamma} onChange={(e) => setTrainingConfig({ ...trainingConfig, svc_params: { ...trainingConfig.svc_params, gamma: e.target.value } })} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white">
-                          <option value="scale">scale</option>
-                          <option value="auto">auto</option>
-                        </select>
-                      </div>
-                      <div>
-                        <label className="block text-sm text-slate-300 mb-1">degree</label>
-                        <input type="number" min="1" value={trainingConfig.svc_params.degree} onChange={(e) => setTrainingConfig({ ...trainingConfig, svc_params: { ...trainingConfig.svc_params, degree: parseInt(e.target.value) || 3 } })} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white" />
-                      </div>
-                      <div className="flex items-center justify-between p-3 bg-slate-800/40 rounded-lg border border-slate-700 col-span-2">
+                    </div>
+                  ) : (
+                    <div className="text-sm text-slate-500">No preview available yet.</div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {trainingWizardStep === 1 && (
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm text-slate-300 mb-1">Model Type</label>
+                  <select 
+                    value={trainingConfig.model_type} 
+                    onChange={(e) => setTrainingConfig({ ...trainingConfig, model_type: e.target.value })} 
+                    className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white"
+                  >
+                    {getAvailableModels(selectedDataset).map(model => (
+                      <option key={model.value} value={model.value}>
+                        {model.label}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="text-xs text-slate-500 mt-1">
+                    {getAvailableModels(selectedDataset).find(m => m.value === trainingConfig.model_type)?.description}
+                  </p>
+                </div>
+
+                {!['knn', 'svc', 'adaboost'].includes(trainingConfig.model_type) && (
+                  <div>
+                    <label className="block text-sm text-slate-300 mb-1">Model Architecture Size</label>
+                    <select 
+                      value={trainingConfig.model_architecture} 
+                      onChange={(e) => setTrainingConfig({ ...trainingConfig, model_architecture: e.target.value })} 
+                      className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white"
+                    >
+                      <option value="small">Small (Fast, Lower Accuracy)</option>
+                      <option value="medium">Medium (Balanced)</option>
+                      <option value="large">Large (Slower, Higher Accuracy)</option>
+                    </select>
+                  </div>
+                )}
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div><label className="block text-sm text-slate-300 mb-1">Epochs</label><input type="number" value={trainingConfig.epochs} onChange={(e) => setTrainingConfig({ ...trainingConfig, epochs: parseInt(e.target.value) || 10 })} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white" /></div>
+                  <div><label className="block text-sm text-slate-300 mb-1">Batch Size</label><input type="number" value={trainingConfig.batch_size} onChange={(e) => setTrainingConfig({ ...trainingConfig, batch_size: parseInt(e.target.value) || 32 })} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white" /></div>
+                </div>
+                <div><label className="block text-sm text-slate-300 mb-1">Learning Rate</label><input type="number" step="0.0001" value={trainingConfig.learning_rate} onChange={(e) => setTrainingConfig({ ...trainingConfig, learning_rate: parseFloat(e.target.value) || 0.001 })} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white" /></div>
+
+                {(trainingConfig.model_type === 'knn' || trainingConfig.model_type === 'svc' || trainingConfig.model_type === 'adaboost') && (
+                  <div className="p-4 bg-slate-800/30 rounded-lg border border-slate-700">
+                    <h4 className="text-sm font-medium text-indigo-400 mb-3">ML Model Parameters</h4>
+                    {trainingConfig.model_type === 'knn' && (
+                      <div className="grid grid-cols-2 gap-4">
                         <div>
-                          <label className="block text-sm text-slate-300 font-medium">probability</label>
-                          <p className="text-xs text-slate-500 mt-1">Needed for ROC/PR curves</p>
+                          <label className="block text-sm text-slate-300 mb-1">n_neighbors</label>
+                          <input type="number" min="1" value={trainingConfig.knn_params.n_neighbors} onChange={(e) => setTrainingConfig({ ...trainingConfig, knn_params: { ...trainingConfig.knn_params, n_neighbors: parseInt(e.target.value) || 1 } })} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white" />
+                        </div>
+                        <div>
+                          <label className="block text-sm text-slate-300 mb-1">weights</label>
+                          <select value={trainingConfig.knn_params.weights} onChange={(e) => setTrainingConfig({ ...trainingConfig, knn_params: { ...trainingConfig.knn_params, weights: e.target.value } })} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white">
+                            <option value="uniform">uniform</option>
+                            <option value="distance">distance</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block text-sm text-slate-300 mb-1">metric</label>
+                          <select value={trainingConfig.knn_params.metric} onChange={(e) => setTrainingConfig({ ...trainingConfig, knn_params: { ...trainingConfig.knn_params, metric: e.target.value } })} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white">
+                            <option value="euclidean">euclidean</option>
+                            <option value="manhattan">manhattan</option>
+                            <option value="minkowski">minkowski</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block text-sm text-slate-300 mb-1">algorithm</label>
+                          <select value={trainingConfig.knn_params.algorithm} onChange={(e) => setTrainingConfig({ ...trainingConfig, knn_params: { ...trainingConfig.knn_params, algorithm: e.target.value } })} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white">
+                            <option value="auto">auto</option>
+                            <option value="ball_tree">ball_tree</option>
+                            <option value="kd_tree">kd_tree</option>
+                            <option value="brute">brute</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block text-sm text-slate-300 mb-1">p (Minkowski)</label>
+                          <input type="number" min="1" value={trainingConfig.knn_params.p} onChange={(e) => setTrainingConfig({ ...trainingConfig, knn_params: { ...trainingConfig.knn_params, p: parseInt(e.target.value) || 2 } })} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white" />
+                        </div>
+                      </div>
+                    )}
+
+                    {trainingConfig.model_type === 'svc' && (
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <label className="block text-sm text-slate-300 mb-1">C</label>
+                          <input type="number" step="0.1" value={trainingConfig.svc_params.C} onChange={(e) => setTrainingConfig({ ...trainingConfig, svc_params: { ...trainingConfig.svc_params, C: parseFloat(e.target.value) || 1 } })} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white" />
+                        </div>
+                        <div>
+                          <label className="block text-sm text-slate-300 mb-1">kernel</label>
+                          <select value={trainingConfig.svc_params.kernel} onChange={(e) => setTrainingConfig({ ...trainingConfig, svc_params: { ...trainingConfig.svc_params, kernel: e.target.value } })} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white">
+                            <option value="rbf">rbf</option>
+                            <option value="linear">linear</option>
+                            <option value="poly">poly</option>
+                            <option value="sigmoid">sigmoid</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block text-sm text-slate-300 mb-1">gamma</label>
+                          <select value={trainingConfig.svc_params.gamma} onChange={(e) => setTrainingConfig({ ...trainingConfig, svc_params: { ...trainingConfig.svc_params, gamma: e.target.value } })} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white">
+                            <option value="scale">scale</option>
+                            <option value="auto">auto</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block text-sm text-slate-300 mb-1">degree</label>
+                          <input type="number" min="1" value={trainingConfig.svc_params.degree} onChange={(e) => setTrainingConfig({ ...trainingConfig, svc_params: { ...trainingConfig.svc_params, degree: parseInt(e.target.value) || 3 } })} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white" />
+                        </div>
+                        <div className="flex items-center justify-between p-3 bg-slate-800/40 rounded-lg border border-slate-700 col-span-2">
+                          <div>
+                            <label className="block text-sm text-slate-300 font-medium">probability</label>
+                            <p className="text-xs text-slate-500 mt-1">Needed for ROC/PR curves</p>
+                          </div>
+                          <label className="relative inline-flex items-center cursor-pointer">
+                            <input type="checkbox" checked={trainingConfig.svc_params.probability} onChange={(e) => setTrainingConfig({ ...trainingConfig, svc_params: { ...trainingConfig.svc_params, probability: e.target.checked } })} className="sr-only peer" />
+                            <div className="w-11 h-6 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
+                          </label>
+                        </div>
+                      </div>
+                    )}
+
+                    {trainingConfig.model_type === 'adaboost' && (
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <label className="block text-sm text-slate-300 mb-1">n_estimators</label>
+                          <input type="number" min="1" value={trainingConfig.adaboost_params.n_estimators} onChange={(e) => setTrainingConfig({ ...trainingConfig, adaboost_params: { ...trainingConfig.adaboost_params, n_estimators: parseInt(e.target.value) || 1 } })} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white" />
+                        </div>
+                        <div>
+                          <label className="block text-sm text-slate-300 mb-1">learning_rate</label>
+                          <input type="number" step="0.1" value={trainingConfig.adaboost_params.learning_rate} onChange={(e) => setTrainingConfig({ ...trainingConfig, adaboost_params: { ...trainingConfig.adaboost_params, learning_rate: parseFloat(e.target.value) || 1 } })} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white" />
+                        </div>
+                        <div>
+                          <label className="block text-sm text-slate-300 mb-1">algorithm</label>
+                          <select value={trainingConfig.adaboost_params.algorithm} onChange={(e) => setTrainingConfig({ ...trainingConfig, adaboost_params: { ...trainingConfig.adaboost_params, algorithm: e.target.value } })} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white">
+                            <option value="SAMME.R">SAMME.R</option>
+                            <option value="SAMME">SAMME</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block text-sm text-slate-300 mb-1">base max_depth</label>
+                          <input type="number" min="1" value={trainingConfig.adaboost_params.max_depth} onChange={(e) => setTrainingConfig({ ...trainingConfig, adaboost_params: { ...trainingConfig.adaboost_params, max_depth: parseInt(e.target.value) || 1 } })} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white" />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {trainingWizardStep === 2 && (
+              <div className="space-y-4">
+                <div className="p-4 bg-slate-800/30 rounded-lg border border-slate-700">
+                  <h4 className="text-sm font-medium text-indigo-400 mb-3">Optimization Method</h4>
+                  <p className="text-xs text-slate-500 mb-3">Selected model: <span className="text-indigo-300 font-medium">{trainingConfig.model_type}</span></p>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    {([
+                      { key: 'none', label: 'None', desc: 'Use fixed hyperparameters from Model step' },
+                      { key: 'bayesian', label: 'Bayesian', desc: 'Auto-tune hyperparameters (DL models)' },
+                      { key: 'grid', label: 'Grid Search', desc: 'Exhaustive search over parameter grid (ML models)' },
+                    ] as const).map(opt => (
+                      <button
+                        key={opt.key}
+                        type="button"
+                        onClick={() => setTrainingConfig({ ...trainingConfig, optimization_method: opt.key })}
+                        className={`px-3 py-3 rounded-lg border text-left ${trainingConfig.optimization_method === opt.key ? 'bg-indigo-600/20 border-indigo-500/40' : 'bg-slate-800/40 border-slate-700 hover:border-slate-600'}`}
+                      >
+                        <div className={`text-sm font-medium ${trainingConfig.optimization_method === opt.key ? 'text-indigo-300' : 'text-slate-300'}`}>{opt.label}</div>
+                        <div className="text-xs text-slate-500 mt-1">{opt.desc}</div>
+                      </button>
+                    ))}
+                  </div>
+
+                  {trainingConfig.optimization_method === 'bayesian' && (
+                    <div className="mt-4 space-y-4">
+                      <div className="flex items-center justify-between p-3 bg-slate-800/50 rounded-lg border border-slate-700">
+                        <div>
+                          <label className="block text-sm text-slate-300 font-medium">Enable Bayesian Optimization</label>
+                          <p className="text-xs text-slate-500 mt-1">Auto-tune hyperparameters before training</p>
                         </div>
                         <label className="relative inline-flex items-center cursor-pointer">
-                          <input type="checkbox" checked={trainingConfig.svc_params.probability} onChange={(e) => setTrainingConfig({ ...trainingConfig, svc_params: { ...trainingConfig.svc_params, probability: e.target.checked } })} className="sr-only peer" />
+                          <input
+                            type="checkbox"
+                            checked={trainingConfig.use_bayesian_optimization}
+                            onChange={(e) => setTrainingConfig({ ...trainingConfig, use_bayesian_optimization: e.target.checked })}
+                            className="sr-only peer"
+                          />
                           <div className="w-11 h-6 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
                         </label>
                       </div>
+                      {trainingConfig.use_bayesian_optimization && (
+                        <div className="space-y-4 p-4 bg-slate-800/30 rounded-lg border border-slate-700">
+                          <div className="grid grid-cols-2 gap-4">
+                            <div>
+                              <label className="block text-sm text-slate-300 mb-1">Number of Trials</label>
+                              <input type="number" value={trainingConfig.bayesian_trials} onChange={(e) => setTrainingConfig({ ...trainingConfig, bayesian_trials: parseInt(e.target.value) || 20 })} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white" />
+                            </div>
+                            <div>
+                              <label className="block text-sm text-slate-300 mb-1">Epochs per Trial</label>
+                              <input type="number" value={trainingConfig.bayesian_epochs_per_trial} onChange={(e) => setTrainingConfig({ ...trainingConfig, bayesian_epochs_per_trial: parseInt(e.target.value) || 3 })} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white" />
+                            </div>
+                          </div>
+                          <div className="grid grid-cols-2 gap-4">
+                            <div>
+                              <label className="block text-sm text-slate-300 mb-1">Learning Rate Min</label>
+                              <input type="number" step="0.00001" value={trainingConfig.bayesian_lr_min} onChange={(e) => setTrainingConfig({ ...trainingConfig, bayesian_lr_min: parseFloat(e.target.value) || 0.00001 })} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white" />
+                            </div>
+                            <div>
+                              <label className="block text-sm text-slate-300 mb-1">Learning Rate Max</label>
+                              <input type="number" step="0.001" value={trainingConfig.bayesian_lr_max} onChange={(e) => setTrainingConfig({ ...trainingConfig, bayesian_lr_max: parseFloat(e.target.value) || 0.01 })} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white" />
+                            </div>
+                          </div>
+                          <div>
+                            <label className="block text-sm text-slate-300 mb-1">Batch Sizes to Try (comma-separated)</label>
+                            <input
+                              type="text"
+                              value={trainingConfig.bayesian_batch_sizes.join(',')}
+                              onChange={(e) => {
+                                const vals = e.target.value.split(',').map(v => parseInt(v.trim())).filter(v => Number.isFinite(v) && v > 0);
+                                setTrainingConfig({ ...trainingConfig, bayesian_batch_sizes: vals.length ? vals : trainingConfig.bayesian_batch_sizes });
+                              }}
+                              className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-sm text-slate-300 mb-1">Optimizers to Try</label>
+                            <div className="flex flex-wrap gap-2">
+                              {['adam', 'adamw', 'sgd'].map(opt => (
+                                <label key={opt} className="flex items-center gap-2 px-3 py-1.5 bg-slate-800 rounded-lg border border-slate-600 cursor-pointer">
+                                  <input
+                                    type="checkbox"
+                                    checked={trainingConfig.bayesian_optimizers.includes(opt)}
+                                    onChange={(e) => {
+                                      const newOpts = e.target.checked
+                                        ? [...trainingConfig.bayesian_optimizers, opt]
+                                        : trainingConfig.bayesian_optimizers.filter(o => o !== opt);
+                                      setTrainingConfig({ ...trainingConfig, bayesian_optimizers: newOpts.length ? newOpts : ['adam'] });
+                                    }}
+                                    className="w-4 h-4 text-indigo-600 bg-slate-700 border-slate-600 rounded focus:ring-indigo-500"
+                                  />
+                                  <span className="text-sm text-slate-300">{opt}</span>
+                                </label>
+                              ))}
+                            </div>
+                          </div>
+                          <div className="flex items-center justify-between p-3 bg-slate-800/40 rounded-lg border border-slate-700">
+                            <div>
+                              <label className="block text-sm text-slate-300 font-medium">Search Architecture</label>
+                              <p className="text-xs text-slate-500 mt-1">Also search model architecture size</p>
+                            </div>
+                            <label className="relative inline-flex items-center cursor-pointer">
+                              <input
+                                type="checkbox"
+                                checked={trainingConfig.bayesian_search_architecture}
+                                onChange={(e) => setTrainingConfig({ ...trainingConfig, bayesian_search_architecture: e.target.checked })}
+                                className="sr-only peer"
+                              />
+                              <div className="w-9 h-5 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-indigo-600"></div>
+                            </label>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
 
-                  {trainingConfig.model_type === 'adaboost' && (
-                    <div className="grid grid-cols-2 gap-4">
-                      <div>
-                        <label className="block text-sm text-slate-300 mb-1">n_estimators</label>
-                        <input type="number" min="1" value={trainingConfig.adaboost_params.n_estimators} onChange={(e) => setTrainingConfig({ ...trainingConfig, adaboost_params: { ...trainingConfig.adaboost_params, n_estimators: parseInt(e.target.value) || 1 } })} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white" />
+                  {trainingConfig.optimization_method === 'grid' && (
+                    <div className="mt-4 space-y-4">
+                      <div className="p-3 bg-indigo-500/10 border border-indigo-500/30 rounded-lg">
+                        <div className="text-sm text-indigo-300 font-medium">Grid Search for {trainingConfig.model_type.toUpperCase()}</div>
+                        <div className="text-xs text-slate-400 mt-1">
+                          Define parameter values to search. All combinations will be evaluated.
+                        </div>
                       </div>
-                      <div>
-                        <label className="block text-sm text-slate-300 mb-1">learning_rate</label>
-                        <input type="number" step="0.1" value={trainingConfig.adaboost_params.learning_rate} onChange={(e) => setTrainingConfig({ ...trainingConfig, adaboost_params: { ...trainingConfig.adaboost_params, learning_rate: parseFloat(e.target.value) || 1 } })} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white" />
-                      </div>
-                      <div>
-                        <label className="block text-sm text-slate-300 mb-1">algorithm</label>
-                        <select value={trainingConfig.adaboost_params.algorithm} onChange={(e) => setTrainingConfig({ ...trainingConfig, adaboost_params: { ...trainingConfig.adaboost_params, algorithm: e.target.value } })} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white">
-                          <option value="SAMME.R">SAMME.R</option>
-                          <option value="SAMME">SAMME</option>
-                        </select>
-                      </div>
-                      <div>
-                        <label className="block text-sm text-slate-300 mb-1">base max_depth</label>
-                        <input type="number" min="1" value={trainingConfig.adaboost_params.max_depth} onChange={(e) => setTrainingConfig({ ...trainingConfig, adaboost_params: { ...trainingConfig.adaboost_params, max_depth: parseInt(e.target.value) || 1 } })} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white" />
-                      </div>
+
+                      {trainingConfig.model_type === 'knn' && (
+                        <div className="grid grid-cols-2 gap-4">
+                          <div>
+                            <label className="block text-sm text-slate-300 mb-1">n_neighbors (comma-separated)</label>
+                            <input
+                              type="text"
+                              value={trainingConfig.grid_knn.n_neighbors.join(',')}
+                              onChange={(e) => {
+                                const vals = e.target.value.split(',').map(v => parseInt(v.trim())).filter(v => Number.isFinite(v) && v > 0);
+                                setTrainingConfig({ ...trainingConfig, grid_knn: { ...trainingConfig.grid_knn, n_neighbors: vals.length ? vals : trainingConfig.grid_knn.n_neighbors } });
+                              }}
+                              className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-sm text-slate-300 mb-1">weights (comma-separated)</label>
+                            <input
+                              type="text"
+                              value={trainingConfig.grid_knn.weights.join(',')}
+                              onChange={(e) => {
+                                const vals = e.target.value.split(',').map(v => v.trim()).filter(Boolean);
+                                setTrainingConfig({ ...trainingConfig, grid_knn: { ...trainingConfig.grid_knn, weights: vals.length ? vals : trainingConfig.grid_knn.weights } });
+                              }}
+                              className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white"
+                            />
+                          </div>
+                        </div>
+                      )}
+
+                      {trainingConfig.model_type === 'svc' && (
+                        <div className="grid grid-cols-2 gap-4">
+                          <div>
+                            <label className="block text-sm text-slate-300 mb-1">C (comma-separated)</label>
+                            <input
+                              type="text"
+                              value={trainingConfig.grid_svc.C.join(',')}
+                              onChange={(e) => {
+                                const vals = e.target.value.split(',').map(v => parseFloat(v.trim())).filter(v => Number.isFinite(v) && v > 0);
+                                setTrainingConfig({ ...trainingConfig, grid_svc: { ...trainingConfig.grid_svc, C: vals.length ? vals : trainingConfig.grid_svc.C } });
+                              }}
+                              className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-sm text-slate-300 mb-1">kernel (comma-separated)</label>
+                            <input
+                              type="text"
+                              value={trainingConfig.grid_svc.kernel.join(',')}
+                              onChange={(e) => {
+                                const vals = e.target.value.split(',').map(v => v.trim()).filter(Boolean);
+                                setTrainingConfig({ ...trainingConfig, grid_svc: { ...trainingConfig.grid_svc, kernel: vals.length ? vals : trainingConfig.grid_svc.kernel } });
+                              }}
+                              className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white"
+                            />
+                          </div>
+                        </div>
+                      )}
+
+                      {trainingConfig.model_type === 'adaboost' && (
+                        <div className="grid grid-cols-2 gap-4">
+                          <div>
+                            <label className="block text-sm text-slate-300 mb-1">n_estimators (comma-separated)</label>
+                            <input
+                              type="text"
+                              value={trainingConfig.grid_adaboost.n_estimators.join(',')}
+                              onChange={(e) => {
+                                const vals = e.target.value.split(',').map(v => parseInt(v.trim())).filter(v => Number.isFinite(v) && v > 0);
+                                setTrainingConfig({ ...trainingConfig, grid_adaboost: { ...trainingConfig.grid_adaboost, n_estimators: vals.length ? vals : trainingConfig.grid_adaboost.n_estimators } });
+                              }}
+                              className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-sm text-slate-300 mb-1">learning_rate (comma-separated)</label>
+                            <input
+                              type="text"
+                              value={trainingConfig.grid_adaboost.learning_rate.join(',')}
+                              onChange={(e) => {
+                                const vals = e.target.value.split(',').map(v => parseFloat(v.trim())).filter(v => Number.isFinite(v) && v > 0);
+                                setTrainingConfig({ ...trainingConfig, grid_adaboost: { ...trainingConfig.grid_adaboost, learning_rate: vals.length ? vals : trainingConfig.grid_adaboost.learning_rate } });
+                              }}
+                              className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white"
+                            />
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
-              )}
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm text-slate-300 mb-1">Validation Split</label>
-                  <input
-                    type="number"
-                    step="0.05"
-                    min="0"
-                    max="0.9"
-                    value={trainingConfig.validation_split}
-                    onChange={(e) => setTrainingConfig({ ...trainingConfig, validation_split: Math.max(0, Math.min(0.9, parseFloat(e.target.value) || 0)) })}
-                    className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm text-slate-300 mb-1">Test Split</label>
-                  <input
-                    type="number"
-                    step="0.05"
-                    min="0"
-                    max="0.9"
-                    value={trainingConfig.test_split}
-                    onChange={(e) => setTrainingConfig({ ...trainingConfig, test_split: Math.max(0, Math.min(0.9, parseFloat(e.target.value) || 0)) })}
-                    className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white"
-                  />
-                </div>
               </div>
-              <p className="text-xs text-slate-500">
-                Train split: {Math.max(0, 1 - trainingConfig.validation_split - trainingConfig.test_split).toFixed(2)}
-                {trainingConfig.validation_split + trainingConfig.test_split >= 1 ? ' (invalid: must be < 1)' : ''}
-              </p>
-              <div className="flex items-center justify-between p-3 bg-slate-800/50 rounded-lg border border-slate-700">
-                <div>
-                  <label className="block text-sm text-slate-300 font-medium">Bayesian Optimization</label>
-                  <p className="text-xs text-slate-500 mt-1">Auto-tune hyperparameters before training</p>
-                </div>
-                <label className="relative inline-flex items-center cursor-pointer">
-                  <input 
-                    type="checkbox" 
-                    checked={trainingConfig.use_bayesian_optimization}
-                    onChange={(e) => setTrainingConfig({ ...trainingConfig, use_bayesian_optimization: e.target.checked })}
-                    className="sr-only peer"
-                  />
-                  <div className="w-11 h-6 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
-                </label>
-              </div>
-              {trainingConfig.use_bayesian_optimization && (
-                <div className="space-y-4 p-4 bg-slate-800/30 rounded-lg border border-slate-700">
-                  <div className="flex items-center justify-between">
-                    <h4 className="text-sm font-medium text-indigo-400">Bayesian Optimization Settings</h4>
-                    <button
-                      type="button"
-                      onClick={() => setShowAdvancedBayesian(!showAdvancedBayesian)}
-                      className="text-xs text-slate-400 hover:text-white"
-                    >
-                      {showAdvancedBayesian ? 'Hide Advanced' : 'Show Advanced'}
-                    </button>
-                  </div>
+            )}
+
+            {trainingWizardStep === 3 && (
+              <div className="space-y-4">
+                <div className="p-4 bg-slate-800/30 rounded-lg border border-slate-700">
+                  <h4 className="text-sm font-medium text-indigo-400 mb-3">Review Configuration</h4>
                   
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-sm text-slate-300 mb-1">Number of Trials</label>
-                      <input 
-                        type="number" 
-                        value={trainingConfig.bayesian_trials} 
-                        onChange={(e) => setTrainingConfig({ ...trainingConfig, bayesian_trials: parseInt(e.target.value) || 20 })} 
-                        className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white" 
-                        min="5"
-                        max="100"
-                      />
+                  {/* Preprocessing Summary */}
+                  <div className="mb-4 p-3 bg-slate-900/50 rounded-lg border border-slate-700">
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="text-xs text-slate-500 uppercase tracking-wide">Preprocessing</div>
+                      <button type="button" onClick={() => setTrainingWizardStep(0)} className="text-xs text-indigo-400 hover:text-indigo-300">Edit</button>
                     </div>
-                    <div>
-                      <label className="block text-sm text-slate-300 mb-1">Epochs per Trial</label>
-                      <input 
-                        type="number" 
-                        value={trainingConfig.bayesian_epochs_per_trial} 
-                        onChange={(e) => setTrainingConfig({ ...trainingConfig, bayesian_epochs_per_trial: parseInt(e.target.value) || 3 })} 
-                        className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white" 
-                        min="1"
-                        max="10"
-                      />
+                    <div className="text-sm text-slate-200 space-y-1">
+                      <div>Pipeline: <span className="text-indigo-300">{trainingConfig.preprocessing_pipeline_id ? `ID ${trainingConfig.preprocessing_pipeline_id}` : 'Inline'}</span></div>
+                      <div>Data Type: <span className="text-slate-300">{trainingConfig.data_type}</span> · Window: <span className="text-slate-300">{trainingConfig.window_size}</span> · Output: <span className="text-slate-300">{trainingConfig.output_shape}</span></div>
+                      <div className="text-xs text-slate-400 mt-2">
+                        Enabled blocks: {trainingConfig.preprocessing_blocks.filter(b => b.enabled).map(b => b.type).join(' → ')}
+                      </div>
                     </div>
                   </div>
 
-                  {showAdvancedBayesian && (
-                    <>
-                      <div className="border-t border-slate-700 pt-4">
-                        <h5 className="text-xs font-medium text-slate-400 mb-3">LEARNING RATE SEARCH SPACE</h5>
-                        <div className="grid grid-cols-3 gap-3">
-                          <div>
-                            <label className="block text-xs text-slate-400 mb-1">Min LR</label>
-                            <input 
-                              type="number" 
-                              step="0.00001"
-                              value={trainingConfig.bayesian_lr_min} 
-                              onChange={(e) => setTrainingConfig({ ...trainingConfig, bayesian_lr_min: parseFloat(e.target.value) || 0.00001 })} 
-                              className="w-full px-2 py-1.5 bg-slate-800 border border-slate-600 rounded text-white text-sm" 
-                            />
-                          </div>
-                          <div>
-                            <label className="block text-xs text-slate-400 mb-1">Max LR</label>
-                            <input 
-                              type="number" 
-                              step="0.001"
-                              value={trainingConfig.bayesian_lr_max} 
-                              onChange={(e) => setTrainingConfig({ ...trainingConfig, bayesian_lr_max: parseFloat(e.target.value) || 0.01 })} 
-                              className="w-full px-2 py-1.5 bg-slate-800 border border-slate-600 rounded text-white text-sm" 
-                            />
-                          </div>
-                          <div>
-                            <label className="block text-xs text-slate-400 mb-1">Scale</label>
-                            <select 
-                              value={trainingConfig.bayesian_lr_scale} 
-                              onChange={(e) => setTrainingConfig({ ...trainingConfig, bayesian_lr_scale: e.target.value as 'log' | 'linear' })} 
-                              className="w-full px-2 py-1.5 bg-slate-800 border border-slate-600 rounded text-white text-sm"
-                            >
-                              <option value="log">Logarithmic</option>
-                              <option value="linear">Linear</option>
-                            </select>
-                          </div>
-                        </div>
+                  {/* Model Summary */}
+                  <div className="mb-4 p-3 bg-slate-900/50 rounded-lg border border-slate-700">
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="text-xs text-slate-500 uppercase tracking-wide">Model</div>
+                      <button type="button" onClick={() => setTrainingWizardStep(1)} className="text-xs text-indigo-400 hover:text-indigo-300">Edit</button>
+                    </div>
+                    <div className="text-sm text-slate-200 space-y-1">
+                      <div>Type: <span className="text-indigo-300 font-medium">{trainingConfig.model_type}</span>
+                        {!['knn', 'svc', 'adaboost'].includes(trainingConfig.model_type) && <span className="text-slate-400"> ({trainingConfig.model_architecture})</span>}
                       </div>
+                      <div>Epochs: <span className="text-slate-300">{trainingConfig.epochs}</span> · Batch: <span className="text-slate-300">{trainingConfig.batch_size}</span> · LR: <span className="text-slate-300">{trainingConfig.learning_rate}</span></div>
+                      {trainingConfig.model_type === 'knn' && (
+                        <div className="text-xs text-slate-400">KNN: n_neighbors={trainingConfig.knn_params.n_neighbors}, weights={trainingConfig.knn_params.weights}, metric={trainingConfig.knn_params.metric}</div>
+                      )}
+                      {trainingConfig.model_type === 'svc' && (
+                        <div className="text-xs text-slate-400">SVC: C={trainingConfig.svc_params.C}, kernel={trainingConfig.svc_params.kernel}, gamma={trainingConfig.svc_params.gamma}</div>
+                      )}
+                      {trainingConfig.model_type === 'adaboost' && (
+                        <div className="text-xs text-slate-400">AdaBoost: n_estimators={trainingConfig.adaboost_params.n_estimators}, lr={trainingConfig.adaboost_params.learning_rate}</div>
+                      )}
+                    </div>
+                  </div>
 
-                      <div className="border-t border-slate-700 pt-4">
-                        <h5 className="text-xs font-medium text-slate-400 mb-3">WEIGHT DECAY SEARCH SPACE</h5>
-                        <div className="grid grid-cols-2 gap-3">
-                          <div>
-                            <label className="block text-xs text-slate-400 mb-1">Min Weight Decay</label>
-                            <input 
-                              type="number" 
-                              step="0.001"
-                              value={trainingConfig.bayesian_weight_decay_min} 
-                              onChange={(e) => setTrainingConfig({ ...trainingConfig, bayesian_weight_decay_min: parseFloat(e.target.value) || 0 })} 
-                              className="w-full px-2 py-1.5 bg-slate-800 border border-slate-600 rounded text-white text-sm" 
-                            />
-                          </div>
-                          <div>
-                            <label className="block text-xs text-slate-400 mb-1">Max Weight Decay</label>
-                            <input 
-                              type="number" 
-                              step="0.001"
-                              value={trainingConfig.bayesian_weight_decay_max} 
-                              onChange={(e) => setTrainingConfig({ ...trainingConfig, bayesian_weight_decay_max: parseFloat(e.target.value) || 0.01 })} 
-                              className="w-full px-2 py-1.5 bg-slate-800 border border-slate-600 rounded text-white text-sm" 
-                            />
-                          </div>
+                  {/* Optimization Summary */}
+                  <div className="mb-4 p-3 bg-slate-900/50 rounded-lg border border-slate-700">
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="text-xs text-slate-500 uppercase tracking-wide">Optimization</div>
+                      <button type="button" onClick={() => setTrainingWizardStep(2)} className="text-xs text-indigo-400 hover:text-indigo-300">Edit</button>
+                    </div>
+                    <div className="text-sm text-slate-200 space-y-1">
+                      <div>Method: <span className={`font-medium ${trainingConfig.optimization_method === 'none' ? 'text-slate-400' : 'text-indigo-300'}`}>{trainingConfig.optimization_method === 'none' ? 'None (fixed params)' : trainingConfig.optimization_method === 'bayesian' ? 'Bayesian Optimization' : 'Grid Search'}</span></div>
+                      {trainingConfig.optimization_method === 'bayesian' && trainingConfig.use_bayesian_optimization && (
+                        <div className="text-xs text-slate-400">
+                          Trials: {trainingConfig.bayesian_trials} · Epochs/trial: {trainingConfig.bayesian_epochs_per_trial} · LR: [{trainingConfig.bayesian_lr_min}, {trainingConfig.bayesian_lr_max}]
                         </div>
-                      </div>
+                      )}
+                      {trainingConfig.optimization_method === 'grid' && trainingConfig.model_type === 'knn' && (
+                        <div className="text-xs text-slate-400">Grid: n_neighbors=[{trainingConfig.grid_knn.n_neighbors.join(',')}], weights=[{trainingConfig.grid_knn.weights.join(',')}]</div>
+                      )}
+                      {trainingConfig.optimization_method === 'grid' && trainingConfig.model_type === 'svc' && (
+                        <div className="text-xs text-slate-400">Grid: C=[{trainingConfig.grid_svc.C.join(',')}], kernel=[{trainingConfig.grid_svc.kernel.join(',')}]</div>
+                      )}
+                      {trainingConfig.optimization_method === 'grid' && trainingConfig.model_type === 'adaboost' && (
+                        <div className="text-xs text-slate-400">Grid: n_estimators=[{trainingConfig.grid_adaboost.n_estimators.join(',')}], lr=[{trainingConfig.grid_adaboost.learning_rate.join(',')}]</div>
+                      )}
+                    </div>
+                  </div>
 
-                      <div className="border-t border-slate-700 pt-4">
-                        <h5 className="text-xs font-medium text-slate-400 mb-3">OPTIMIZERS TO TRY</h5>
-                        <div className="flex flex-wrap gap-2">
-                          {['adam', 'adamw', 'sgd'].map(opt => (
-                            <label key={opt} className="flex items-center gap-2 px-3 py-1.5 bg-slate-800 rounded border border-slate-600 cursor-pointer">
-                              <input 
-                                type="checkbox" 
-                                checked={trainingConfig.bayesian_optimizers.includes(opt)}
-                                onChange={(e) => {
-                                  const newOpts = e.target.checked 
-                                    ? [...trainingConfig.bayesian_optimizers, opt]
-                                    : trainingConfig.bayesian_optimizers.filter(o => o !== opt);
-                                  setTrainingConfig({ ...trainingConfig, bayesian_optimizers: newOpts.length > 0 ? newOpts : ['adam'] });
-                                }}
-                                className="w-3 h-3"
-                              />
-                              <span className="text-sm text-white uppercase">{opt}</span>
-                            </label>
-                          ))}
-                        </div>
+                  {/* Splits Summary */}
+                  <div className="text-sm text-slate-300 mb-4">
+                    <div className="text-xs text-slate-500 uppercase tracking-wide mb-2">Data Splits</div>
+                    <div className="flex gap-4">
+                      <div className="flex-1 p-2 bg-green-500/10 border border-green-500/30 rounded text-center">
+                        <div className="text-lg font-medium text-green-400">{Math.max(0, 1 - trainingConfig.validation_split - trainingConfig.test_split).toFixed(0)}%</div>
+                        <div className="text-xs text-slate-400">Train</div>
                       </div>
+                      <div className="flex-1 p-2 bg-yellow-500/10 border border-yellow-500/30 rounded text-center">
+                        <div className="text-lg font-medium text-yellow-400">{(trainingConfig.validation_split * 100).toFixed(0)}%</div>
+                        <div className="text-xs text-slate-400">Validation</div>
+                      </div>
+                      <div className="flex-1 p-2 bg-blue-500/10 border border-blue-500/30 rounded text-center">
+                        <div className="text-lg font-medium text-blue-400">{(trainingConfig.test_split * 100).toFixed(0)}%</div>
+                        <div className="text-xs text-slate-400">Test</div>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4 mt-4">
+                    <div>
+                      <label className="block text-sm text-slate-300 mb-1">Validation Split</label>
+                      <input
+                        type="number"
+                        step="0.05"
+                        min="0"
+                        max="0.9"
+                        value={trainingConfig.validation_split}
+                        onChange={(e) => setTrainingConfig({ ...trainingConfig, validation_split: Math.max(0, Math.min(0.9, parseFloat(e.target.value) || 0)) })}
+                        className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm text-slate-300 mb-1">Test Split</label>
+                      <input
+                        type="number"
+                        step="0.05"
+                        min="0"
+                        max="0.9"
+                        value={trainingConfig.test_split}
+                        onChange={(e) => setTrainingConfig({ ...trainingConfig, test_split: Math.max(0, Math.min(0.9, parseFloat(e.target.value) || 0)) })}
+                        className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white"
+                      />
+                    </div>
+                  </div>
+                  <p className="text-xs text-slate-500 mt-2">
+                    Train split: {Math.max(0, 1 - trainingConfig.validation_split - trainingConfig.test_split).toFixed(2)}
+                    {trainingConfig.validation_split + trainingConfig.test_split >= 1 ? ' (invalid: must be < 1)' : ''}
+                  </p>
+                  <div className="mt-4">
+                    <label className="block text-sm text-slate-300 mb-1">Test Dataset (optional)</label>
+                    <select
+                      value={trainingConfig.test_dataset_id || ''}
+                      onChange={(e) => setTrainingConfig({ ...trainingConfig, test_dataset_id: e.target.value ? parseInt(e.target.value) : null })}
+                      className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white"
+                    >
+                      <option value="">None (use validation split)</option>
+                      {datasets.map(dataset => (
+                        <option key={dataset.id} value={dataset.id}>
+                          {dataset.name} ({dataset.file_count} files)
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="mt-4">
+                    <label className="block text-sm text-slate-300 mb-1">Model Name (optional)</label>
+                    <input
+                      type="text"
+                      value={trainingConfig.model_name}
+                      onChange={(e) => setTrainingConfig({ ...trainingConfig, model_name: e.target.value })}
+                      placeholder="Auto-generated if empty"
+                      className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white placeholder-slate-500"
+                    />
+                  </div>
 
-                      <div className="border-t border-slate-700 pt-4">
-                        <h5 className="text-xs font-medium text-slate-400 mb-3">BATCH SIZES TO TRY</h5>
-                        <div className="flex flex-wrap gap-2">
-                          {[8, 16, 32, 64, 128, 256].map(bs => (
-                            <label key={bs} className="flex items-center gap-2 px-3 py-1.5 bg-slate-800 rounded border border-slate-600 cursor-pointer">
-                              <input 
-                                type="checkbox" 
-                                checked={trainingConfig.bayesian_batch_sizes.includes(bs)}
-                                onChange={(e) => {
-                                  const newBs = e.target.checked 
-                                    ? [...trainingConfig.bayesian_batch_sizes, bs].sort((a, b) => a - b)
-                                    : trainingConfig.bayesian_batch_sizes.filter(b => b !== bs);
-                                  setTrainingConfig({ ...trainingConfig, bayesian_batch_sizes: newBs.length > 0 ? newBs : [32] });
-                                }}
-                                className="w-3 h-3"
-                              />
-                              <span className="text-sm text-white">{bs}</span>
-                            </label>
-                          ))}
-                        </div>
-                      </div>
-
-                      <div className="border-t border-slate-700 pt-4">
-                        <label className="block text-xs text-slate-400 mb-2">Exploration Rate: {(trainingConfig.bayesian_exploration_rate * 100).toFixed(0)}%</label>
-                        <input 
-                          type="range" 
-                          min="0" 
-                          max="100" 
-                          value={trainingConfig.bayesian_exploration_rate * 100}
-                          onChange={(e) => setTrainingConfig({ ...trainingConfig, bayesian_exploration_rate: parseInt(e.target.value) / 100 })}
-                          className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer"
-                        />
-                        <p className="text-xs text-slate-500 mt-1">Higher = more random exploration, Lower = exploit best found params</p>
-                      </div>
-                    </>
-                  )}
                 </div>
-              )}
-              <div>
-                <label className="block text-sm text-slate-300 mb-1">Test Dataset (optional)</label>
-                <select 
-                  value={trainingConfig.test_dataset_id || ''} 
-                  onChange={(e) => setTrainingConfig({ ...trainingConfig, test_dataset_id: e.target.value ? parseInt(e.target.value) : null })} 
-                  className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white"
-                >
-                  <option value="">None (use validation split)</option>
-                  {datasets.map(dataset => (
-                    <option key={dataset.id} value={dataset.id}>
-                      {dataset.name} ({dataset.file_count} files)
-                    </option>
-                  ))}
-                </select>
-                <p className="text-xs text-slate-500 mt-1">
-                  Separate dataset for final evaluation (can be same as training dataset)
-                </p>
               </div>
-              <div><label className="block text-sm text-slate-300 mb-1">Model Name (optional)</label><input type="text" value={trainingConfig.model_name} onChange={(e) => setTrainingConfig({ ...trainingConfig, model_name: e.target.value })} placeholder="Auto-generated if empty" className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white placeholder-slate-500" /></div>
-            </div>
+            )}
+
             <div className="flex gap-3 mt-6">
-              <button onClick={handleStartTraining} disabled={operations.startingTraining} className="flex-1 px-4 py-2 bg-green-600 hover:bg-green-700 disabled:bg-slate-600 text-white rounded-lg font-medium flex items-center justify-center gap-2">
-                {operations.startingTraining ? (
-                  <><Loader2 className="w-4 h-4 animate-spin" /> Starting Training...</>
-                ) : (
-                  <><Play className="w-4 h-4" /> Start Training</>
-                )}
+              <button
+                type="button"
+                onClick={() => setTrainingWizardStep((Math.max(0, trainingWizardStep - 1) as 0 | 1 | 2 | 3))}
+                disabled={trainingWizardStep <= 0 || operations.startingTraining}
+                className="flex-1 px-4 py-2 bg-slate-700 hover:bg-slate-600 disabled:bg-slate-800 disabled:text-slate-500 text-white rounded-lg font-medium"
+              >
+                Back
               </button>
-              <button onClick={() => setShowTrainingConfig(false)} className="flex-1 px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg font-medium">Cancel</button>
+
+              {trainingWizardStep < 3 ? (
+                <button
+                  type="button"
+                  onClick={() => setTrainingWizardStep(((trainingWizardStep + 1) as 0 | 1 | 2 | 3))}
+                  disabled={operations.startingTraining}
+                  className="flex-1 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-600 text-white rounded-lg font-medium"
+                >
+                  Next
+                </button>
+              ) : (
+                <button onClick={handleStartTraining} disabled={operations.startingTraining} className="flex-1 px-4 py-2 bg-green-600 hover:bg-green-700 disabled:bg-slate-600 text-white rounded-lg font-medium flex items-center justify-center gap-2">
+                  {operations.startingTraining ? (
+                    <><Loader2 className="w-4 h-4 animate-spin" /> Starting Training...</>
+                  ) : (
+                    <><Play className="w-4 h-4" /> Start Training</>
+                  )}
+                </button>
+              )}
+
+              <button onClick={() => setShowTrainingConfig(false)} disabled={operations.startingTraining} className="flex-1 px-4 py-2 bg-slate-700 hover:bg-slate-600 disabled:bg-slate-800 disabled:text-slate-500 text-white rounded-lg font-medium">Cancel</button>
             </div>
           </div>
         </div>
