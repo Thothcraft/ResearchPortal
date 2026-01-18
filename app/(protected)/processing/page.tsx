@@ -48,12 +48,87 @@ type Pipeline = {
   created_at: string;
 };
 
+// Block categories for organization
+const BLOCK_CATEGORIES = {
+  loaders: { name: 'Data Loaders', icon: Database, color: 'cyan' },
+  extractors: { name: 'Feature Extractors', icon: Activity, color: 'green' },
+  filters: { name: 'Filters', icon: Filter, color: 'purple' },
+  transforms: { name: 'Transforms', icon: Zap, color: 'yellow' },
+  combiners: { name: 'Combiners', icon: Shuffle, color: 'pink' },
+};
+
 const BLOCK_TYPES = {
-  // IMU Preprocessing
+  // Data Loaders (starting blocks)
+  csi_loader: {
+    name: 'CSI Loader',
+    icon: Wifi,
+    color: 'cyan',
+    category: 'loaders',
+    dataTypes: ['csi'],
+    description: 'Load CSI data from file',
+    config: { file_type: 'csv' },
+    transformShape: (input: number[]) => [1, 256, 52],
+    isSource: true,
+  },
+  imu_loader: {
+    name: 'IMU Loader',
+    icon: Activity,
+    color: 'cyan',
+    category: 'loaders',
+    dataTypes: ['imu'],
+    description: 'Load IMU sensor data from file',
+    config: { file_type: 'json' },
+    transformShape: (input: number[]) => [1, 128, 6],
+    isSource: true,
+  },
+  mfcw_loader: {
+    name: 'MFCW Loader',
+    icon: Radio,
+    color: 'cyan',
+    category: 'loaders',
+    dataTypes: ['mfcw'],
+    description: 'Load MFCW radar data',
+    config: { file_type: 'bin' },
+    transformShape: (input: number[]) => [1, 512, 8],
+    isSource: true,
+  },
+  // CSI-specific extractors
+  amplitude_extractor: {
+    name: 'Amplitude Extractor',
+    icon: TrendingUp,
+    color: 'green',
+    category: 'extractors',
+    dataTypes: ['csi'],
+    description: 'Extract amplitude from complex CSI',
+    config: {},
+    transformShape: (input: number[]) => input,
+  },
+  phase_extractor: {
+    name: 'Phase Extractor',
+    icon: Activity,
+    color: 'green',
+    category: 'extractors',
+    dataTypes: ['csi'],
+    description: 'Extract phase from complex CSI',
+    config: { unwrap: true },
+    transformShape: (input: number[]) => input,
+  },
+  subcarrier_filter: {
+    name: 'Subcarrier Filter',
+    icon: Filter,
+    color: 'purple',
+    category: 'filters',
+    dataTypes: ['csi'],
+    description: 'Select specific subcarrier range',
+    config: { start_idx: 5, end_idx: 32 },
+    transformShape: (input: number[]) => [input[0], input[1], 27],
+  },
+  // General preprocessing
   normalize: {
     name: 'Normalize',
     icon: TrendingUp,
     color: 'blue',
+    category: 'transforms',
     dataTypes: ['imu', 'csi', 'mfcw'],
     description: 'Normalize data to [0, 1] or [-1, 1]',
     config: { method: 'minmax', range: [0, 1] },
@@ -63,6 +138,7 @@ const BLOCK_TYPES = {
     name: 'Low-Pass Filter',
     icon: Filter,
     color: 'green',
+    category: 'filters',
     dataTypes: ['imu', 'csi'],
     description: 'Remove high-frequency noise',
     config: { cutoff_freq: 20, order: 4 },
@@ -72,24 +148,47 @@ const BLOCK_TYPES = {
     name: 'High-Pass Filter',
     icon: Filter,
     color: 'purple',
+    category: 'filters',
     dataTypes: ['imu', 'csi'],
     description: 'Remove low-frequency drift',
     config: { cutoff_freq: 0.5, order: 4 },
     transformShape: (input: number[]) => input,
   },
+  moving_average: {
+    name: 'Moving Average',
+    icon: TrendingUp,
+    color: 'teal',
+    category: 'filters',
+    dataTypes: ['imu', 'csi', 'mfcw'],
+    description: 'Smooth data with moving average',
+    config: { window_size: 5 },
+    transformShape: (input: number[]) => input,
+  },
   window_segmentation: {
-    name: 'Window Segmentation',
+    name: 'Windowing',
     icon: Maximize2,
     color: 'yellow',
+    category: 'transforms',
     dataTypes: ['imu', 'csi', 'mfcw'],
     description: 'Split into fixed-size windows',
     config: { window_size: 128, overlap: 0.5 },
     transformShape: (input: number[]) => [input[0] * 2, 128, input[2] || 1],
   },
+  flatten: {
+    name: 'Flatten',
+    icon: Minimize2,
+    color: 'orange',
+    category: 'transforms',
+    dataTypes: ['imu', 'csi', 'mfcw'],
+    description: 'Flatten to 1D feature vector',
+    config: {},
+    transformShape: (input: number[]) => [input[0], (input[1] || 1) * (input[2] || 1)],
+  },
   fft_transform: {
     name: 'FFT Transform',
     icon: Zap,
     color: 'red',
+    category: 'transforms',
     dataTypes: ['imu', 'csi', 'mfcw'],
     description: 'Convert to frequency domain',
     config: { n_fft: 256 },
@@ -99,15 +198,29 @@ const BLOCK_TYPES = {
     name: 'Feature Extraction',
     icon: BarChart3,
     color: 'indigo',
+    category: 'extractors',
     dataTypes: ['imu', 'csi', 'mfcw'],
     description: 'Extract statistical features',
     config: { features: ['mean', 'std', 'min', 'max', 'rms'] },
     transformShape: (input: number[]) => [input[0], 5 * (input[2] || 1)],
   },
+  // Combiners (multi-input)
+  feature_concat: {
+    name: 'Feature Concat',
+    icon: Shuffle,
+    color: 'pink',
+    category: 'combiners',
+    dataTypes: ['imu', 'csi', 'mfcw'],
+    description: 'Concatenate multiple feature streams',
+    config: { axis: -1 },
+    transformShape: (input: number[]) => input,
+    acceptsMultipleInputs: true,
+  },
   data_augmentation: {
     name: 'Data Augmentation',
     icon: Shuffle,
     color: 'pink',
+    category: 'transforms',
     dataTypes: ['imu', 'csi', 'mfcw'],
     description: 'Add noise, scale, rotate',
     config: { noise_level: 0.01, scale_range: [0.9, 1.1] },
@@ -117,6 +230,7 @@ const BLOCK_TYPES = {
     name: 'Downsample',
     icon: Minimize2,
     color: 'orange',
+    category: 'transforms',
     dataTypes: ['imu', 'csi', 'mfcw'],
     description: 'Reduce sampling rate',
     config: { factor: 2 },
@@ -126,6 +240,7 @@ const BLOCK_TYPES = {
     name: 'Standardize',
     icon: TrendingUp,
     color: 'teal',
+    category: 'transforms',
     dataTypes: ['imu', 'csi', 'mfcw'],
     description: 'Zero mean, unit variance',
     config: { method: 'zscore' },
@@ -144,6 +259,9 @@ export default function ProcessingPage() {
   const [showCreatePipeline, setShowCreatePipeline] = useState(false);
   const [newPipelineName, setNewPipelineName] = useState('');
   const [newPipelineDesc, setNewPipelineDesc] = useState('');
+  const [isCreatingNew, setIsCreatingNew] = useState(false);
+  const [canvasMode, setCanvasMode] = useState<'edit' | 'create'>('edit');
+  const [blockMenuCategory, setBlockMenuCategory] = useState<string | null>(null);
   const [selectedBlock, setSelectedBlock] = useState<ProcessingBlock | null>(null);
   const [showBlockConfig, setShowBlockConfig] = useState(false);
   const [draggedBlock, setDraggedBlock] = useState<string | null>(null);
@@ -162,6 +280,54 @@ export default function ProcessingPage() {
     } catch (err) {
       console.error('Failed to fetch pipelines:', err);
     }
+  };
+
+  const handleStartNewPipeline = () => {
+    // Clear current state and enter canvas creation mode
+    setBlocks([]);
+    setConnections([]);
+    setSelectedPipeline(null);
+    setIsCreatingNew(true);
+    setCanvasMode('create');
+    setNewPipelineName('');
+    setNewPipelineDesc('');
+  };
+
+  const handleSaveNewPipeline = async () => {
+    if (!newPipelineName.trim()) {
+      setError('Please enter a pipeline name');
+      return;
+    }
+    try {
+      const res = await post('/processing/pipelines', {
+        name: newPipelineName,
+        description: newPipelineDesc,
+        blocks,
+        connections,
+      });
+      if (res?.success || res?.pipeline) {
+        setIsCreatingNew(false);
+        setCanvasMode('edit');
+        setNewPipelineName('');
+        setNewPipelineDesc('');
+        await fetchPipelines();
+        // Select the newly created pipeline
+        if (res.pipeline) {
+          setSelectedPipeline(res.pipeline);
+        }
+      }
+    } catch (err) {
+      setError('Failed to create pipeline');
+    }
+  };
+
+  const handleCancelNewPipeline = () => {
+    setIsCreatingNew(false);
+    setCanvasMode('edit');
+    setBlocks([]);
+    setConnections([]);
+    setNewPipelineName('');
+    setNewPipelineDesc('');
   };
 
   const handleCreatePipeline = async () => {
@@ -380,7 +546,7 @@ export default function ProcessingPage() {
           <p className="text-slate-400">Build preprocessing and postprocessing workflows</p>
         </div>
         <button
-          onClick={() => setShowCreatePipeline(true)}
+          onClick={handleStartNewPipeline}
           className="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg transition-colors"
         >
           <Plus className="w-4 h-4" />
@@ -432,14 +598,36 @@ export default function ProcessingPage() {
 
         {/* Pipeline Canvas */}
         <div className="lg:col-span-3">
-          {selectedPipeline ? (
+          {(selectedPipeline || isCreatingNew) ? (
             <div className="bg-slate-800/50 rounded-xl border border-slate-700 p-6">
+              {/* Header - different for create vs edit mode */}
               <div className="flex items-center justify-between mb-6">
-                <div>
-                  <h2 className="text-xl font-semibold text-white">{selectedPipeline.name}</h2>
-                  <p className="text-slate-400 text-sm">{selectedPipeline.description}</p>
+                <div className="flex-1">
+                  {isCreatingNew ? (
+                    <div className="space-y-2">
+                      <input
+                        type="text"
+                        value={newPipelineName}
+                        onChange={(e) => setNewPipelineName(e.target.value)}
+                        placeholder="Pipeline Name"
+                        className="text-xl font-semibold bg-transparent border-b border-slate-600 text-white placeholder-slate-500 focus:border-indigo-500 focus:outline-none w-full pb-1"
+                      />
+                      <input
+                        type="text"
+                        value={newPipelineDesc}
+                        onChange={(e) => setNewPipelineDesc(e.target.value)}
+                        placeholder="Description (optional)"
+                        className="text-sm bg-transparent border-b border-slate-700 text-slate-400 placeholder-slate-600 focus:border-slate-500 focus:outline-none w-full pb-1"
+                      />
+                    </div>
+                  ) : (
+                    <div>
+                      <h2 className="text-xl font-semibold text-white">{selectedPipeline?.name}</h2>
+                      <p className="text-slate-400 text-sm">{selectedPipeline?.description}</p>
+                    </div>
+                  )}
                 </div>
-                <div className="flex gap-2">
+                <div className="flex gap-2 ml-4">
                   <button
                     onClick={() => setShowBlockMenu(true)}
                     className="flex items-center gap-1 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm"
@@ -447,13 +635,33 @@ export default function ProcessingPage() {
                     <Plus className="w-4 h-4" />
                     Add Block
                   </button>
-                  <button
-                    onClick={handleSavePipeline}
-                    className="flex items-center gap-1 px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm"
-                  >
-                    <Save className="w-4 h-4" />
-                    Save
-                  </button>
+                  {isCreatingNew ? (
+                    <>
+                      <button
+                        onClick={handleSaveNewPipeline}
+                        disabled={!newPipelineName.trim()}
+                        className="flex items-center gap-1 px-3 py-1.5 bg-green-600 hover:bg-green-700 disabled:bg-slate-600 text-white rounded-lg text-sm"
+                      >
+                        <Save className="w-4 h-4" />
+                        Save Pipeline
+                      </button>
+                      <button
+                        onClick={handleCancelNewPipeline}
+                        className="flex items-center gap-1 px-3 py-1.5 bg-slate-600 hover:bg-slate-500 text-white rounded-lg text-sm"
+                      >
+                        <X className="w-4 h-4" />
+                        Cancel
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      onClick={handleSavePipeline}
+                      className="flex items-center gap-1 px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm"
+                    >
+                      <Save className="w-4 h-4" />
+                      Save
+                    </button>
+                  )}
                 </div>
               </div>
 
@@ -593,42 +801,87 @@ export default function ProcessingPage() {
         </div>
       </div>
 
-      {/* Add Block Menu Modal */}
+      {/* Add Block Menu Modal - Organized by Category */}
       {showBlockMenu && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
-          <div className="bg-slate-900 rounded-xl p-6 w-full max-w-3xl border border-slate-700 max-h-[80vh] overflow-y-auto">
-            <h3 className="text-xl font-semibold text-white mb-4">Add Processing Block</h3>
-            <div className="grid grid-cols-2 gap-4">
-              {Object.entries(BLOCK_TYPES).map(([key, block]) => {
-                const Icon = block.icon;
-                const colorClass = getBlockColor(key);
-                const isCompatible = block.dataTypes.includes(selectedDataType);
+          <div className="bg-slate-900 rounded-xl p-6 w-full max-w-4xl border border-slate-700 max-h-[85vh] overflow-hidden flex flex-col">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-xl font-semibold text-white">Add Processing Block</h3>
+              <div className="flex items-center gap-2 text-sm text-slate-400">
+                <span>Data type:</span>
+                <span className="px-2 py-1 bg-indigo-600 text-white rounded font-medium">{selectedDataType.toUpperCase()}</span>
+              </div>
+            </div>
+            
+            {/* Category Tabs */}
+            <div className="flex gap-2 mb-4 pb-4 border-b border-slate-700 overflow-x-auto">
+              <button
+                onClick={() => setBlockMenuCategory(null)}
+                className={`px-4 py-2 rounded-lg text-sm font-medium whitespace-nowrap transition-colors ${
+                  blockMenuCategory === null
+                    ? 'bg-indigo-600 text-white'
+                    : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
+                }`}
+              >
+                All Blocks
+              </button>
+              {Object.entries(BLOCK_CATEGORIES).map(([key, cat]) => {
+                const CatIcon = cat.icon;
                 return (
                   <button
                     key={key}
-                    onClick={() => isCompatible && handleAddBlock(key)}
-                    disabled={!isCompatible}
-                    className={`p-4 rounded-xl border-2 text-left transition-all ${
-                      isCompatible
-                        ? `${colorClass} hover:opacity-80`
-                        : 'bg-slate-800/30 border-slate-700 text-slate-500 cursor-not-allowed'
+                    onClick={() => setBlockMenuCategory(key)}
+                    className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium whitespace-nowrap transition-colors ${
+                      blockMenuCategory === key
+                        ? 'bg-indigo-600 text-white'
+                        : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
                     }`}
                   >
-                    <div className="flex items-center gap-2 mb-2">
-                      <Icon className="w-5 h-5" />
-                      <span className="font-medium">{block.name}</span>
-                    </div>
-                    <p className="text-xs opacity-80">{block.description}</p>
-                    {!isCompatible && (
-                      <p className="text-xs text-red-400 mt-2">Not compatible with {selectedDataType.toUpperCase()}</p>
-                    )}
+                    <CatIcon className="w-4 h-4" />
+                    {cat.name}
                   </button>
                 );
               })}
             </div>
-            <div className="flex gap-3 mt-6">
+
+            {/* Blocks Grid */}
+            <div className="flex-1 overflow-y-auto">
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                {Object.entries(BLOCK_TYPES)
+                  .filter(([_, block]) => !blockMenuCategory || (block as any).category === blockMenuCategory)
+                  .map(([key, block]) => {
+                    const Icon = block.icon;
+                    const colorClass = getBlockColor(key);
+                    const isCompatible = block.dataTypes.includes(selectedDataType);
+                    const isSource = (block as any).isSource;
+                    return (
+                      <button
+                        key={key}
+                        onClick={() => isCompatible && handleAddBlock(key)}
+                        disabled={!isCompatible}
+                        className={`p-4 rounded-xl border-2 text-left transition-all ${
+                          isCompatible
+                            ? `${colorClass} hover:opacity-80 hover:scale-[1.02]`
+                            : 'bg-slate-800/30 border-slate-700 text-slate-500 cursor-not-allowed opacity-50'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2 mb-2">
+                          <Icon className="w-5 h-5" />
+                          <span className="font-medium">{block.name}</span>
+                          {isSource && (
+                            <span className="ml-auto text-[10px] px-1.5 py-0.5 bg-cyan-500/20 text-cyan-400 rounded">SOURCE</span>
+                          )}
+                        </div>
+                        <p className="text-xs opacity-80 line-clamp-2">{block.description}</p>
+                      </button>
+                    );
+                  })}
+              </div>
+            </div>
+            
+            <div className="flex gap-3 mt-4 pt-4 border-t border-slate-700">
               <button
-                onClick={() => setShowBlockMenu(false)}
+                onClick={() => { setShowBlockMenu(false); setBlockMenuCategory(null); }}
                 className="flex-1 px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg font-medium"
               >
                 Cancel
