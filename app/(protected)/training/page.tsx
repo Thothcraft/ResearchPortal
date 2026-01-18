@@ -160,27 +160,33 @@ const STATUS_CONFIG: Record<string, { color: string; bg: string; icon: React.Ele
 const MODEL_OPTIONS: ModelOption[] = [
   {
     value: 'dl_cnn_lstm',
-    label: 'DL: CNN-LSTM (IMU)',
-    description: 'Deep learning CNN+LSTM for IMU time-series classification',
-    supported_data: ['imu', 'other']
+    label: 'DL: CNN-LSTM',
+    description: 'Deep learning CNN+LSTM for time-series classification',
+    supported_data: ['imu', 'csi', 'other']
   },
   {
     value: 'knn',
     label: 'ML: KNN',
-    description: 'K-Nearest Neighbors baseline (fast, interpretable)',
-    supported_data: ['imu', 'other']
+    description: 'K-Nearest Neighbors (fast, interpretable)',
+    supported_data: ['imu', 'csi', 'other']
   },
   {
     value: 'svc',
     label: 'ML: SVC',
-    description: 'Support Vector Classifier baseline (strong for smaller datasets)',
-    supported_data: ['imu', 'other']
+    description: 'Support Vector Classifier (strong for smaller datasets)',
+    supported_data: ['imu', 'csi', 'other']
   },
   {
     value: 'adaboost',
     label: 'ML: AdaBoost',
-    description: 'AdaBoost baseline (ensemble of weak learners)',
-    supported_data: ['imu', 'other']
+    description: 'AdaBoost ensemble of weak learners',
+    supported_data: ['imu', 'csi', 'other']
+  },
+  {
+    value: 'xgboost',
+    label: 'ML: XGBoost',
+    description: 'Gradient boosting (high performance, handles missing data)',
+    supported_data: ['imu', 'csi', 'other']
   },
 ];
 
@@ -242,51 +248,85 @@ export default function TrainingPage() {
     epochs: 10, 
     batch_size: 32, 
     learning_rate: 0.001, 
-    validation_split: 0.2, 
     model_name: '', 
     test_dataset_id: null as number | null,
     window_size: 128,
     test_split: 0.2,
     preprocessing_pipeline_id: null as number | null,
     data_type: 'auto' as 'auto' | 'csi' | 'imu',
-    include_phase: true,
-    filter_subcarriers: true,
-    subcarrier_start: 5,
-    subcarrier_end: 32,
     output_shape: 'flattened' as 'flattened' | 'sequence',
     optimization_method: 'none' as 'none' | 'bayesian' | 'grid',
-    grid_knn: {
-      n_neighbors: [3, 5, 7] as number[],
-      weights: ['uniform', 'distance'] as string[],
-    },
-    grid_svc: {
-      C: [0.1, 1.0, 10.0] as number[],
-      kernel: ['rbf', 'linear'] as string[],
-    },
-    grid_adaboost: {
-      n_estimators: [50, 100, 200] as number[],
-      learning_rate: [0.5, 1.0] as number[],
-    },
+    // File-to-pipeline assignments: { fileId: { pipeline_id, split: 'train'|'test'|'split', split_ratio: 0.8 } }
+    file_assignments: {} as Record<number, { pipeline_id: number | null; split: 'train' | 'test' | 'split'; split_ratio: number }>,
+    // KNN parameters
     knn_params: {
       n_neighbors: 5,
-      weights: 'uniform',
-      metric: 'euclidean',
-      algorithm: 'auto',
+      weights: 'uniform' as 'uniform' | 'distance',
+      metric: 'euclidean' as 'euclidean' | 'manhattan' | 'minkowski' | 'chebyshev',
+      algorithm: 'auto' as 'auto' | 'ball_tree' | 'kd_tree' | 'brute',
       p: 2,
+      leaf_size: 30,
     },
+    // SVC parameters
     svc_params: {
       C: 1.0,
-      kernel: 'rbf',
-      gamma: 'scale',
+      kernel: 'rbf' as 'rbf' | 'linear' | 'poly' | 'sigmoid',
+      gamma: 'scale' as 'scale' | 'auto' | number,
       degree: 3,
+      coef0: 0.0,
+      shrinking: true,
       probability: true,
+      tol: 0.001,
       max_iter: -1,
+      class_weight: 'balanced' as 'balanced' | null,
     },
+    // AdaBoost parameters
     adaboost_params: {
       n_estimators: 50,
       learning_rate: 1.0,
-      algorithm: 'SAMME.R',
+      algorithm: 'SAMME.R' as 'SAMME.R' | 'SAMME',
       max_depth: 1,
+      min_samples_split: 2,
+      min_samples_leaf: 1,
+    },
+    // XGBoost parameters
+    xgboost_params: {
+      n_estimators: 100,
+      max_depth: 6,
+      learning_rate: 0.3,
+      subsample: 1.0,
+      colsample_bytree: 1.0,
+      gamma: 0,
+      reg_alpha: 0,
+      reg_lambda: 1,
+      min_child_weight: 1,
+      objective: 'multi:softprob' as 'multi:softprob' | 'multi:softmax' | 'binary:logistic',
+      eval_metric: 'mlogloss' as 'mlogloss' | 'merror' | 'auc',
+      use_label_encoder: false,
+      verbosity: 0,
+    },
+    // Grid search parameters for each model
+    grid_knn: {
+      n_neighbors: [3, 5, 7, 9] as number[],
+      weights: ['uniform', 'distance'] as string[],
+      metric: ['euclidean', 'manhattan'] as string[],
+    },
+    grid_svc: {
+      C: [0.1, 1.0, 10.0] as number[],
+      kernel: ['rbf', 'linear', 'poly'] as string[],
+      gamma: ['scale', 'auto'] as string[],
+    },
+    grid_adaboost: {
+      n_estimators: [50, 100, 200] as number[],
+      learning_rate: [0.5, 1.0, 1.5] as number[],
+      max_depth: [1, 2, 3] as number[],
+    },
+    grid_xgboost: {
+      n_estimators: [50, 100, 200] as number[],
+      max_depth: [3, 6, 9] as number[],
+      learning_rate: [0.01, 0.1, 0.3] as number[],
+      subsample: [0.8, 1.0] as number[],
+      colsample_bytree: [0.8, 1.0] as number[],
     },
     early_stopping: true,
     augment_data: false,
@@ -305,16 +345,6 @@ export default function TrainingPage() {
     bayesian_exploration_rate: 0.3,
     bayesian_search: false,
     bayesian_search_architecture: false,
-    // Explicit preprocessing blocks (for block-level control)
-    preprocessing_blocks: [
-      { type: 'csi_loader', enabled: true, params: {} },
-      { type: 'amplitude_extractor', enabled: true, params: {} },
-      { type: 'phase_extractor', enabled: true, params: {} },
-      { type: 'subcarrier_filter', enabled: true, params: {} },
-      { type: 'moving_average', enabled: false, params: { ma_window: 5 } },
-      { type: 'feature_concat', enabled: true, params: {} },
-      { type: 'data_portion_selector', enabled: true, params: {} },
-    ] as Array<{ type: string; enabled: boolean; params: Record<string, any> }>,
   });
   const [showAdvancedBayesian, setShowAdvancedBayesian] = useState(false);
   const [compareModels, setCompareModels] = useState<number[]>([]);
@@ -461,12 +491,7 @@ export default function TrainingPage() {
       try {
         const res = await post(`/datasets/${selectedDataset.id}/preprocessing/preview`, {
           preprocessing_pipeline_id: trainingConfig.preprocessing_pipeline_id,
-          preprocessing_blocks: trainingConfig.preprocessing_blocks.filter(b => b.enabled),
           data_type: trainingConfig.data_type,
-          include_phase: trainingConfig.include_phase,
-          filter_subcarriers: trainingConfig.filter_subcarriers,
-          subcarrier_start: trainingConfig.subcarrier_start,
-          subcarrier_end: trainingConfig.subcarrier_end,
           output_shape: trainingConfig.output_shape,
           window_size: trainingConfig.window_size,
           max_preview_values: 32,
@@ -492,12 +517,7 @@ export default function TrainingPage() {
     showTrainingConfig,
     selectedDataset?.id,
     trainingConfig.preprocessing_pipeline_id,
-    trainingConfig.preprocessing_blocks,
     trainingConfig.data_type,
-    trainingConfig.include_phase,
-    trainingConfig.filter_subcarriers,
-    trainingConfig.subcarrier_start,
-    trainingConfig.subcarrier_end,
     trainingConfig.output_shape,
     trainingConfig.window_size,
   ]);
@@ -666,7 +686,9 @@ export default function TrainingPage() {
             ? trainingConfig.svc_params
             : trainingConfig.model_type === 'adaboost'
               ? trainingConfig.adaboost_params
-              : {};
+              : trainingConfig.model_type === 'xgboost'
+                ? trainingConfig.xgboost_params
+                : {};
 
       const grid_search = (() => {
         if (trainingConfig.optimization_method !== 'grid') return null;
@@ -679,10 +701,19 @@ export default function TrainingPage() {
         if (trainingConfig.model_type === 'adaboost') {
           return { enabled: true, model_type: 'adaboost', params: trainingConfig.grid_adaboost };
         }
+        if (trainingConfig.model_type === 'xgboost') {
+          return { enabled: true, model_type: 'xgboost', params: trainingConfig.grid_xgboost };
+        }
         return { enabled: true, model_type: trainingConfig.model_type, params: {} };
       })();
 
-      await post('/datasets/train/cloud', {
+      console.log('[Training] Starting training with config:', {
+        dataset_id: selectedDataset.id,
+        model_type: trainingConfig.model_type,
+        test_split: trainingConfig.test_split,
+      });
+      
+      const result = await post('/datasets/train/cloud', {
         dataset_id: selectedDataset.id,
         test_dataset_id: trainingConfig.test_dataset_id,
         model_type: trainingConfig.model_type,
@@ -690,17 +721,11 @@ export default function TrainingPage() {
         epochs: trainingConfig.epochs,
         batch_size: trainingConfig.batch_size,
         learning_rate: trainingConfig.learning_rate,
-        validation_split: trainingConfig.validation_split,
         test_split: trainingConfig.test_split,
         model_name: trainingConfig.model_name || undefined,
         window_size: trainingConfig.window_size,
         preprocessing_pipeline_id: trainingConfig.preprocessing_pipeline_id,
-        preprocessing_blocks: trainingConfig.preprocessing_blocks.filter(b => b.enabled),
         data_type: trainingConfig.data_type,
-        include_phase: trainingConfig.include_phase,
-        filter_subcarriers: trainingConfig.filter_subcarriers,
-        subcarrier_start: trainingConfig.subcarrier_start,
-        subcarrier_end: trainingConfig.subcarrier_end,
         output_shape: trainingConfig.output_shape,
         ml_params,
         grid_search: grid_search || undefined,
@@ -717,9 +742,14 @@ export default function TrainingPage() {
         bayesian_exploration_rate: trainingConfig.bayesian_exploration_rate,
         bayesian_search_architecture: trainingConfig.bayesian_search_architecture,
       });
+      
+      console.log('[Training] Training started successfully:', result);
       setShowTrainingConfig(false);
-      await fetchData({ jobs: true }); // Only refresh jobs
-    } catch { setError('Failed to start training'); }
+      await fetchData({ jobs: true });
+    } catch (err) { 
+      console.error('[Training] Failed to start training:', err);
+      setError(`Failed to start training: ${err instanceof Error ? err.message : 'Unknown error'}`); 
+    }
     finally { setOperations(prev => ({ ...prev, startingTraining: false })); }
   };
 
@@ -1571,75 +1601,145 @@ export default function TrainingPage() {
 
             {trainingWizardStep === 0 && (
               <div className="space-y-4">
+                {/* File-to-Pipeline Assignment */}
                 <div className="p-4 bg-slate-800/30 rounded-lg border border-slate-700">
                   <div className="flex items-center justify-between mb-3">
-                    <h4 className="text-sm font-medium text-indigo-400">Preprocessing</h4>
+                    <h4 className="text-sm font-medium text-indigo-400">File → Pipeline → Split Assignment</h4>
                     {pipelinesLoading ? <span className="text-xs text-slate-500">Loading pipelines...</span> : null}
                   </div>
+                  <p className="text-xs text-slate-500 mb-4">
+                    Assign a preprocessing pipeline and train/test split to each file. Pipelines are created in the Preprocessing page.
+                  </p>
 
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-sm text-slate-300 mb-1">Preprocessing Pipeline</label>
-                      <select
-                        value={trainingConfig.preprocessing_pipeline_id ?? ''}
-                        onChange={(e) => {
-                          const raw = e.target.value;
-                          const id = raw ? parseInt(raw) : null;
-                          const pipeline = preprocessingPipelines.find(p => p.id === id) || null;
-                          if (pipeline) {
-                            setTrainingConfig({
-                              ...trainingConfig,
-                              preprocessing_pipeline_id: pipeline.id,
-                              data_type: (pipeline.data_type as any) || 'auto',
-                              include_phase: !!pipeline.include_phase,
-                              filter_subcarriers: !!pipeline.filter_subcarriers,
-                              subcarrier_start: pipeline.subcarrier_start,
-                              subcarrier_end: pipeline.subcarrier_end,
-                              output_shape: (pipeline.output_shape as any) || 'flattened',
-                              window_size: pipeline.window_size,
-                            });
-                          } else {
-                            setTrainingConfig({ ...trainingConfig, preprocessing_pipeline_id: null });
-                          }
-                        }}
-                        className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white"
-                      >
-                        <option value="">Inline (no saved pipeline)</option>
-                        {preprocessingPipelines.map(p => (
-                          <option key={p.id} value={p.id}>
-                            {p.name}{p.is_default ? ' (default)' : ''} · {p.data_type}/{p.output_shape}
-                          </option>
-                        ))}
-                      </select>
-                      <p className="text-xs text-slate-500 mt-1">
-                        {trainingConfig.preprocessing_pipeline_id
-                          ? 'Using a saved preprocessing pipeline. Inline settings are locked to the pipeline.'
-                          : 'Configure preprocessing inline below.'}
-                      </p>
+                  {selectedDataset?.files && selectedDataset.files.length > 0 ? (
+                    <div className="space-y-3">
+                      {selectedDataset.files.map((file: any) => {
+                        const assignment = trainingConfig.file_assignments[file.file_id] || { pipeline_id: null, split: 'split' as const, split_ratio: 0.8 };
+                        return (
+                          <div key={file.file_id} className="p-3 rounded-lg border border-slate-700 bg-slate-900/30">
+                            <div className="flex items-center justify-between mb-2">
+                              <div>
+                                <div className="text-sm text-white font-medium">{file.filename}</div>
+                                <div className="text-xs text-slate-500">Label: <span className="text-indigo-300">{file.label}</span></div>
+                              </div>
+                            </div>
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                              <div>
+                                <label className="block text-xs text-slate-400 mb-1">Pipeline</label>
+                                <select
+                                  value={assignment.pipeline_id ?? ''}
+                                  onChange={(e) => {
+                                    const newAssignments = { ...trainingConfig.file_assignments };
+                                    newAssignments[file.file_id] = { ...assignment, pipeline_id: e.target.value ? parseInt(e.target.value) : null };
+                                    setTrainingConfig({ ...trainingConfig, file_assignments: newAssignments });
+                                  }}
+                                  className="w-full px-2 py-1.5 bg-slate-800 border border-slate-600 rounded text-white text-sm"
+                                >
+                                  <option value="">Default Pipeline</option>
+                                  {preprocessingPipelines.map(p => (
+                                    <option key={p.id} value={p.id}>{p.name}</option>
+                                  ))}
+                                </select>
+                              </div>
+                              <div>
+                                <label className="block text-xs text-slate-400 mb-1">Split</label>
+                                <select
+                                  value={assignment.split}
+                                  onChange={(e) => {
+                                    const newAssignments = { ...trainingConfig.file_assignments };
+                                    newAssignments[file.file_id] = { ...assignment, split: e.target.value as 'train' | 'test' | 'split' };
+                                    setTrainingConfig({ ...trainingConfig, file_assignments: newAssignments });
+                                  }}
+                                  className="w-full px-2 py-1.5 bg-slate-800 border border-slate-600 rounded text-white text-sm"
+                                >
+                                  <option value="train">Train Only</option>
+                                  <option value="test">Test Only</option>
+                                  <option value="split">Train/Test Split</option>
+                                </select>
+                              </div>
+                              {assignment.split === 'split' && (
+                                <div>
+                                  <label className="block text-xs text-slate-400 mb-1">Train Ratio</label>
+                                  <input
+                                    type="number"
+                                    min="0.1"
+                                    max="0.9"
+                                    step="0.1"
+                                    value={assignment.split_ratio}
+                                    onChange={(e) => {
+                                      const newAssignments = { ...trainingConfig.file_assignments };
+                                      newAssignments[file.file_id] = { ...assignment, split_ratio: parseFloat(e.target.value) || 0.8 };
+                                      setTrainingConfig({ ...trainingConfig, file_assignments: newAssignments });
+                                    }}
+                                    className="w-full px-2 py-1.5 bg-slate-800 border border-slate-600 rounded text-white text-sm"
+                                  />
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
                     </div>
+                  ) : (
+                    <div className="text-sm text-slate-500">No files in dataset. Add files to the dataset first.</div>
+                  )}
+                </div>
+
+                {/* Train/Test Summary */}
+                <div className="p-4 bg-slate-800/30 rounded-lg border border-slate-700">
+                  <h4 className="text-sm font-medium text-indigo-400 mb-3">Train/Test Summary</h4>
+                  {(() => {
+                    const files = selectedDataset?.files || [];
+                    const trainFiles = files.filter((f: any) => {
+                      const a = trainingConfig.file_assignments[f.file_id];
+                      return !a || a.split === 'train' || a.split === 'split';
+                    });
+                    const testFiles = files.filter((f: any) => {
+                      const a = trainingConfig.file_assignments[f.file_id];
+                      return a?.split === 'test' || a?.split === 'split';
+                    });
+                    const trainLabels = new Set(trainFiles.map((f: any) => f.label));
+                    const testLabels = new Set(testFiles.map((f: any) => f.label));
+                    
+                    return (
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="p-3 bg-green-500/10 border border-green-500/30 rounded-lg">
+                          <div className="text-sm font-medium text-green-400 mb-2">Training Set</div>
+                          <div className="text-xs text-slate-300">Files: {trainFiles.length}</div>
+                          <div className="text-xs text-slate-300">Labels: {Array.from(trainLabels).join(', ') || 'None'}</div>
+                        </div>
+                        <div className="p-3 bg-blue-500/10 border border-blue-500/30 rounded-lg">
+                          <div className="text-sm font-medium text-blue-400 mb-2">Test Set</div>
+                          <div className="text-xs text-slate-300">Files: {testFiles.length}</div>
+                          <div className="text-xs text-slate-300">Labels: {Array.from(testLabels).join(', ') || 'None'}</div>
+                        </div>
+                      </div>
+                    );
+                  })()}
+                </div>
+
+                {/* Global Settings */}
+                <div className="p-4 bg-slate-800/30 rounded-lg border border-slate-700">
+                  <h4 className="text-sm font-medium text-indigo-400 mb-3">Global Settings</h4>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                     <div>
-                      <label className="block text-sm text-slate-300 mb-1">Input Data Type</label>
+                      <label className="block text-sm text-slate-300 mb-1">Data Type</label>
                       <select
                         value={trainingConfig.data_type}
-                        disabled={trainingConfig.preprocessing_pipeline_id != null}
-                        onChange={(e) => setTrainingConfig({ ...trainingConfig, data_type: e.target.value as any })}
-                        className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white disabled:opacity-60"
+                        onChange={(e) => setTrainingConfig({ ...trainingConfig, data_type: e.target.value as 'auto' | 'csi' | 'imu' })}
+                        className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white"
                       >
                         <option value="auto">Auto-detect</option>
                         <option value="csi">CSI</option>
                         <option value="imu">IMU</option>
                       </select>
                     </div>
-                  </div>
-
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
                     <div>
                       <label className="block text-sm text-slate-300 mb-1">Output Shape</label>
                       <select
                         value={trainingConfig.output_shape}
-                        disabled={trainingConfig.preprocessing_pipeline_id != null}
-                        onChange={(e) => setTrainingConfig({ ...trainingConfig, output_shape: e.target.value as any })}
-                        className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white disabled:opacity-60"
+                        onChange={(e) => setTrainingConfig({ ...trainingConfig, output_shape: e.target.value as 'flattened' | 'sequence' })}
+                        className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white"
                       >
                         <option value="flattened">Flattened (ML)</option>
                         <option value="sequence">Sequence (DL)</option>
@@ -1650,229 +1750,12 @@ export default function TrainingPage() {
                       <input
                         type="number"
                         value={trainingConfig.window_size}
-                        disabled={trainingConfig.preprocessing_pipeline_id != null}
-                        onChange={(e) => setTrainingConfig({ ...trainingConfig, window_size: parseInt(e.target.value) || trainingConfig.window_size })}
-                        className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white disabled:opacity-60"
+                        onChange={(e) => setTrainingConfig({ ...trainingConfig, window_size: parseInt(e.target.value) || 128 })}
+                        className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white"
                         min="1"
                       />
                     </div>
                   </div>
-
-                  <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-4">
-                    <div className="flex items-center justify-between p-3 bg-slate-800/40 rounded-lg border border-slate-700 md:col-span-1">
-                      <div>
-                        <label className="block text-sm text-slate-300 font-medium">Include Phase</label>
-                        <p className="text-xs text-slate-500 mt-1">CSI only</p>
-                      </div>
-                      <label className="relative inline-flex items-center cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={trainingConfig.include_phase}
-                          disabled={trainingConfig.preprocessing_pipeline_id != null}
-                          onChange={(e) => setTrainingConfig({ ...trainingConfig, include_phase: e.target.checked })}
-                          className="sr-only peer"
-                        />
-                        <div className="w-11 h-6 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
-                      </label>
-                    </div>
-                    <div className="flex items-center justify-between p-3 bg-slate-800/40 rounded-lg border border-slate-700 md:col-span-2">
-                      <div>
-                        <label className="block text-sm text-slate-300 font-medium">Subcarrier Filtering</label>
-                        <p className="text-xs text-slate-500 mt-1">CSI only</p>
-                      </div>
-                      <label className="relative inline-flex items-center cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={trainingConfig.filter_subcarriers}
-                          disabled={trainingConfig.preprocessing_pipeline_id != null}
-                          onChange={(e) => setTrainingConfig({ ...trainingConfig, filter_subcarriers: e.target.checked })}
-                          className="sr-only peer"
-                        />
-                        <div className="w-11 h-6 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
-                      </label>
-                    </div>
-                  </div>
-
-                  {trainingConfig.filter_subcarriers && (
-                    <div className="grid grid-cols-2 gap-4 mt-4">
-                      <div>
-                        <label className="block text-sm text-slate-300 mb-1">Subcarrier Start</label>
-                        <input
-                          type="number"
-                          value={trainingConfig.subcarrier_start}
-                          disabled={trainingConfig.preprocessing_pipeline_id != null}
-                          onChange={(e) => setTrainingConfig({ ...trainingConfig, subcarrier_start: parseInt(e.target.value) || 0 })}
-                          className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white disabled:opacity-60"
-                          min="0"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-sm text-slate-300 mb-1">Subcarrier End</label>
-                        <input
-                          type="number"
-                          value={trainingConfig.subcarrier_end}
-                          disabled={trainingConfig.preprocessing_pipeline_id != null}
-                          onChange={(e) => setTrainingConfig({ ...trainingConfig, subcarrier_end: parseInt(e.target.value) || 0 })}
-                          className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white disabled:opacity-60"
-                          min="0"
-                        />
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-                {/* Block-level preprocessing controls */}
-                <div className="p-4 bg-slate-800/30 rounded-lg border border-slate-700">
-                  <div className="flex items-center justify-between mb-3">
-                    <h4 className="text-sm font-medium text-indigo-400">Preprocessing Blocks</h4>
-                    <span className="text-xs text-slate-500">Enable/disable and configure each block</span>
-                  </div>
-                  <div className="space-y-2">
-                    {trainingConfig.preprocessing_blocks.map((block, idx) => {
-                      const helpInfo = PREPROCESSING_STEP_HELP[block.type];
-                      return (
-                        <div key={`block-${block.type}-${idx}`} className={`p-3 rounded-lg border ${block.enabled ? 'border-indigo-500/40 bg-indigo-500/5' : 'border-slate-700 bg-slate-900/30 opacity-60'}`}>
-                          <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-3">
-                              <label className="relative inline-flex items-center cursor-pointer">
-                                <input
-                                  type="checkbox"
-                                  checked={block.enabled}
-                                  disabled={trainingConfig.preprocessing_pipeline_id != null || ['csi_loader', 'imu_loader'].includes(block.type)}
-                                  onChange={(e) => {
-                                    const updated = [...trainingConfig.preprocessing_blocks];
-                                    updated[idx] = { ...updated[idx], enabled: e.target.checked };
-                                    setTrainingConfig({ ...trainingConfig, preprocessing_blocks: updated });
-                                  }}
-                                  className="sr-only peer"
-                                />
-                                <div className="w-9 h-5 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-indigo-600"></div>
-                              </label>
-                              <div>
-                                <div className="text-sm text-white font-medium">{helpInfo?.title || block.type}</div>
-                                <div className="text-xs text-slate-500">{block.type}</div>
-                              </div>
-                            </div>
-                            <div className="relative group">
-                              <button type="button" className="w-5 h-5 rounded-full border border-slate-600 text-slate-300 text-xs flex items-center justify-center hover:border-slate-400 hover:text-white" aria-label={`Explain ${block.type}`}>?</button>
-                              <div className="hidden group-hover:block absolute right-0 top-6 w-80 max-w-[80vw] p-3 rounded-lg border border-slate-700 bg-slate-950 text-slate-200 z-50 shadow-xl">
-                                <div className="text-sm font-medium text-white">{helpInfo?.title || block.type}</div>
-                                <div className="text-xs text-slate-300 mt-2 whitespace-pre-line">{helpInfo?.details || 'No detailed explanation available.'}</div>
-                              </div>
-                            </div>
-                          </div>
-                          {/* Block-specific params */}
-                          {block.enabled && block.type === 'moving_average' && (
-                            <div className="mt-3 pt-3 border-t border-slate-700">
-                              <label className="block text-xs text-slate-400 mb-1">Window Size</label>
-                              <input
-                                type="number"
-                                min="2"
-                                max="50"
-                                value={block.params.ma_window || 5}
-                                disabled={trainingConfig.preprocessing_pipeline_id != null}
-                                onChange={(e) => {
-                                  const updated = [...trainingConfig.preprocessing_blocks];
-                                  updated[idx] = { ...updated[idx], params: { ...updated[idx].params, ma_window: parseInt(e.target.value) || 5 } };
-                                  setTrainingConfig({ ...trainingConfig, preprocessing_blocks: updated });
-                                }}
-                                className="w-24 px-2 py-1 bg-slate-800 border border-slate-600 rounded text-white text-sm disabled:opacity-60"
-                              />
-                            </div>
-                          )}
-                          {block.enabled && block.type === 'subcarrier_filter' && (
-                            <div className="mt-3 pt-3 border-t border-slate-700 grid grid-cols-2 gap-3">
-                              <div>
-                                <label className="block text-xs text-slate-400 mb-1">Start Index</label>
-                                <input
-                                  type="number"
-                                  min="0"
-                                  value={block.params.subcarrier_start ?? trainingConfig.subcarrier_start}
-                                  disabled={trainingConfig.preprocessing_pipeline_id != null}
-                                  onChange={(e) => {
-                                    const updated = [...trainingConfig.preprocessing_blocks];
-                                    updated[idx] = { ...updated[idx], params: { ...updated[idx].params, subcarrier_start: parseInt(e.target.value) || 0 } };
-                                    setTrainingConfig({ ...trainingConfig, preprocessing_blocks: updated });
-                                  }}
-                                  className="w-full px-2 py-1 bg-slate-800 border border-slate-600 rounded text-white text-sm disabled:opacity-60"
-                                />
-                              </div>
-                              <div>
-                                <label className="block text-xs text-slate-400 mb-1">End Index</label>
-                                <input
-                                  type="number"
-                                  min="0"
-                                  value={block.params.subcarrier_end ?? trainingConfig.subcarrier_end}
-                                  disabled={trainingConfig.preprocessing_pipeline_id != null}
-                                  onChange={(e) => {
-                                    const updated = [...trainingConfig.preprocessing_blocks];
-                                    updated[idx] = { ...updated[idx], params: { ...updated[idx].params, subcarrier_end: parseInt(e.target.value) || 32 } };
-                                    setTrainingConfig({ ...trainingConfig, preprocessing_blocks: updated });
-                                  }}
-                                  className="w-full px-2 py-1 bg-slate-800 border border-slate-600 rounded text-white text-sm disabled:opacity-60"
-                                />
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                  <p className="text-xs text-slate-500 mt-3">Loader blocks cannot be disabled. Toggle optional blocks like Phase Extractor, Subcarrier Filter, or Moving Average.</p>
-                </div>
-
-                <div className="p-4 bg-slate-800/30 rounded-lg border border-slate-700">
-                  <div className="flex items-center justify-between mb-3">
-                    <h4 className="text-sm font-medium text-indigo-400">Preview (per preprocessing block)</h4>
-                    {previewLoading ? <span className="text-xs text-slate-500">Loading preview...</span> : null}
-                  </div>
-                  {previewError && <div className="text-sm text-red-400 mb-2">{previewError}</div>}
-                  {preprocessingPreview ? (
-                    <div className="space-y-3">
-                      <div className="text-xs text-slate-400">
-                        <div>File: <span className="text-slate-200">{preprocessingPreview.file.filename}</span> ({(preprocessingPreview.file.size / 1024).toFixed(1)} KB)</div>
-                        <div>Detected type: <span className="text-slate-200">{preprocessingPreview.data_type}</span></div>
-                      </div>
-                      <div className="space-y-2">
-                        {preprocessingPreview.stages.map((s, i) => (
-                          <div key={`${s.block}-${i}`} className="p-3 rounded-lg border border-slate-700 bg-slate-900/30">
-                            <div className="flex items-center justify-between">
-                              <div className="flex items-center gap-2">
-                                <div className="text-sm text-white font-medium">{i + 1}. {s.name}</div>
-                                <div className="relative group">
-                                  <button
-                                    type="button"
-                                    className="w-5 h-5 rounded-full border border-slate-600 text-slate-300 text-xs flex items-center justify-center hover:border-slate-400 hover:text-white"
-                                    aria-label={`Explain ${s.name}`}
-                                  >
-                                    ?
-                                  </button>
-                                  <div className="hidden group-hover:block absolute right-0 top-6 w-96 max-w-[80vw] p-3 rounded-lg border border-slate-700 bg-slate-950 text-slate-200 z-50 shadow-xl">
-                                    <div className="text-sm font-medium text-white">
-                                      {PREPROCESSING_STEP_HELP[s.block]?.title || s.name}
-                                    </div>
-                                    <div className="text-xs text-slate-300 mt-2 whitespace-pre-line">
-                                      {PREPROCESSING_STEP_HELP[s.block]?.details || 'No detailed explanation available for this step.'}
-                                    </div>
-                                  </div>
-                                </div>
-                              </div>
-                              {s.shape ? <div className="text-xs text-slate-400">shape: [{s.shape.join(', ')}]</div> : null}
-                            </div>
-                            {s.error ? (
-                              <div className="text-xs text-red-400 mt-2">{s.error}</div>
-                            ) : (
-                              <div className="text-xs text-slate-400 mt-2 break-words">
-                                sample: <span className="text-slate-300">{Array.isArray(s.sample) ? JSON.stringify(s.sample) : String(s.sample)}</span>
-                              </div>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="text-sm text-slate-500">No preview available yet.</div>
-                  )}
                 </div>
               </div>
             )}
@@ -1918,7 +1801,7 @@ export default function TrainingPage() {
                 </div>
                 <div><label className="block text-sm text-slate-300 mb-1">Learning Rate</label><input type="number" step="0.0001" value={trainingConfig.learning_rate} onChange={(e) => setTrainingConfig({ ...trainingConfig, learning_rate: parseFloat(e.target.value) || 0.001 })} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white" /></div>
 
-                {(trainingConfig.model_type === 'knn' || trainingConfig.model_type === 'svc' || trainingConfig.model_type === 'adaboost') && (
+                {(trainingConfig.model_type === 'knn' || trainingConfig.model_type === 'svc' || trainingConfig.model_type === 'adaboost' || trainingConfig.model_type === 'xgboost') && (
                   <div className="p-4 bg-slate-800/30 rounded-lg border border-slate-700">
                     <h4 className="text-sm font-medium text-indigo-400 mb-3">ML Model Parameters</h4>
                     {trainingConfig.model_type === 'knn' && (
@@ -1929,14 +1812,14 @@ export default function TrainingPage() {
                         </div>
                         <div>
                           <label className="block text-sm text-slate-300 mb-1">weights</label>
-                          <select value={trainingConfig.knn_params.weights} onChange={(e) => setTrainingConfig({ ...trainingConfig, knn_params: { ...trainingConfig.knn_params, weights: e.target.value } })} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white">
+                          <select value={trainingConfig.knn_params.weights} onChange={(e) => setTrainingConfig({ ...trainingConfig, knn_params: { ...trainingConfig.knn_params, weights: e.target.value as 'uniform' | 'distance' } })} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white">
                             <option value="uniform">uniform</option>
                             <option value="distance">distance</option>
                           </select>
                         </div>
                         <div>
                           <label className="block text-sm text-slate-300 mb-1">metric</label>
-                          <select value={trainingConfig.knn_params.metric} onChange={(e) => setTrainingConfig({ ...trainingConfig, knn_params: { ...trainingConfig.knn_params, metric: e.target.value } })} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white">
+                          <select value={trainingConfig.knn_params.metric} onChange={(e) => setTrainingConfig({ ...trainingConfig, knn_params: { ...trainingConfig.knn_params, metric: e.target.value as 'euclidean' | 'manhattan' | 'minkowski' | 'chebyshev' } })} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white">
                             <option value="euclidean">euclidean</option>
                             <option value="manhattan">manhattan</option>
                             <option value="minkowski">minkowski</option>
@@ -1944,7 +1827,7 @@ export default function TrainingPage() {
                         </div>
                         <div>
                           <label className="block text-sm text-slate-300 mb-1">algorithm</label>
-                          <select value={trainingConfig.knn_params.algorithm} onChange={(e) => setTrainingConfig({ ...trainingConfig, knn_params: { ...trainingConfig.knn_params, algorithm: e.target.value } })} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white">
+                          <select value={trainingConfig.knn_params.algorithm} onChange={(e) => setTrainingConfig({ ...trainingConfig, knn_params: { ...trainingConfig.knn_params, algorithm: e.target.value as 'auto' | 'ball_tree' | 'kd_tree' | 'brute' } })} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white">
                             <option value="auto">auto</option>
                             <option value="ball_tree">ball_tree</option>
                             <option value="kd_tree">kd_tree</option>
@@ -1966,7 +1849,7 @@ export default function TrainingPage() {
                         </div>
                         <div>
                           <label className="block text-sm text-slate-300 mb-1">kernel</label>
-                          <select value={trainingConfig.svc_params.kernel} onChange={(e) => setTrainingConfig({ ...trainingConfig, svc_params: { ...trainingConfig.svc_params, kernel: e.target.value } })} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white">
+                          <select value={trainingConfig.svc_params.kernel} onChange={(e) => setTrainingConfig({ ...trainingConfig, svc_params: { ...trainingConfig.svc_params, kernel: e.target.value as 'rbf' | 'linear' | 'poly' | 'sigmoid' } })} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white">
                             <option value="rbf">rbf</option>
                             <option value="linear">linear</option>
                             <option value="poly">poly</option>
@@ -1975,7 +1858,7 @@ export default function TrainingPage() {
                         </div>
                         <div>
                           <label className="block text-sm text-slate-300 mb-1">gamma</label>
-                          <select value={trainingConfig.svc_params.gamma} onChange={(e) => setTrainingConfig({ ...trainingConfig, svc_params: { ...trainingConfig.svc_params, gamma: e.target.value } })} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white">
+                          <select value={String(trainingConfig.svc_params.gamma)} onChange={(e) => setTrainingConfig({ ...trainingConfig, svc_params: { ...trainingConfig.svc_params, gamma: e.target.value as 'scale' | 'auto' } })} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white">
                             <option value="scale">scale</option>
                             <option value="auto">auto</option>
                           </select>
@@ -2009,7 +1892,7 @@ export default function TrainingPage() {
                         </div>
                         <div>
                           <label className="block text-sm text-slate-300 mb-1">algorithm</label>
-                          <select value={trainingConfig.adaboost_params.algorithm} onChange={(e) => setTrainingConfig({ ...trainingConfig, adaboost_params: { ...trainingConfig.adaboost_params, algorithm: e.target.value } })} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white">
+                          <select value={trainingConfig.adaboost_params.algorithm} onChange={(e) => setTrainingConfig({ ...trainingConfig, adaboost_params: { ...trainingConfig.adaboost_params, algorithm: e.target.value as 'SAMME.R' | 'SAMME' } })} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white">
                             <option value="SAMME.R">SAMME.R</option>
                             <option value="SAMME">SAMME</option>
                           </select>
@@ -2017,6 +1900,47 @@ export default function TrainingPage() {
                         <div>
                           <label className="block text-sm text-slate-300 mb-1">base max_depth</label>
                           <input type="number" min="1" value={trainingConfig.adaboost_params.max_depth} onChange={(e) => setTrainingConfig({ ...trainingConfig, adaboost_params: { ...trainingConfig.adaboost_params, max_depth: parseInt(e.target.value) || 1 } })} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white" />
+                        </div>
+                      </div>
+                    )}
+
+                    {trainingConfig.model_type === 'xgboost' && (
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <label className="block text-sm text-slate-300 mb-1">n_estimators</label>
+                          <input type="number" min="1" value={trainingConfig.xgboost_params.n_estimators} onChange={(e) => setTrainingConfig({ ...trainingConfig, xgboost_params: { ...trainingConfig.xgboost_params, n_estimators: parseInt(e.target.value) || 100 } })} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white" />
+                        </div>
+                        <div>
+                          <label className="block text-sm text-slate-300 mb-1">max_depth</label>
+                          <input type="number" min="1" value={trainingConfig.xgboost_params.max_depth} onChange={(e) => setTrainingConfig({ ...trainingConfig, xgboost_params: { ...trainingConfig.xgboost_params, max_depth: parseInt(e.target.value) || 6 } })} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white" />
+                        </div>
+                        <div>
+                          <label className="block text-sm text-slate-300 mb-1">learning_rate</label>
+                          <input type="number" step="0.01" min="0.001" max="1" value={trainingConfig.xgboost_params.learning_rate} onChange={(e) => setTrainingConfig({ ...trainingConfig, xgboost_params: { ...trainingConfig.xgboost_params, learning_rate: parseFloat(e.target.value) || 0.3 } })} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white" />
+                        </div>
+                        <div>
+                          <label className="block text-sm text-slate-300 mb-1">subsample</label>
+                          <input type="number" step="0.1" min="0.1" max="1" value={trainingConfig.xgboost_params.subsample} onChange={(e) => setTrainingConfig({ ...trainingConfig, xgboost_params: { ...trainingConfig.xgboost_params, subsample: parseFloat(e.target.value) || 1 } })} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white" />
+                        </div>
+                        <div>
+                          <label className="block text-sm text-slate-300 mb-1">colsample_bytree</label>
+                          <input type="number" step="0.1" min="0.1" max="1" value={trainingConfig.xgboost_params.colsample_bytree} onChange={(e) => setTrainingConfig({ ...trainingConfig, xgboost_params: { ...trainingConfig.xgboost_params, colsample_bytree: parseFloat(e.target.value) || 1 } })} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white" />
+                        </div>
+                        <div>
+                          <label className="block text-sm text-slate-300 mb-1">gamma (min_split_loss)</label>
+                          <input type="number" step="0.1" min="0" value={trainingConfig.xgboost_params.gamma} onChange={(e) => setTrainingConfig({ ...trainingConfig, xgboost_params: { ...trainingConfig.xgboost_params, gamma: parseFloat(e.target.value) || 0 } })} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white" />
+                        </div>
+                        <div>
+                          <label className="block text-sm text-slate-300 mb-1">reg_alpha (L1)</label>
+                          <input type="number" step="0.1" min="0" value={trainingConfig.xgboost_params.reg_alpha} onChange={(e) => setTrainingConfig({ ...trainingConfig, xgboost_params: { ...trainingConfig.xgboost_params, reg_alpha: parseFloat(e.target.value) || 0 } })} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white" />
+                        </div>
+                        <div>
+                          <label className="block text-sm text-slate-300 mb-1">reg_lambda (L2)</label>
+                          <input type="number" step="0.1" min="0" value={trainingConfig.xgboost_params.reg_lambda} onChange={(e) => setTrainingConfig({ ...trainingConfig, xgboost_params: { ...trainingConfig.xgboost_params, reg_lambda: parseFloat(e.target.value) || 1 } })} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white" />
+                        </div>
+                        <div>
+                          <label className="block text-sm text-slate-300 mb-1">min_child_weight</label>
+                          <input type="number" min="0" value={trainingConfig.xgboost_params.min_child_weight} onChange={(e) => setTrainingConfig({ ...trainingConfig, xgboost_params: { ...trainingConfig.xgboost_params, min_child_weight: parseInt(e.target.value) || 1 } })} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white" />
                         </div>
                       </div>
                     )}
@@ -2235,6 +2159,59 @@ export default function TrainingPage() {
                           </div>
                         </div>
                       )}
+
+                      {trainingConfig.model_type === 'xgboost' && (
+                        <div className="grid grid-cols-2 gap-4">
+                          <div>
+                            <label className="block text-sm text-slate-300 mb-1">n_estimators (comma-separated)</label>
+                            <input
+                              type="text"
+                              value={trainingConfig.grid_xgboost.n_estimators.join(',')}
+                              onChange={(e) => {
+                                const vals = e.target.value.split(',').map(v => parseInt(v.trim())).filter(v => Number.isFinite(v) && v > 0);
+                                setTrainingConfig({ ...trainingConfig, grid_xgboost: { ...trainingConfig.grid_xgboost, n_estimators: vals.length ? vals : trainingConfig.grid_xgboost.n_estimators } });
+                              }}
+                              className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-sm text-slate-300 mb-1">max_depth (comma-separated)</label>
+                            <input
+                              type="text"
+                              value={trainingConfig.grid_xgboost.max_depth.join(',')}
+                              onChange={(e) => {
+                                const vals = e.target.value.split(',').map(v => parseInt(v.trim())).filter(v => Number.isFinite(v) && v > 0);
+                                setTrainingConfig({ ...trainingConfig, grid_xgboost: { ...trainingConfig.grid_xgboost, max_depth: vals.length ? vals : trainingConfig.grid_xgboost.max_depth } });
+                              }}
+                              className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-sm text-slate-300 mb-1">learning_rate (comma-separated)</label>
+                            <input
+                              type="text"
+                              value={trainingConfig.grid_xgboost.learning_rate.join(',')}
+                              onChange={(e) => {
+                                const vals = e.target.value.split(',').map(v => parseFloat(v.trim())).filter(v => Number.isFinite(v) && v > 0);
+                                setTrainingConfig({ ...trainingConfig, grid_xgboost: { ...trainingConfig.grid_xgboost, learning_rate: vals.length ? vals : trainingConfig.grid_xgboost.learning_rate } });
+                              }}
+                              className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-sm text-slate-300 mb-1">subsample (comma-separated)</label>
+                            <input
+                              type="text"
+                              value={trainingConfig.grid_xgboost.subsample.join(',')}
+                              onChange={(e) => {
+                                const vals = e.target.value.split(',').map(v => parseFloat(v.trim())).filter(v => Number.isFinite(v) && v > 0 && v <= 1);
+                                setTrainingConfig({ ...trainingConfig, grid_xgboost: { ...trainingConfig.grid_xgboost, subsample: vals.length ? vals : trainingConfig.grid_xgboost.subsample } });
+                              }}
+                              className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white"
+                            />
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
@@ -2249,14 +2226,13 @@ export default function TrainingPage() {
                   {/* Preprocessing Summary */}
                   <div className="mb-4 p-3 bg-slate-900/50 rounded-lg border border-slate-700">
                     <div className="flex items-center justify-between mb-2">
-                      <div className="text-xs text-slate-500 uppercase tracking-wide">Preprocessing</div>
+                      <div className="text-xs text-slate-500 uppercase tracking-wide">Preprocessing & Splits</div>
                       <button type="button" onClick={() => setTrainingWizardStep(0)} className="text-xs text-indigo-400 hover:text-indigo-300">Edit</button>
                     </div>
                     <div className="text-sm text-slate-200 space-y-1">
-                      <div>Pipeline: <span className="text-indigo-300">{trainingConfig.preprocessing_pipeline_id ? `ID ${trainingConfig.preprocessing_pipeline_id}` : 'Inline'}</span></div>
                       <div>Data Type: <span className="text-slate-300">{trainingConfig.data_type}</span> · Window: <span className="text-slate-300">{trainingConfig.window_size}</span> · Output: <span className="text-slate-300">{trainingConfig.output_shape}</span></div>
                       <div className="text-xs text-slate-400 mt-2">
-                        Enabled blocks: {trainingConfig.preprocessing_blocks.filter(b => b.enabled).map(b => b.type).join(' → ')}
+                        Files assigned: {Object.keys(trainingConfig.file_assignments).length} · Test split: {(trainingConfig.test_split * 100).toFixed(0)}%
                       </div>
                     </div>
                   </div>
@@ -2269,17 +2245,20 @@ export default function TrainingPage() {
                     </div>
                     <div className="text-sm text-slate-200 space-y-1">
                       <div>Type: <span className="text-indigo-300 font-medium">{trainingConfig.model_type}</span>
-                        {!['knn', 'svc', 'adaboost'].includes(trainingConfig.model_type) && <span className="text-slate-400"> ({trainingConfig.model_architecture})</span>}
+                        {!['knn', 'svc', 'adaboost', 'xgboost'].includes(trainingConfig.model_type) && <span className="text-slate-400"> ({trainingConfig.model_architecture})</span>}
                       </div>
                       <div>Epochs: <span className="text-slate-300">{trainingConfig.epochs}</span> · Batch: <span className="text-slate-300">{trainingConfig.batch_size}</span> · LR: <span className="text-slate-300">{trainingConfig.learning_rate}</span></div>
                       {trainingConfig.model_type === 'knn' && (
                         <div className="text-xs text-slate-400">KNN: n_neighbors={trainingConfig.knn_params.n_neighbors}, weights={trainingConfig.knn_params.weights}, metric={trainingConfig.knn_params.metric}</div>
                       )}
                       {trainingConfig.model_type === 'svc' && (
-                        <div className="text-xs text-slate-400">SVC: C={trainingConfig.svc_params.C}, kernel={trainingConfig.svc_params.kernel}, gamma={trainingConfig.svc_params.gamma}</div>
+                        <div className="text-xs text-slate-400">SVC: C={trainingConfig.svc_params.C}, kernel={trainingConfig.svc_params.kernel}, gamma={String(trainingConfig.svc_params.gamma)}</div>
                       )}
                       {trainingConfig.model_type === 'adaboost' && (
                         <div className="text-xs text-slate-400">AdaBoost: n_estimators={trainingConfig.adaboost_params.n_estimators}, lr={trainingConfig.adaboost_params.learning_rate}</div>
+                      )}
+                      {trainingConfig.model_type === 'xgboost' && (
+                        <div className="text-xs text-slate-400">XGBoost: n_estimators={trainingConfig.xgboost_params.n_estimators}, max_depth={trainingConfig.xgboost_params.max_depth}, lr={trainingConfig.xgboost_params.learning_rate}</div>
                       )}
                     </div>
                   </div>
@@ -2287,7 +2266,7 @@ export default function TrainingPage() {
                   {/* Optimization Summary */}
                   <div className="mb-4 p-3 bg-slate-900/50 rounded-lg border border-slate-700">
                     <div className="flex items-center justify-between mb-2">
-                      <div className="text-xs text-slate-500 uppercase tracking-wide">Optimization</div>
+                      <div className="text-xs text-slate-500 uppercase tracking-wide">Hyperparameter Search</div>
                       <button type="button" onClick={() => setTrainingWizardStep(2)} className="text-xs text-indigo-400 hover:text-indigo-300">Edit</button>
                     </div>
                     <div className="text-sm text-slate-200 space-y-1">
@@ -2306,20 +2285,19 @@ export default function TrainingPage() {
                       {trainingConfig.optimization_method === 'grid' && trainingConfig.model_type === 'adaboost' && (
                         <div className="text-xs text-slate-400">Grid: n_estimators=[{trainingConfig.grid_adaboost.n_estimators.join(',')}], lr=[{trainingConfig.grid_adaboost.learning_rate.join(',')}]</div>
                       )}
+                      {trainingConfig.optimization_method === 'grid' && trainingConfig.model_type === 'xgboost' && (
+                        <div className="text-xs text-slate-400">Grid: n_estimators=[{trainingConfig.grid_xgboost.n_estimators.join(',')}], max_depth=[{trainingConfig.grid_xgboost.max_depth.join(',')}]</div>
+                      )}
                     </div>
                   </div>
 
-                  {/* Splits Summary */}
+                  {/* Train/Test Summary */}
                   <div className="text-sm text-slate-300 mb-4">
                     <div className="text-xs text-slate-500 uppercase tracking-wide mb-2">Data Splits</div>
                     <div className="flex gap-4">
                       <div className="flex-1 p-2 bg-green-500/10 border border-green-500/30 rounded text-center">
-                        <div className="text-lg font-medium text-green-400">{Math.max(0, 1 - trainingConfig.validation_split - trainingConfig.test_split).toFixed(0)}%</div>
+                        <div className="text-lg font-medium text-green-400">{((1 - trainingConfig.test_split) * 100).toFixed(0)}%</div>
                         <div className="text-xs text-slate-400">Train</div>
-                      </div>
-                      <div className="flex-1 p-2 bg-yellow-500/10 border border-yellow-500/30 rounded text-center">
-                        <div className="text-lg font-medium text-yellow-400">{(trainingConfig.validation_split * 100).toFixed(0)}%</div>
-                        <div className="text-xs text-slate-400">Validation</div>
                       </div>
                       <div className="flex-1 p-2 bg-blue-500/10 border border-blue-500/30 rounded text-center">
                         <div className="text-lg font-medium text-blue-400">{(trainingConfig.test_split * 100).toFixed(0)}%</div>
@@ -2327,19 +2305,7 @@ export default function TrainingPage() {
                       </div>
                     </div>
                   </div>
-                  <div className="grid grid-cols-2 gap-4 mt-4">
-                    <div>
-                      <label className="block text-sm text-slate-300 mb-1">Validation Split</label>
-                      <input
-                        type="number"
-                        step="0.05"
-                        min="0"
-                        max="0.9"
-                        value={trainingConfig.validation_split}
-                        onChange={(e) => setTrainingConfig({ ...trainingConfig, validation_split: Math.max(0, Math.min(0.9, parseFloat(e.target.value) || 0)) })}
-                        className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white"
-                      />
-                    </div>
+                  <div>
                     <div>
                       <label className="block text-sm text-slate-300 mb-1">Test Split</label>
                       <input
@@ -2353,18 +2319,14 @@ export default function TrainingPage() {
                       />
                     </div>
                   </div>
-                  <p className="text-xs text-slate-500 mt-2">
-                    Train split: {Math.max(0, 1 - trainingConfig.validation_split - trainingConfig.test_split).toFixed(2)}
-                    {trainingConfig.validation_split + trainingConfig.test_split >= 1 ? ' (invalid: must be < 1)' : ''}
-                  </p>
                   <div className="mt-4">
-                    <label className="block text-sm text-slate-300 mb-1">Test Dataset (optional)</label>
+                    <label className="block text-sm text-slate-300 mb-1">Separate Test Dataset (optional)</label>
                     <select
                       value={trainingConfig.test_dataset_id || ''}
                       onChange={(e) => setTrainingConfig({ ...trainingConfig, test_dataset_id: e.target.value ? parseInt(e.target.value) : null })}
                       className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white"
                     >
-                      <option value="">None (use validation split)</option>
+                      <option value="">None (use test split from training data)</option>
                       {datasets.map(dataset => (
                         <option key={dataset.id} value={dataset.id}>
                           {dataset.name} ({dataset.file_count} files)
