@@ -45,8 +45,13 @@ type Pipeline = {
   id: number;
   name: string;
   description: string;
-  blocks: ProcessingBlock[];
-  connections: Array<{ from: string; to: string }>;
+  config?: {
+    blocks?: ProcessingBlock[];
+    connections?: Array<{ from: string; to: string }>;
+    [key: string]: any;
+  };
+  data_type?: string;
+  output_shape?: string;
   created_at: string;
 };
 
@@ -440,21 +445,20 @@ export default function ProcessingPage() {
     return Object.keys(errors).length === 0;
   };
 
-  // Recalculate shapes through the pipeline
+  // Default input shapes for source blocks (before any processing)
+  const defaultShapes: Record<DataType, number[]> = {
+    imu: [1000, 6],      // [#rows, 6 channels]
+    csi: [1000, 128],    // [#rows, 128 raw I/Q values]
+    mfcw: [1000, 256],   // [#rows, 256 range bins]
+    image: [1, 224, 224],
+    video: [1, 30, 224],
+  };
+
+  // Recalculate shapes through the pipeline (linear chain)
   const recalculateShapes = (updatedBlocks: ProcessingBlock[]): ProcessingBlock[] => {
     if (updatedBlocks.length === 0) return updatedBlocks;
     
     const result = [...updatedBlocks];
-    
-    // Default input shapes for source blocks (before any processing)
-    // These are placeholder shapes - actual shapes come from the loader block's config
-    const defaultShapes: Record<DataType, number[]> = {
-      imu: [1000, 6],      // [#rows, 6 channels]
-      csi: [1000, 128],    // [#rows, 128 raw I/Q values]
-      mfcw: [1000, 256],   // [#rows, 256 range bins]
-      image: [1, 224, 224],
-      video: [1, 30, 224],
-    };
     
     for (let i = 0; i < result.length; i++) {
       const block = result[i];
@@ -481,6 +485,116 @@ export default function ProcessingPage() {
     return result;
   };
 
+  // Recalculate shapes based on connections (graph-based)
+  const recalculateShapesFromConnections = (
+    blocksToUpdate: ProcessingBlock[],
+    conns: Array<{ from: string; to: string }>
+  ): ProcessingBlock[] => {
+    if (blocksToUpdate.length === 0) return blocksToUpdate;
+    
+    const result = blocksToUpdate.map(b => ({ ...b }));
+    const blockMap = new Map(result.map(b => [b.id, b]));
+    
+    // Build incoming connections map (block -> list of source blocks)
+    const incomingConnections = new Map<string, string[]>();
+    for (const conn of conns) {
+      const existing = incomingConnections.get(conn.to) || [];
+      existing.push(conn.from);
+      incomingConnections.set(conn.to, existing);
+    }
+    
+    // Topological sort to process blocks in dependency order
+    const visited = new Set<string>();
+    const processed = new Set<string>();
+    const order: string[] = [];
+    
+    const visit = (blockId: string) => {
+      if (processed.has(blockId)) return;
+      if (visited.has(blockId)) return; // Cycle detected, skip
+      
+      visited.add(blockId);
+      
+      // Visit all source blocks first
+      const sources = incomingConnections.get(blockId) || [];
+      for (const sourceId of sources) {
+        visit(sourceId);
+      }
+      
+      processed.add(blockId);
+      order.push(blockId);
+    };
+    
+    // Visit all blocks
+    for (const block of result) {
+      visit(block.id);
+    }
+    
+    // Process blocks in topological order
+    for (const blockId of order) {
+      const block = blockMap.get(blockId);
+      if (!block) continue;
+      
+      const blockDef = BLOCK_TYPES[block.type as keyof typeof BLOCK_TYPES];
+      const isSource = (blockDef as any)?.isSource;
+      const sources = incomingConnections.get(blockId) || [];
+      
+      if (isSource) {
+        // Source blocks have no input
+        block.inputShape = [0];
+      } else if (sources.length === 0) {
+        // No incoming connections - use default shape
+        block.inputShape = defaultShapes[block.dataType] || [1000, 128];
+      } else if (sources.length === 1) {
+        // Single input - use source's output shape
+        const sourceBlock = blockMap.get(sources[0]);
+        block.inputShape = sourceBlock ? [...sourceBlock.outputShape] : defaultShapes[block.dataType];
+      } else {
+        // Multiple inputs (e.g., feature_concat) - combine shapes
+        // For now, use the first source's shape as base
+        const sourceBlock = blockMap.get(sources[0]);
+        block.inputShape = sourceBlock ? [...sourceBlock.outputShape] : defaultShapes[block.dataType];
+        
+        // For concat blocks, sum the feature dimensions
+        if (block.type === 'feature_concat') {
+          let totalFeatures = 0;
+          for (const srcId of sources) {
+            const src = blockMap.get(srcId);
+            if (src && src.outputShape.length >= 2) {
+              totalFeatures += src.outputShape[src.outputShape.length - 1];
+            }
+          }
+          if (totalFeatures > 0 && block.inputShape.length >= 2) {
+            block.inputShape[block.inputShape.length - 1] = totalFeatures;
+          }
+        }
+      }
+      
+      // Calculate output shape
+      if (blockDef) {
+        block.outputShape = (blockDef.transformShape as any)(block.inputShape, block.config);
+      }
+    }
+    
+    // Validate shapes
+    const errors: Record<string, string> = {};
+    for (const conn of conns) {
+      const fromBlock = blockMap.get(conn.from);
+      const toBlock = blockMap.get(conn.to);
+      if (fromBlock && toBlock) {
+        const fromOutput = fromBlock.outputShape;
+        const toInput = toBlock.inputShape;
+        
+        // Check dimension compatibility (allow -1 as wildcard)
+        if (fromOutput.length !== toInput.length && toInput[0] !== 0) {
+          errors[toBlock.id] = `Shape mismatch: ${fromOutput.length}D → ${toInput.length}D`;
+        }
+      }
+    }
+    setShapeErrors(errors);
+    
+    return result;
+  };
+
   const handleAddBlock = (blockType: string) => {
     const blockDef = BLOCK_TYPES[blockType as keyof typeof BLOCK_TYPES];
     if (!blockDef) return;
@@ -502,14 +616,18 @@ export default function ProcessingPage() {
     };
 
     const updatedBlocks = [...blocks, newBlock];
-    setBlocks(recalculateShapes(updatedBlocks));
+    // Use connection-based recalculation
+    setBlocks(recalculateShapesFromConnections(updatedBlocks, connections));
     setShowBlockMenu(false);
   };
 
   const handleDeleteBlock = (blockId: string) => {
     const updatedBlocks = blocks.filter(b => b.id !== blockId);
-    setBlocks(recalculateShapes(updatedBlocks));
-    setConnections(connections.filter(c => c.from !== blockId && c.to !== blockId));
+    // Remove connections involving this block
+    const newConnections = connections.filter(c => c.from !== blockId && c.to !== blockId);
+    setConnections(newConnections);
+    // Recalculate shapes with updated connections
+    setBlocks(recalculateShapesFromConnections(updatedBlocks, newConnections));
   };
 
   // Drag handlers for blocks - improved with canvas-relative positioning
@@ -648,7 +766,10 @@ export default function ProcessingPage() {
     // Check if connection already exists
     const connectionExists = connections.some(c => c.from === fromBlockId && c.to === toBlockId);
     if (!connectionExists) {
-      setConnections([...connections, { from: fromBlockId, to: toBlockId }]);
+      const newConnections = [...connections, { from: fromBlockId, to: toBlockId }];
+      setConnections(newConnections);
+      // Recalculate shapes based on new connections
+      setBlocks(prev => recalculateShapesFromConnections(prev, newConnections));
     }
     
     setIsDrawingConnection(false);
@@ -667,7 +788,10 @@ export default function ProcessingPage() {
 
   // Delete a connection
   const handleDeleteConnection = (fromId: string, toId: string) => {
-    setConnections(connections.filter(c => !(c.from === fromId && c.to === toId)));
+    const newConnections = connections.filter(c => !(c.from === fromId && c.to === toId));
+    setConnections(newConnections);
+    // Recalculate shapes after removing connection
+    setBlocks(prev => recalculateShapesFromConnections(prev, newConnections));
     setSelectedConnection(null);
     setHoveredConnection(null);
   };
@@ -675,9 +799,9 @@ export default function ProcessingPage() {
   // Get connection ID for hover/select
   const getConnectionId = (fromId: string, toId: string) => `${fromId}->${toId}`;
 
-  // Refresh pipeline shapes
+  // Refresh pipeline shapes based on current connections
   const handleRefreshShapes = () => {
-    setBlocks(recalculateShapes([...blocks]));
+    setBlocks(prev => recalculateShapesFromConnections(prev, connections));
   };
 
   // Update block config and recalculate shapes
@@ -688,7 +812,8 @@ export default function ProcessingPage() {
       }
       return block;
     });
-    setBlocks(recalculateShapes(updatedBlocks));
+    // Use connection-based recalculation
+    setBlocks(recalculateShapesFromConnections(updatedBlocks, connections));
   };
 
   const handleSavePipeline = async () => {
@@ -762,24 +887,39 @@ export default function ProcessingPage() {
                 <p className="text-slate-400 text-sm">No pipelines yet</p>
               </div>
             ) : (
-              pipelines.map(pipeline => (
-                <button
-                  key={pipeline.id}
-                  onClick={() => {
-                    setSelectedPipeline(pipeline);
-                    setBlocks(pipeline.blocks || []);
-                    setConnections(pipeline.connections || []);
-                  }}
-                  className={`w-full p-4 rounded-xl border text-left transition-all ${
-                    selectedPipeline?.id === pipeline.id
-                      ? 'border-indigo-500 bg-indigo-500/10'
-                      : 'border-slate-700 bg-slate-800/50 hover:border-slate-600'
-                  }`}
-                >
-                  <h3 className="font-medium text-white mb-1">{pipeline.name}</h3>
-                  <p className="text-slate-400 text-sm">{pipeline.blocks?.length || 0} blocks</p>
-                </button>
-              ))
+              pipelines.map(pipeline => {
+                // Extract blocks and connections from config
+                const pipelineBlocks = pipeline.config?.blocks || [];
+                const pipelineConnections = pipeline.config?.connections || [];
+                
+                return (
+                  <button
+                    key={pipeline.id}
+                    onClick={() => {
+                      setSelectedPipeline(pipeline);
+                      // Load blocks and connections from config
+                      const loadedBlocks = pipeline.config?.blocks || [];
+                      const loadedConnections = pipeline.config?.connections || [];
+                      setBlocks(loadedBlocks);
+                      setConnections(loadedConnections);
+                      // Recalculate shapes based on connections
+                      if (loadedBlocks.length > 0) {
+                        setTimeout(() => {
+                          setBlocks(prev => recalculateShapesFromConnections(prev, loadedConnections));
+                        }, 0);
+                      }
+                    }}
+                    className={`w-full p-4 rounded-xl border text-left transition-all ${
+                      selectedPipeline?.id === pipeline.id
+                        ? 'border-indigo-500 bg-indigo-500/10'
+                        : 'border-slate-700 bg-slate-800/50 hover:border-slate-600'
+                    }`}
+                  >
+                    <h3 className="font-medium text-white mb-1">{pipeline.name}</h3>
+                    <p className="text-slate-400 text-sm">{pipelineBlocks.length} blocks</p>
+                  </button>
+                );
+              })
             )}
           </div>
         </div>
