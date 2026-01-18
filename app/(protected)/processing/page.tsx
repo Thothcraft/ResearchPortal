@@ -61,26 +61,28 @@ const BLOCK_CATEGORIES = {
 
 const BLOCK_TYPES = {
   // Data Loaders (starting blocks)
+  // CSI raw data: each row has 128 values (64 complex pairs: [imag, real, imag, real, ...])
   csi_loader: {
     name: 'CSI Loader',
     icon: Wifi,
     color: 'cyan',
     category: 'loaders',
     dataTypes: ['csi'],
-    description: 'Load CSI data from file',
+    description: 'Load raw CSI data from CSV (128 values per row: 64 I/Q pairs)',
     config: { file_type: 'csv' },
-    transformShape: (input: number[]) => [1, 256, 52],
+    transformShape: (input: number[], config: any) => [config?.num_rows || 1000, 128],
     isSource: true,
   },
+  // IMU data: typically 6 channels (accel_x, accel_y, accel_z, gyro_x, gyro_y, gyro_z)
   imu_loader: {
     name: 'IMU Loader',
     icon: Activity,
     color: 'cyan',
     category: 'loaders',
     dataTypes: ['imu'],
-    description: 'Load IMU sensor data from file',
-    config: { file_type: 'json' },
-    transformShape: (input: number[]) => [1, 128, 6],
+    description: 'Load IMU sensor data (6 channels: 3-axis accel + 3-axis gyro)',
+    config: { file_type: 'json', num_rows: 1000 },
+    transformShape: (input: number[], config: any) => [config?.num_rows || 1000, 6],
     isSource: true,
   },
   mfcw_loader: {
@@ -90,40 +92,48 @@ const BLOCK_TYPES = {
     category: 'loaders',
     dataTypes: ['mfcw'],
     description: 'Load MFCW radar data',
-    config: { file_type: 'bin' },
-    transformShape: (input: number[]) => [1, 512, 8],
+    config: { file_type: 'bin', num_rows: 1000 },
+    transformShape: (input: number[], config: any) => [config?.num_rows || 1000, 256],
     isSource: true,
   },
   // CSI-specific extractors
+  // Amplitude extraction: 128 raw values → 64 amplitude values (sqrt(I² + Q²))
   amplitude_extractor: {
     name: 'Amplitude Extractor',
     icon: TrendingUp,
     color: 'green',
     category: 'extractors',
     dataTypes: ['csi'],
-    description: 'Extract amplitude from complex CSI',
+    description: 'Extract amplitude from I/Q pairs: sqrt(I² + Q²) → 64 subcarriers',
     config: {},
-    transformShape: (input: number[]) => input,
+    transformShape: (input: number[]) => [input[0], Math.floor((input[1] || 128) / 2)],
   },
+  // Phase extraction: 128 raw values → 64 phase values (atan2(I, Q))
   phase_extractor: {
     name: 'Phase Extractor',
     icon: Activity,
     color: 'green',
     category: 'extractors',
     dataTypes: ['csi'],
-    description: 'Extract phase from complex CSI',
+    description: 'Extract phase from I/Q pairs: atan2(I, Q) → 64 subcarriers',
     config: { unwrap: true },
-    transformShape: (input: number[]) => input,
+    transformShape: (input: number[]) => [input[0], Math.floor((input[1] || 128) / 2)],
   },
+  // Subcarrier filter: removes null guard subcarriers (first 4-6 and last 4-6)
+  // For 802.11n: keeps subcarriers 5-32 and 33-60 → 54 total
   subcarrier_filter: {
     name: 'Subcarrier Filter',
     icon: Filter,
     color: 'purple',
     category: 'filters',
     dataTypes: ['csi'],
-    description: 'Select specific subcarrier range',
-    config: { start_idx: 5, end_idx: 32 },
-    transformShape: (input: number[]) => [input[0], input[1], 27],
+    description: 'Remove null guard subcarriers (keeps 54 of 64)',
+    config: { start1: 5, end1: 32, start2: 33, end2: 60 },
+    transformShape: (input: number[], config: any) => {
+      const range1 = (config?.end1 || 32) - (config?.start1 || 5);
+      const range2 = (config?.end2 || 60) - (config?.start2 || 33);
+      return [input[0], range1 + range2];
+    },
   },
   // General preprocessing
   normalize: {
@@ -166,45 +176,67 @@ const BLOCK_TYPES = {
     config: { window_size: 5 },
     transformShape: (input: number[]) => input,
   },
+  // Windowing: splits data into fixed-size windows
+  // E.g., [1000, 54] with window_size=100, overlap=0.5 → [~20 windows, 100, 54]
   window_segmentation: {
     name: 'Windowing',
     icon: Maximize2,
     color: 'yellow',
     category: 'transforms',
     dataTypes: ['imu', 'csi', 'mfcw'],
-    description: 'Split into fixed-size windows',
-    config: { window_size: 128, overlap: 0.5 },
-    transformShape: (input: number[]) => [input[0] * 2, 128, input[2] || 1],
+    description: 'Split into fixed-size windows (creates 3D output)',
+    config: { window_size: 100, overlap: 0.5 },
+    transformShape: (input: number[], config: any) => {
+      const windowSize = config?.window_size || 100;
+      const overlap = config?.overlap || 0.5;
+      const step = Math.floor(windowSize * (1 - overlap));
+      const numWindows = Math.floor((input[0] - windowSize) / step) + 1;
+      return [numWindows, windowSize, input[1] || 1];
+    },
   },
+  // Flatten: converts multi-dimensional to 1D per sample
+  // E.g., [20, 100, 54] → [20, 5400]
   flatten: {
     name: 'Flatten',
     icon: Minimize2,
     color: 'orange',
     category: 'transforms',
     dataTypes: ['imu', 'csi', 'mfcw'],
-    description: 'Flatten to 1D feature vector',
+    description: 'Flatten each window to 1D feature vector',
     config: {},
-    transformShape: (input: number[]) => [input[0], (input[1] || 1) * (input[2] || 1)],
+    transformShape: (input: number[]) => {
+      if (input.length === 3) return [input[0], input[1] * input[2]];
+      return [input[0], input[1] || 1];
+    },
   },
+  // FFT: converts time domain to frequency domain
   fft_transform: {
     name: 'FFT Transform',
     icon: Zap,
     color: 'red',
     category: 'transforms',
     dataTypes: ['imu', 'csi', 'mfcw'],
-    description: 'Convert to frequency domain',
+    description: 'Convert to frequency domain (per column)',
     config: { n_fft: 256 },
-    transformShape: (input: number[]) => [input[0], Math.floor((input[1] || 128) / 2) + 1, input[2] || 1],
+    transformShape: (input: number[], config: any) => {
+      const nfft = config?.n_fft || input[1] || 128;
+      return [input[0], Math.floor(nfft / 2) + 1];
+    },
   },
+  // Feature extraction: computes statistical features per column
   feature_extraction: {
     name: 'Feature Extraction',
     icon: BarChart3,
     color: 'indigo',
     category: 'extractors',
     dataTypes: ['imu', 'csi', 'mfcw'],
-    description: 'Extract statistical features',
+    description: 'Extract statistical features (mean, std, min, max, rms)',
     config: { features: ['mean', 'std', 'min', 'max', 'rms'] },
-    transformShape: (input: number[]) => [input[0], 5 * (input[2] || 1)],
+    transformShape: (input: number[], config: any) => {
+      const numFeatures = config?.features?.length || 5;
+      const numCols = input[1] || 1;
+      return [input[0], numFeatures * numCols];
+    },
   },
   // Combiners (multi-input)
   feature_concat: {
@@ -272,6 +304,13 @@ export default function ProcessingPage() {
   const canvasRef = useRef<HTMLDivElement>(null);
   const [canvasOffset, setCanvasOffset] = useState({ x: 0, y: 0 });
   const { get, post, put } = useApi();
+
+  // Connection drawing state (Obsidian-like)
+  const [isDrawingConnection, setIsDrawingConnection] = useState(false);
+  const [connectionStart, setConnectionStart] = useState<{ blockId: string; port: 'input' | 'output' } | null>(null);
+  const [connectionEnd, setConnectionEnd] = useState<{ x: number; y: number } | null>(null);
+  const [hoveredConnection, setHoveredConnection] = useState<string | null>(null);
+  const [selectedConnection, setSelectedConnection] = useState<string | null>(null);
 
   // Block dimensions for arrow calculations
   const BLOCK_WIDTH = 220;
@@ -359,13 +398,13 @@ export default function ProcessingPage() {
   // Calculate input shape based on previous block in chain
   const getInputShapeForNewBlock = (): number[] => {
     if (blocks.length === 0) {
-      // Default input shapes by data type
+      // Default shapes for each data type (before any loader)
       const defaultShapes: Record<DataType, number[]> = {
-        imu: [1, 128, 6],      // batch, time_steps, channels (accel_xyz + gyro_xyz)
-        csi: [1, 256, 52],     // batch, subcarriers, antennas
-        mfcw: [1, 512, 8],     // batch, range_bins, doppler_bins
-        image: [1, 224, 224],  // batch, height, width
-        video: [1, 30, 224],   // batch, frames, height
+        imu: [1000, 6],       // [#rows, 6 channels]
+        csi: [1000, 128],     // [#rows, 128 raw I/Q values]
+        mfcw: [1000, 256],    // [#rows, 256 range bins]
+        image: [1, 224, 224], // [batch, height, width]
+        video: [1, 30, 224],  // [batch, frames, height]
       };
       return defaultShapes[selectedDataType];
     }
@@ -407,11 +446,12 @@ export default function ProcessingPage() {
     
     const result = [...updatedBlocks];
     
-    // First block uses default input shape
+    // Default input shapes for source blocks (before any processing)
+    // These are placeholder shapes - actual shapes come from the loader block's config
     const defaultShapes: Record<DataType, number[]> = {
-      imu: [1, 128, 6],
-      csi: [1, 256, 52],
-      mfcw: [1, 512, 8],
+      imu: [1000, 6],      // [#rows, 6 channels]
+      csi: [1000, 128],    // [#rows, 128 raw I/Q values]
+      mfcw: [1000, 256],   // [#rows, 256 range bins]
       image: [1, 224, 224],
       video: [1, 30, 224],
     };
@@ -421,14 +461,19 @@ export default function ProcessingPage() {
       const blockDef = BLOCK_TYPES[block.type as keyof typeof BLOCK_TYPES];
       
       if (i === 0) {
-        block.inputShape = defaultShapes[block.dataType];
+        // For source blocks, use their config to determine output shape
+        if ((blockDef as any)?.isSource) {
+          block.inputShape = [0]; // Source blocks have no input
+        } else {
+          block.inputShape = defaultShapes[block.dataType];
+        }
       } else {
         block.inputShape = [...result[i - 1].outputShape];
       }
       
-      // Apply transform based on block config
+      // Apply transform based on block config - pass config to transformShape
       if (blockDef) {
-        block.outputShape = blockDef.transformShape(block.inputShape);
+        block.outputShape = (blockDef.transformShape as any)(block.inputShape, block.config);
       }
     }
     
@@ -440,8 +485,10 @@ export default function ProcessingPage() {
     const blockDef = BLOCK_TYPES[blockType as keyof typeof BLOCK_TYPES];
     if (!blockDef) return;
 
-    const inputShape = getInputShapeForNewBlock();
-    const outputShape = blockDef.transformShape(inputShape);
+    const config = { ...blockDef.config };
+    const isSource = (blockDef as any)?.isSource;
+    const inputShape = isSource ? [0] : getInputShapeForNewBlock();
+    const outputShape = (blockDef.transformShape as any)(inputShape, config);
 
     const newBlock: ProcessingBlock = {
       id: `block_${Date.now()}`,
@@ -450,8 +497,8 @@ export default function ProcessingPage() {
       dataType: selectedDataType,
       inputShape,
       outputShape,
-      config: { ...blockDef.config },
-      position: { x: 150 + blocks.length * 220, y: 200 },
+      config,
+      position: { x: 50 + blocks.length * 260, y: 80 },
     };
 
     const updatedBlocks = [...blocks, newBlock];
@@ -514,11 +561,119 @@ export default function ProcessingPage() {
     const toY = toBlock.position.y + BLOCK_HEIGHT / 2;
     
     // Bezier curve control points
-    const midX = (fromX + toX) / 2;
     const controlOffset = Math.min(80, Math.abs(toX - fromX) / 3);
     
     return `M ${fromX} ${fromY} C ${fromX + controlOffset} ${fromY}, ${toX - controlOffset} ${toY}, ${toX} ${toY}`;
   };
+
+  // Get connection path from block ID to coordinates (for drawing in-progress connection)
+  const getConnectionPathFromBlockToPoint = (blockId: string, port: 'input' | 'output', endX: number, endY: number) => {
+    const block = blocks.find(b => b.id === blockId);
+    if (!block) return '';
+    
+    const startX = port === 'output' ? block.position.x + BLOCK_WIDTH : block.position.x;
+    const startY = block.position.y + BLOCK_HEIGHT / 2;
+    
+    const controlOffset = Math.min(80, Math.abs(endX - startX) / 3);
+    
+    if (port === 'output') {
+      return `M ${startX} ${startY} C ${startX + controlOffset} ${startY}, ${endX - controlOffset} ${endY}, ${endX} ${endY}`;
+    } else {
+      return `M ${endX} ${endY} C ${endX + controlOffset} ${endY}, ${startX - controlOffset} ${startY}, ${startX} ${startY}`;
+    }
+  };
+
+  // Handle starting a connection from a port
+  const handlePortMouseDown = (e: React.MouseEvent, blockId: string, port: 'input' | 'output') => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!canvasRef.current) return;
+    
+    const canvasRect = canvasRef.current.getBoundingClientRect();
+    setIsDrawingConnection(true);
+    setConnectionStart({ blockId, port });
+    setConnectionEnd({
+      x: e.clientX - canvasRect.left,
+      y: e.clientY - canvasRect.top,
+    });
+  };
+
+  // Handle mouse move while drawing connection
+  const handleConnectionMouseMove = (e: React.MouseEvent) => {
+    if (!isDrawingConnection || !canvasRef.current) return;
+    
+    const canvasRect = canvasRef.current.getBoundingClientRect();
+    setConnectionEnd({
+      x: e.clientX - canvasRect.left,
+      y: e.clientY - canvasRect.top,
+    });
+  };
+
+  // Handle completing a connection on a port
+  const handlePortMouseUp = (e: React.MouseEvent, blockId: string, port: 'input' | 'output') => {
+    e.preventDefault();
+    e.stopPropagation();
+    
+    if (!isDrawingConnection || !connectionStart) {
+      setIsDrawingConnection(false);
+      setConnectionStart(null);
+      setConnectionEnd(null);
+      return;
+    }
+    
+    // Validate connection: output -> input only, no self-connections
+    const fromPort = connectionStart.port;
+    const toPort = port;
+    
+    if (connectionStart.blockId === blockId) {
+      // Can't connect to self
+      setIsDrawingConnection(false);
+      setConnectionStart(null);
+      setConnectionEnd(null);
+      return;
+    }
+    
+    if (fromPort === toPort) {
+      // Can't connect output to output or input to input
+      setIsDrawingConnection(false);
+      setConnectionStart(null);
+      setConnectionEnd(null);
+      return;
+    }
+    
+    // Determine from and to based on port types
+    const fromBlockId = fromPort === 'output' ? connectionStart.blockId : blockId;
+    const toBlockId = fromPort === 'output' ? blockId : connectionStart.blockId;
+    
+    // Check if connection already exists
+    const connectionExists = connections.some(c => c.from === fromBlockId && c.to === toBlockId);
+    if (!connectionExists) {
+      setConnections([...connections, { from: fromBlockId, to: toBlockId }]);
+    }
+    
+    setIsDrawingConnection(false);
+    setConnectionStart(null);
+    setConnectionEnd(null);
+  };
+
+  // Handle canceling connection drawing
+  const handleConnectionMouseUp = () => {
+    if (isDrawingConnection) {
+      setIsDrawingConnection(false);
+      setConnectionStart(null);
+      setConnectionEnd(null);
+    }
+  };
+
+  // Delete a connection
+  const handleDeleteConnection = (fromId: string, toId: string) => {
+    setConnections(connections.filter(c => !(c.from === fromId && c.to === toId)));
+    setSelectedConnection(null);
+    setHoveredConnection(null);
+  };
+
+  // Get connection ID for hover/select
+  const getConnectionId = (fromId: string, toId: string) => `${fromId}->${toId}`;
 
   // Refresh pipeline shapes
   const handleRefreshShapes = () => {
@@ -734,14 +889,24 @@ export default function ProcessingPage() {
                 </div>
               )}
 
-              {/* Pipeline Canvas - SVG-based with draggable blocks */}
+              {/* Pipeline Canvas - SVG-based with draggable blocks (Obsidian-like) */}
               <div 
                 ref={canvasRef}
                 className="min-h-[500px] bg-slate-900/50 rounded-lg border border-slate-700 relative overflow-hidden"
-                onMouseMove={handleMouseMove}
-                onMouseUp={handleMouseUp}
-                onMouseLeave={handleMouseUp}
-                style={{ cursor: draggedBlock ? 'grabbing' : 'default' }}
+                onMouseMove={(e) => {
+                  handleMouseMove(e);
+                  handleConnectionMouseMove(e);
+                }}
+                onMouseUp={() => {
+                  handleMouseUp();
+                  handleConnectionMouseUp();
+                }}
+                onMouseLeave={() => {
+                  handleMouseUp();
+                  handleConnectionMouseUp();
+                }}
+                onClick={() => setSelectedConnection(null)}
+                style={{ cursor: isDrawingConnection ? 'crosshair' : draggedBlock ? 'grabbing' : 'default' }}
               >
                 {/* Grid background */}
                 <div className="absolute inset-0 opacity-20" style={{
@@ -755,12 +920,13 @@ export default function ProcessingPage() {
                       <Workflow className="w-16 h-16 text-slate-500 mx-auto mb-4" />
                       <p className="text-slate-400">Add blocks to build your pipeline</p>
                       <p className="text-slate-500 text-sm mt-2">Start with a data loader block (CSI, IMU, or MFCW)</p>
+                      <p className="text-slate-600 text-xs mt-1">Drag from output ports (green) to input ports (indigo) to connect</p>
                     </div>
                   </div>
                 ) : (
                   <>
                     {/* SVG Layer for connection arrows */}
-                    <svg className="absolute inset-0 w-full h-full pointer-events-none" style={{ zIndex: 1 }}>
+                    <svg className="absolute inset-0 w-full h-full" style={{ zIndex: 1 }}>
                       <defs>
                         <marker
                           id="arrowhead"
@@ -772,36 +938,134 @@ export default function ProcessingPage() {
                         >
                           <polygon points="0 0, 10 3.5, 0 7" fill="#818cf8" />
                         </marker>
+                        <marker
+                          id="arrowhead-hover"
+                          markerWidth="10"
+                          markerHeight="7"
+                          refX="9"
+                          refY="3.5"
+                          orient="auto"
+                        >
+                          <polygon points="0 0, 10 3.5, 0 7" fill="#f87171" />
+                        </marker>
+                        <marker
+                          id="arrowhead-drawing"
+                          markerWidth="10"
+                          markerHeight="7"
+                          refX="9"
+                          refY="3.5"
+                          orient="auto"
+                        >
+                          <polygon points="0 0, 10 3.5, 0 7" fill="#22c55e" />
+                        </marker>
                         <linearGradient id="connectionGradient" x1="0%" y1="0%" x2="100%" y2="0%">
                           <stop offset="0%" stopColor="#6366f1" />
                           <stop offset="100%" stopColor="#818cf8" />
                         </linearGradient>
+                        <linearGradient id="connectionGradientHover" x1="0%" y1="0%" x2="100%" y2="0%">
+                          <stop offset="0%" stopColor="#ef4444" />
+                          <stop offset="100%" stopColor="#f87171" />
+                        </linearGradient>
+                        <linearGradient id="connectionGradientDrawing" x1="0%" y1="0%" x2="100%" y2="0%">
+                          <stop offset="0%" stopColor="#22c55e" />
+                          <stop offset="100%" stopColor="#4ade80" />
+                        </linearGradient>
                       </defs>
-                      {/* Draw connections between sequential blocks */}
-                      {blocks.map((block, index) => {
-                        if (index < blocks.length - 1) {
-                          const nextBlock = blocks[index + 1];
-                          const path = getConnectionPath(block, nextBlock);
-                          return (
-                            <g key={`conn-${block.id}-${nextBlock.id}`}>
-                              <path
-                                d={path}
-                                fill="none"
-                                stroke="url(#connectionGradient)"
-                                strokeWidth="3"
-                                strokeLinecap="round"
-                                markerEnd="url(#arrowhead)"
-                                className="transition-all duration-150"
-                              />
-                              {/* Animated flow indicator */}
+                      
+                      {/* Draw existing connections from connections array */}
+                      {connections.map((conn) => {
+                        const fromBlock = blocks.find(b => b.id === conn.from);
+                        const toBlock = blocks.find(b => b.id === conn.to);
+                        if (!fromBlock || !toBlock) return null;
+                        
+                        const path = getConnectionPath(fromBlock, toBlock);
+                        const connId = getConnectionId(conn.from, conn.to);
+                        const isHovered = hoveredConnection === connId;
+                        const isSelected = selectedConnection === connId;
+                        
+                        return (
+                          <g key={connId}>
+                            {/* Invisible wider path for easier clicking */}
+                            <path
+                              d={path}
+                              fill="none"
+                              stroke="transparent"
+                              strokeWidth="20"
+                              style={{ cursor: 'pointer' }}
+                              onMouseEnter={() => setHoveredConnection(connId)}
+                              onMouseLeave={() => setHoveredConnection(null)}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setSelectedConnection(connId);
+                              }}
+                            />
+                            {/* Visible connection path */}
+                            <path
+                              d={path}
+                              fill="none"
+                              stroke={isHovered || isSelected ? 'url(#connectionGradientHover)' : 'url(#connectionGradient)'}
+                              strokeWidth={isHovered || isSelected ? 4 : 3}
+                              strokeLinecap="round"
+                              markerEnd={isHovered || isSelected ? 'url(#arrowhead-hover)' : 'url(#arrowhead)'}
+                              className="transition-all duration-150"
+                              style={{ pointerEvents: 'none' }}
+                            />
+                            {/* Animated flow indicator */}
+                            {!isHovered && !isSelected && (
                               <circle r="4" fill="#818cf8">
                                 <animateMotion dur="2s" repeatCount="indefinite" path={path} />
                               </circle>
-                            </g>
-                          );
-                        }
-                        return null;
+                            )}
+                            {/* Delete button when hovered/selected */}
+                            {(isHovered || isSelected) && (
+                              <g
+                                style={{ cursor: 'pointer' }}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleDeleteConnection(conn.from, conn.to);
+                                }}
+                              >
+                                <circle
+                                  cx={(fromBlock.position.x + BLOCK_WIDTH + toBlock.position.x) / 2}
+                                  cy={(fromBlock.position.y + toBlock.position.y) / 2 + BLOCK_HEIGHT / 2}
+                                  r="12"
+                                  fill="#ef4444"
+                                  className="transition-all"
+                                />
+                                <text
+                                  x={(fromBlock.position.x + BLOCK_WIDTH + toBlock.position.x) / 2}
+                                  y={(fromBlock.position.y + toBlock.position.y) / 2 + BLOCK_HEIGHT / 2 + 4}
+                                  textAnchor="middle"
+                                  fill="white"
+                                  fontSize="14"
+                                  fontWeight="bold"
+                                >
+                                  ×
+                                </text>
+                              </g>
+                            )}
+                          </g>
+                        );
                       })}
+                      
+                      {/* Drawing in-progress connection */}
+                      {isDrawingConnection && connectionStart && connectionEnd && (
+                        <path
+                          d={getConnectionPathFromBlockToPoint(
+                            connectionStart.blockId,
+                            connectionStart.port,
+                            connectionEnd.x,
+                            connectionEnd.y
+                          )}
+                          fill="none"
+                          stroke="url(#connectionGradientDrawing)"
+                          strokeWidth="3"
+                          strokeLinecap="round"
+                          strokeDasharray="8 4"
+                          markerEnd="url(#arrowhead-drawing)"
+                          style={{ pointerEvents: 'none' }}
+                        />
+                      )}
                     </svg>
 
                     {/* Blocks Layer */}
@@ -896,11 +1160,27 @@ export default function ProcessingPage() {
                               ⚙️ Configure
                             </button>
 
-                            {/* Connection ports */}
+                            {/* Connection ports - Interactive for drag-to-connect */}
+                            {/* Input port (left side) - not shown for source blocks */}
                             {!isSource && (
-                              <div className="absolute left-0 top-1/2 -translate-x-1/2 -translate-y-1/2 w-3 h-3 bg-indigo-500 rounded-full border-2 border-slate-800" />
+                              <div 
+                                className={`absolute left-0 top-1/2 -translate-x-1/2 -translate-y-1/2 w-4 h-4 bg-indigo-500 rounded-full border-2 border-slate-800 cursor-crosshair hover:scale-150 hover:bg-indigo-400 transition-all z-20 ${
+                                  isDrawingConnection && connectionStart?.port === 'output' ? 'scale-150 bg-indigo-400 animate-pulse' : ''
+                                }`}
+                                onMouseDown={(e) => handlePortMouseDown(e, block.id, 'input')}
+                                onMouseUp={(e) => handlePortMouseUp(e, block.id, 'input')}
+                                title="Input port - drag here to connect"
+                              />
                             )}
-                            <div className="absolute right-0 top-1/2 translate-x-1/2 -translate-y-1/2 w-3 h-3 bg-green-500 rounded-full border-2 border-slate-800" />
+                            {/* Output port (right side) - always shown */}
+                            <div 
+                              className={`absolute right-0 top-1/2 translate-x-1/2 -translate-y-1/2 w-4 h-4 bg-green-500 rounded-full border-2 border-slate-800 cursor-crosshair hover:scale-150 hover:bg-green-400 transition-all z-20 ${
+                                isDrawingConnection && connectionStart?.port === 'input' ? 'scale-150 bg-green-400 animate-pulse' : ''
+                              }`}
+                              onMouseDown={(e) => handlePortMouseDown(e, block.id, 'output')}
+                              onMouseUp={(e) => handlePortMouseUp(e, block.id, 'output')}
+                              title="Output port - drag from here to connect"
+                            />
                           </div>
                         </div>
                       );
