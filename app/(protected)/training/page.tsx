@@ -256,8 +256,8 @@ export default function TrainingPage() {
     data_type: 'auto' as 'auto' | 'csi' | 'imu',
     output_shape: 'flattened' as 'flattened' | 'sequence',
     optimization_method: 'none' as 'none' | 'bayesian' | 'grid',
-    // File-to-pipeline assignments: { fileId: { pipeline_id, split: 'train'|'test'|'split', split_ratio: 0.8 } }
-    file_assignments: {} as Record<number, { pipeline_id: number | null; split: 'train' | 'test' | 'split'; split_ratio: number }>,
+    // File-to-pipeline assignments: { fileId: { pipeline_id, split: 'train'|'test'|'split', split_ratio: 0.8, selected_lines: number, total_lines: number } }
+    file_assignments: {} as Record<number, { pipeline_id: number | null; split: 'train' | 'test' | 'split'; split_ratio: number; selected_lines?: number; total_lines?: number }>,
     // KNN parameters
     knn_params: {
       n_neighbors: 5,
@@ -347,6 +347,7 @@ export default function TrainingPage() {
     bayesian_search_architecture: false,
   });
   const [showAdvancedBayesian, setShowAdvancedBayesian] = useState(false);
+  const [fileLineCounts, setFileLineCounts] = useState<Record<number, { total_lines: number; data_lines: number; loading: boolean }>>({});
   const [compareModels, setCompareModels] = useState<number[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -672,6 +673,77 @@ export default function TrainingPage() {
   const handleUpdateLabel = async (fileId: number, newLbl: string) => {
     if (!selectedDataset) return;
     try { await put(`/datasets/${selectedDataset.id}/files/${fileId}/label`, { label: newLbl }); handleSelectDataset(selectedDataset); } catch { setError('Failed to update label'); }
+  };
+
+  const fetchFileLineCounts = async (files: any[]) => {
+    // Fetch line counts for all files in parallel
+    const fileIds = files.map((f: any) => f.file_id).filter(Boolean);
+    
+    // Set loading state for all files
+    setFileLineCounts(prev => {
+      const updated = { ...prev };
+      fileIds.forEach(id => {
+        updated[id] = { total_lines: 0, data_lines: 0, loading: true };
+      });
+      return updated;
+    });
+    
+    // Fetch line counts in parallel
+    const results = await Promise.all(
+      fileIds.map(async (fileId: number) => {
+        try {
+          const res = await get(`/datasets/files/${fileId}/line-count`);
+          return { fileId, data: res };
+        } catch (err) {
+          console.error(`Failed to fetch line count for file ${fileId}:`, err);
+          return { fileId, data: { data_lines: 0, total_lines: 0 } };
+        }
+      })
+    );
+    
+    // Update state with results
+    setFileLineCounts(prev => {
+      const updated = { ...prev };
+      results.forEach(({ fileId, data }) => {
+        updated[fileId] = {
+          total_lines: data.total_lines || 0,
+          data_lines: data.data_lines || 0,
+          loading: false
+        };
+      });
+      return updated;
+    });
+    
+    // Initialize file_assignments with line counts
+    setTrainingConfig(prev => {
+      const newAssignments = { ...prev.file_assignments };
+      results.forEach(({ fileId, data }) => {
+        const dataLines = data.data_lines || 0;
+        if (!newAssignments[fileId]) {
+          newAssignments[fileId] = { 
+            pipeline_id: null, 
+            split: 'split', 
+            split_ratio: 0.8,
+            selected_lines: dataLines,
+            total_lines: dataLines
+          };
+        } else {
+          newAssignments[fileId] = {
+            ...newAssignments[fileId],
+            selected_lines: newAssignments[fileId].selected_lines ?? dataLines,
+            total_lines: dataLines
+          };
+        }
+      });
+      return { ...prev, file_assignments: newAssignments };
+    });
+  };
+
+  const handleOpenTrainingConfig = async () => {
+    setShowTrainingConfig(true);
+    if (selectedDataset?.files) {
+      await fetchFileLineCounts(selectedDataset.files);
+    }
   };
 
   const handleStartTraining = async () => {
@@ -1209,7 +1281,7 @@ export default function TrainingPage() {
                       </div>
                       <div className="flex gap-2">
                         <button onClick={() => setShowAddFiles(true)} className="flex items-center gap-1 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm"><Plus className="w-4 h-4" /> Add Files</button>
-                        <button onClick={() => setShowTrainingConfig(true)} disabled={!selectedDataset.files || selectedDataset.files.length < 2} className="flex items-center gap-1 px-3 py-1.5 bg-green-600 hover:bg-green-700 disabled:bg-slate-600 disabled:cursor-not-allowed text-white rounded-lg text-sm"><Play className="w-4 h-4" /> Train</button>
+                        <button onClick={() => handleOpenTrainingConfig()} disabled={!selectedDataset.files || selectedDataset.files.length < 2} className="flex items-center gap-1 px-3 py-1.5 bg-green-600 hover:bg-green-700 disabled:bg-slate-600 disabled:cursor-not-allowed text-white rounded-lg text-sm"><Play className="w-4 h-4" /> Train</button>
                         <button onClick={() => handleDeleteDataset(selectedDataset.id)} className="flex items-center gap-1 px-3 py-1.5 bg-red-600/20 hover:bg-red-600/30 text-red-400 rounded-lg text-sm"><Trash2 className="w-4 h-4" /></button>
                       </div>
                     </div>
@@ -1615,15 +1687,46 @@ export default function TrainingPage() {
                     <div className="space-y-3">
                       {selectedDataset.files.map((file: any) => {
                         const assignment = trainingConfig.file_assignments[file.file_id] || { pipeline_id: null, split: 'split' as const, split_ratio: 0.8 };
+                        const lineCount = fileLineCounts[file.file_id];
+                        const totalLines = lineCount?.data_lines || assignment.total_lines || 0;
+                        const selectedLines = assignment.selected_lines ?? totalLines;
                         return (
                           <div key={file.file_id} className="p-3 rounded-lg border border-slate-700 bg-slate-900/30">
                             <div className="flex items-center justify-between mb-2">
                               <div>
                                 <div className="text-sm text-white font-medium">{file.filename}</div>
-                                <div className="text-xs text-slate-500">Label: <span className="text-indigo-300">{file.label}</span></div>
+                                <div className="text-xs text-slate-500">
+                                  Label: <span className="text-indigo-300">{file.label}</span>
+                                  {lineCount?.loading ? (
+                                    <span className="ml-2 text-slate-400">· Loading lines...</span>
+                                  ) : totalLines > 0 ? (
+                                    <span className="ml-2 text-slate-400">· <span className="text-green-400">{selectedLines}</span>/{totalLines} lines</span>
+                                  ) : null}
+                                </div>
                               </div>
                             </div>
-                            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                            <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+                              {/* Lines Selection */}
+                              <div>
+                                <label className="block text-xs text-slate-400 mb-1">Lines to Use</label>
+                                <div className="flex items-center gap-1">
+                                  <input
+                                    type="number"
+                                    min="1"
+                                    max={totalLines || 1}
+                                    value={selectedLines}
+                                    onChange={(e) => {
+                                      const newAssignments = { ...trainingConfig.file_assignments };
+                                      const val = Math.max(1, Math.min(totalLines || 1, parseInt(e.target.value) || 1));
+                                      newAssignments[file.file_id] = { ...assignment, selected_lines: val, total_lines: totalLines };
+                                      setTrainingConfig({ ...trainingConfig, file_assignments: newAssignments });
+                                    }}
+                                    className="w-full px-2 py-1.5 bg-slate-800 border border-slate-600 rounded text-white text-sm"
+                                    disabled={lineCount?.loading || totalLines === 0}
+                                  />
+                                  <span className="text-xs text-slate-500 whitespace-nowrap">/ {totalLines}</span>
+                                </div>
+                              </div>
                               <div>
                                 <label className="block text-xs text-slate-400 mb-1">Pipeline</label>
                                 <select
@@ -1794,11 +1897,16 @@ export default function TrainingPage() {
                   </div>
                 )}
 
-                <div className="grid grid-cols-2 gap-4">
-                  <div><label className="block text-sm text-slate-300 mb-1">Epochs</label><input type="number" value={trainingConfig.epochs} onChange={(e) => setTrainingConfig({ ...trainingConfig, epochs: parseInt(e.target.value) || 10 })} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white" /></div>
-                  <div><label className="block text-sm text-slate-300 mb-1">Batch Size</label><input type="number" value={trainingConfig.batch_size} onChange={(e) => setTrainingConfig({ ...trainingConfig, batch_size: parseInt(e.target.value) || 32 })} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white" /></div>
-                </div>
-                <div><label className="block text-sm text-slate-300 mb-1">Learning Rate</label><input type="number" step="0.0001" value={trainingConfig.learning_rate} onChange={(e) => setTrainingConfig({ ...trainingConfig, learning_rate: parseFloat(e.target.value) || 0.001 })} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white" /></div>
+                {/* DL-specific hyperparameters - hidden for ML models */}
+                {!['knn', 'svc', 'adaboost', 'xgboost'].includes(trainingConfig.model_type) && (
+                  <>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div><label className="block text-sm text-slate-300 mb-1">Epochs</label><input type="number" value={trainingConfig.epochs} onChange={(e) => setTrainingConfig({ ...trainingConfig, epochs: parseInt(e.target.value) || 10 })} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white" /></div>
+                      <div><label className="block text-sm text-slate-300 mb-1">Batch Size</label><input type="number" value={trainingConfig.batch_size} onChange={(e) => setTrainingConfig({ ...trainingConfig, batch_size: parseInt(e.target.value) || 32 })} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white" /></div>
+                    </div>
+                    <div><label className="block text-sm text-slate-300 mb-1">Learning Rate</label><input type="number" step="0.0001" value={trainingConfig.learning_rate} onChange={(e) => setTrainingConfig({ ...trainingConfig, learning_rate: parseFloat(e.target.value) || 0.001 })} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white" /></div>
+                  </>
+                )}
 
                 {(trainingConfig.model_type === 'knn' || trainingConfig.model_type === 'svc' || trainingConfig.model_type === 'adaboost' || trainingConfig.model_type === 'xgboost') && (
                   <div className="p-4 bg-slate-800/30 rounded-lg border border-slate-700">
@@ -2246,7 +2354,9 @@ export default function TrainingPage() {
                       <div>Type: <span className="text-indigo-300 font-medium">{trainingConfig.model_type}</span>
                         {!['knn', 'svc', 'adaboost', 'xgboost'].includes(trainingConfig.model_type) && <span className="text-slate-400"> ({trainingConfig.model_architecture})</span>}
                       </div>
-                      <div>Epochs: <span className="text-slate-300">{trainingConfig.epochs}</span> · Batch: <span className="text-slate-300">{trainingConfig.batch_size}</span> · LR: <span className="text-slate-300">{trainingConfig.learning_rate}</span></div>
+                      {!['knn', 'svc', 'adaboost', 'xgboost'].includes(trainingConfig.model_type) && (
+                        <div>Epochs: <span className="text-slate-300">{trainingConfig.epochs}</span> · Batch: <span className="text-slate-300">{trainingConfig.batch_size}</span> · LR: <span className="text-slate-300">{trainingConfig.learning_rate}</span></div>
+                      )}
                       {trainingConfig.model_type === 'knn' && (
                         <div className="text-xs text-slate-400">KNN: n_neighbors={trainingConfig.knn_params.n_neighbors}, weights={trainingConfig.knn_params.weights}, metric={trainingConfig.knn_params.metric}</div>
                       )}
@@ -2290,34 +2400,6 @@ export default function TrainingPage() {
                     </div>
                   </div>
 
-                  {/* Train/Test Summary */}
-                  <div className="text-sm text-slate-300 mb-4">
-                    <div className="text-xs text-slate-500 uppercase tracking-wide mb-2">Data Splits</div>
-                    <div className="flex gap-4">
-                      <div className="flex-1 p-2 bg-green-500/10 border border-green-500/30 rounded text-center">
-                        <div className="text-lg font-medium text-green-400">{((1 - trainingConfig.test_split) * 100).toFixed(0)}%</div>
-                        <div className="text-xs text-slate-400">Train</div>
-                      </div>
-                      <div className="flex-1 p-2 bg-blue-500/10 border border-blue-500/30 rounded text-center">
-                        <div className="text-lg font-medium text-blue-400">{(trainingConfig.test_split * 100).toFixed(0)}%</div>
-                        <div className="text-xs text-slate-400">Test</div>
-                      </div>
-                    </div>
-                  </div>
-                  <div>
-                    <div>
-                      <label className="block text-sm text-slate-300 mb-1">Test Split</label>
-                      <input
-                        type="number"
-                        step="0.05"
-                        min="0"
-                        max="0.9"
-                        value={trainingConfig.test_split}
-                        onChange={(e) => setTrainingConfig({ ...trainingConfig, test_split: Math.max(0, Math.min(0.9, parseFloat(e.target.value) || 0)) })}
-                        className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white"
-                      />
-                    </div>
-                  </div>
                   <div className="mt-4">
                     <label className="block text-sm text-slate-300 mb-1">Separate Test Dataset (optional)</label>
                     <select
