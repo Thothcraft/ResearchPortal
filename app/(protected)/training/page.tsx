@@ -9,6 +9,7 @@ import {
   FileText, Trash2, ChevronRight, BarChart3, CheckCircle, Clock, AlertCircle,
   Download, Rocket, Loader2, X, XCircle, Edit2, TrendingUp,
 } from 'lucide-react';
+import FigureExport from '@/components/FigureExport';
 
 const PREPROCESSING_STEP_HELP: Record<string, { title: string; details: string }> = {
   csi_loader: {
@@ -3083,6 +3084,14 @@ export default function TrainingPage() {
                     <p className="text-xs text-slate-500 mt-2">Rows: True labels, Columns: Predicted labels</p>
                   </div>
                 </div>
+              )}
+              
+              {/* Publication-Ready Figure Export */}
+              {selectedJob.status === 'completed' && (
+                <FigureExport 
+                  jobId={selectedJob.job_id} 
+                  onError={(error) => console.error('Figure export error:', error)}
+                />
               )}
               </div>
               <div className="bg-slate-800/50 rounded-lg p-4">
