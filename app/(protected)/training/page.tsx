@@ -1801,14 +1801,28 @@ export default function TrainingPage() {
                     
                     files.forEach((f: any) => {
                       const a = trainingConfig.file_assignments[f.file_id];
+                      const lineInfo = fileLineCounts[f.file_id];
+                      const totalLines = a?.total_lines || lineInfo?.data_lines || 0;
+                      const selectedLines = a?.selected_lines ?? totalLines;
+                      
                       if (!a || a.split === 'split') {
-                        splitFiles.push({ ...f, ratio: a?.split_ratio || 0.8 });
+                        splitFiles.push({ ...f, ratio: a?.split_ratio || 0.8, totalLines, selectedLines });
                       } else if (a.split === 'train') {
-                        trainOnlyFiles.push(f);
+                        trainOnlyFiles.push({ ...f, totalLines, selectedLines });
                       } else if (a.split === 'test') {
-                        testOnlyFiles.push(f);
+                        testOnlyFiles.push({ ...f, totalLines, selectedLines });
                       }
                     });
+                    
+                    // Calculate line counts
+                    const trainOnlyLines = trainOnlyFiles.reduce((sum, f) => sum + (f.selectedLines || 0), 0);
+                    const testOnlyLines = testOnlyFiles.reduce((sum, f) => sum + (f.selectedLines || 0), 0);
+                    const splitTrainLines = splitFiles.reduce((sum, f) => sum + Math.floor((f.selectedLines || 0) * f.ratio), 0);
+                    const splitTestLines = splitFiles.reduce((sum, f) => sum + Math.ceil((f.selectedLines || 0) * (1 - f.ratio)), 0);
+                    
+                    const totalTrainLines = trainOnlyLines + splitTrainLines;
+                    const totalTestLines = testOnlyLines + splitTestLines;
+                    const totalLines = totalTrainLines + totalTestLines;
                     
                     // Calculate sizes
                     const trainOnlySize = trainOnlyFiles.reduce((sum, f) => sum + (f.size || 0), 0);
@@ -1819,14 +1833,31 @@ export default function TrainingPage() {
                     const totalTrainSize = trainOnlySize + splitTrainSize;
                     const totalTestSize = testOnlySize + splitTestSize;
                     
-                    const trainLabels = new Set([
-                      ...trainOnlyFiles.map((f: any) => f.label),
-                      ...splitFiles.map((f: any) => f.label)
-                    ]);
-                    const testLabels = new Set([
-                      ...testOnlyFiles.map((f: any) => f.label),
-                      ...splitFiles.map((f: any) => f.label)
-                    ]);
+                    // Group by label for detailed breakdown
+                    const trainLabelCounts: Record<string, { files: number; lines: number }> = {};
+                    const testLabelCounts: Record<string, { files: number; lines: number }> = {};
+                    
+                    trainOnlyFiles.forEach((f: any) => {
+                      if (!trainLabelCounts[f.label]) trainLabelCounts[f.label] = { files: 0, lines: 0 };
+                      trainLabelCounts[f.label].files++;
+                      trainLabelCounts[f.label].lines += f.selectedLines || 0;
+                    });
+                    splitFiles.forEach((f: any) => {
+                      if (!trainLabelCounts[f.label]) trainLabelCounts[f.label] = { files: 0, lines: 0 };
+                      trainLabelCounts[f.label].files++;
+                      trainLabelCounts[f.label].lines += Math.floor((f.selectedLines || 0) * f.ratio);
+                    });
+                    
+                    testOnlyFiles.forEach((f: any) => {
+                      if (!testLabelCounts[f.label]) testLabelCounts[f.label] = { files: 0, lines: 0 };
+                      testLabelCounts[f.label].files++;
+                      testLabelCounts[f.label].lines += f.selectedLines || 0;
+                    });
+                    splitFiles.forEach((f: any) => {
+                      if (!testLabelCounts[f.label]) testLabelCounts[f.label] = { files: 0, lines: 0 };
+                      testLabelCounts[f.label].files++;
+                      testLabelCounts[f.label].lines += Math.ceil((f.selectedLines || 0) * (1 - f.ratio));
+                    });
                     
                     const formatSize = (bytes: number) => {
                       if (bytes === 0) return '0 B';
@@ -1835,26 +1866,89 @@ export default function TrainingPage() {
                       return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
                     };
                     
+                    const formatLines = (n: number) => n.toLocaleString();
+                    
                     return (
-                      <div className="grid grid-cols-2 gap-4">
-                        <div className="p-3 bg-green-500/10 border border-green-500/30 rounded-lg">
-                          <div className="text-sm font-medium text-green-400 mb-2">Training Set</div>
-                          <div className="text-xs text-slate-300 space-y-1">
-                            <div>Train-only files: <span className="text-white font-medium">{trainOnlyFiles.length}</span></div>
-                            <div>From split files: <span className="text-white font-medium">{splitFiles.length}</span> (partial)</div>
-                            <div>Est. size: <span className="text-white font-medium">{formatSize(totalTrainSize)}</span></div>
-                            <div>Labels: <span className="text-green-300">{Array.from(trainLabels).join(', ') || 'None'}</span></div>
+                      <div className="space-y-4">
+                        {/* Overall Stats */}
+                        <div className="flex items-center gap-4 text-xs text-slate-400 pb-3 border-b border-slate-700">
+                          <span>Total files: <span className="text-white font-medium">{files.length}</span></span>
+                          <span>Total lines: <span className="text-white font-medium">{formatLines(totalLines)}</span></span>
+                          <span>Train/Test ratio: <span className="text-white font-medium">{totalLines > 0 ? `${((totalTrainLines / totalLines) * 100).toFixed(0)}%` : '0%'} / {totalLines > 0 ? `${((totalTestLines / totalLines) * 100).toFixed(0)}%` : '0%'}</span></span>
+                        </div>
+                        
+                        <div className="grid grid-cols-2 gap-4">
+                          {/* Training Set */}
+                          <div className="p-3 bg-green-500/10 border border-green-500/30 rounded-lg">
+                            <div className="text-sm font-medium text-green-400 mb-2">Training Set (First {totalLines > 0 ? `${((totalTrainLines / totalLines) * 100).toFixed(0)}%` : '0%'})</div>
+                            <div className="text-xs text-slate-300 space-y-1">
+                              <div className="flex justify-between">
+                                <span>Total lines:</span>
+                                <span className="text-white font-medium">{formatLines(totalTrainLines)}</span>
+                              </div>
+                              <div className="flex justify-between">
+                                <span>Train-only files:</span>
+                                <span className="text-white font-medium">{trainOnlyFiles.length} ({formatLines(trainOnlyLines)} lines)</span>
+                              </div>
+                              <div className="flex justify-between">
+                                <span>From split files:</span>
+                                <span className="text-white font-medium">{splitFiles.length} ({formatLines(splitTrainLines)} lines)</span>
+                              </div>
+                              <div className="flex justify-between">
+                                <span>Est. size:</span>
+                                <span className="text-white font-medium">{formatSize(totalTrainSize)}</span>
+                              </div>
+                              <div className="mt-2 pt-2 border-t border-green-500/20">
+                                <div className="text-green-300 font-medium mb-1">Labels:</div>
+                                {Object.entries(trainLabelCounts).map(([label, info]) => (
+                                  <div key={label} className="flex justify-between text-slate-400">
+                                    <span>{label}:</span>
+                                    <span className="text-green-300">{info.files} files, {formatLines(info.lines)} lines</span>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          </div>
+                          
+                          {/* Test Set */}
+                          <div className="p-3 bg-blue-500/10 border border-blue-500/30 rounded-lg">
+                            <div className="text-sm font-medium text-blue-400 mb-2">Test Set (Last {totalLines > 0 ? `${((totalTestLines / totalLines) * 100).toFixed(0)}%` : '0%'})</div>
+                            <div className="text-xs text-slate-300 space-y-1">
+                              <div className="flex justify-between">
+                                <span>Total lines:</span>
+                                <span className="text-white font-medium">{formatLines(totalTestLines)}</span>
+                              </div>
+                              <div className="flex justify-between">
+                                <span>Test-only files:</span>
+                                <span className="text-white font-medium">{testOnlyFiles.length} ({formatLines(testOnlyLines)} lines)</span>
+                              </div>
+                              <div className="flex justify-between">
+                                <span>From split files:</span>
+                                <span className="text-white font-medium">{splitFiles.length} ({formatLines(splitTestLines)} lines)</span>
+                              </div>
+                              <div className="flex justify-between">
+                                <span>Est. size:</span>
+                                <span className="text-white font-medium">{formatSize(totalTestSize)}</span>
+                              </div>
+                              <div className="mt-2 pt-2 border-t border-blue-500/20">
+                                <div className="text-blue-300 font-medium mb-1">Labels:</div>
+                                {Object.entries(testLabelCounts).map(([label, info]) => (
+                                  <div key={label} className="flex justify-between text-slate-400">
+                                    <span>{label}:</span>
+                                    <span className="text-blue-300">{info.files} files, {formatLines(info.lines)} lines</span>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
                           </div>
                         </div>
-                        <div className="p-3 bg-blue-500/10 border border-blue-500/30 rounded-lg">
-                          <div className="text-sm font-medium text-blue-400 mb-2">Test Set</div>
-                          <div className="text-xs text-slate-300 space-y-1">
-                            <div>Test-only files: <span className="text-white font-medium">{testOnlyFiles.length}</span></div>
-                            <div>From split files: <span className="text-white font-medium">{splitFiles.length}</span> (partial)</div>
-                            <div>Est. size: <span className="text-white font-medium">{formatSize(totalTestSize)}</span></div>
-                            <div>Labels: <span className="text-blue-300">{Array.from(testLabels).join(', ') || 'None'}</span></div>
+                        
+                        {/* Warning if labels are imbalanced */}
+                        {Object.keys(trainLabelCounts).length !== Object.keys(testLabelCounts).length && (
+                          <div className="p-2 bg-yellow-500/10 border border-yellow-500/30 rounded-lg text-xs text-yellow-300">
+                            ⚠️ Warning: Train and test sets have different labels. Consider adjusting file splits to ensure all labels are represented in both sets.
                           </div>
-                        </div>
+                        )}
                       </div>
                     );
                   })()}
