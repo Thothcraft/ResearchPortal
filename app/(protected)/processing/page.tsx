@@ -26,6 +26,14 @@ import {
   X,
   RefreshCw,
   GripVertical,
+  ZoomIn,
+  ZoomOut,
+  Move,
+  ChevronUp,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  RotateCcw,
 } from 'lucide-react';
 
 type DataType = 'imu' | 'csi' | 'mfcw' | 'image' | 'video';
@@ -308,6 +316,10 @@ export default function ProcessingPage() {
   const [shapeErrors, setShapeErrors] = useState<Record<string, string>>({});
   const canvasRef = useRef<HTMLDivElement>(null);
   const [canvasOffset, setCanvasOffset] = useState({ x: 0, y: 0 });
+  const [canvasZoom, setCanvasZoom] = useState(1);
+  const [canvasPan, setCanvasPan] = useState({ x: 0, y: 0 });
+  const [isPanning, setIsPanning] = useState(false);
+  const [panStart, setPanStart] = useState({ x: 0, y: 0 });
   const { get, post, put } = useApi();
 
   // Connection drawing state (Obsidian-like)
@@ -850,6 +862,57 @@ export default function ProcessingPage() {
     return colorMap[blockDef?.color || 'blue'] || colorMap.blue;
   };
 
+  // Zoom and pan controls
+  const handleZoomIn = () => setCanvasZoom(prev => Math.min(prev + 0.25, 2));
+  const handleZoomOut = () => setCanvasZoom(prev => Math.max(prev - 0.25, 0.25));
+  const handleResetView = () => {
+    setCanvasZoom(1);
+    setCanvasPan({ x: 0, y: 0 });
+  };
+  const handlePanDirection = (direction: 'up' | 'down' | 'left' | 'right') => {
+    const step = 50;
+    setCanvasPan(prev => {
+      switch (direction) {
+        case 'up': return { ...prev, y: prev.y + step };
+        case 'down': return { ...prev, y: prev.y - step };
+        case 'left': return { ...prev, x: prev.x + step };
+        case 'right': return { ...prev, x: prev.x - step };
+        default: return prev;
+      }
+    });
+  };
+
+  // Handle middle mouse button panning
+  const handleCanvasMouseDown = (e: React.MouseEvent) => {
+    if (e.button === 1 || (e.button === 0 && e.altKey)) {
+      e.preventDefault();
+      setIsPanning(true);
+      setPanStart({ x: e.clientX - canvasPan.x, y: e.clientY - canvasPan.y });
+    }
+  };
+
+  const handleCanvasPanMove = (e: React.MouseEvent) => {
+    if (isPanning) {
+      setCanvasPan({
+        x: e.clientX - panStart.x,
+        y: e.clientY - panStart.y,
+      });
+    }
+  };
+
+  const handleCanvasPanEnd = () => {
+    setIsPanning(false);
+  };
+
+  // Handle mouse wheel zoom
+  const handleCanvasWheel = (e: React.WheelEvent) => {
+    if (e.ctrlKey || e.metaKey) {
+      e.preventDefault();
+      const delta = e.deltaY > 0 ? -0.1 : 0.1;
+      setCanvasZoom(prev => Math.max(0.25, Math.min(2, prev + delta)));
+    }
+  };
+
   return (
     <div className="p-8">
       {/* Header */}
@@ -1036,22 +1099,93 @@ export default function ProcessingPage() {
                 onMouseMove={(e) => {
                   handleMouseMove(e);
                   handleConnectionMouseMove(e);
+                  handleCanvasPanMove(e);
                 }}
+                onMouseDown={handleCanvasMouseDown}
                 onMouseUp={() => {
                   handleMouseUp();
                   handleConnectionMouseUp();
+                  handleCanvasPanEnd();
                 }}
                 onMouseLeave={() => {
                   handleMouseUp();
                   handleConnectionMouseUp();
+                  handleCanvasPanEnd();
                 }}
+                onWheel={handleCanvasWheel}
                 onClick={() => setSelectedConnection(null)}
-                style={{ cursor: isDrawingConnection ? 'crosshair' : draggedBlock ? 'grabbing' : 'default' }}
+                style={{ cursor: isPanning ? 'grabbing' : isDrawingConnection ? 'crosshair' : draggedBlock ? 'grabbing' : 'default' }}
               >
+                {/* Zoom/Pan Controls */}
+                <div className="absolute top-3 right-3 z-20 flex flex-col gap-1 bg-slate-800/90 rounded-lg p-2 border border-slate-600">
+                  {/* Zoom controls */}
+                  <div className="flex items-center gap-1">
+                    <button
+                      onClick={handleZoomOut}
+                      className="p-1.5 hover:bg-slate-700 rounded text-slate-400 hover:text-white transition-colors"
+                      title="Zoom Out (Ctrl+Scroll)"
+                    >
+                      <ZoomOut className="w-4 h-4" />
+                    </button>
+                    <span className="text-xs text-slate-400 w-12 text-center">{Math.round(canvasZoom * 100)}%</span>
+                    <button
+                      onClick={handleZoomIn}
+                      className="p-1.5 hover:bg-slate-700 rounded text-slate-400 hover:text-white transition-colors"
+                      title="Zoom In (Ctrl+Scroll)"
+                    >
+                      <ZoomIn className="w-4 h-4" />
+                    </button>
+                  </div>
+                  
+                  {/* Direction controls */}
+                  <div className="flex flex-col items-center gap-0.5 mt-1">
+                    <button
+                      onClick={() => handlePanDirection('up')}
+                      className="p-1 hover:bg-slate-700 rounded text-slate-400 hover:text-white transition-colors"
+                      title="Pan Up"
+                    >
+                      <ChevronUp className="w-4 h-4" />
+                    </button>
+                    <div className="flex items-center gap-0.5">
+                      <button
+                        onClick={() => handlePanDirection('left')}
+                        className="p-1 hover:bg-slate-700 rounded text-slate-400 hover:text-white transition-colors"
+                        title="Pan Left"
+                      >
+                        <ChevronLeft className="w-4 h-4" />
+                      </button>
+                      <button
+                        onClick={handleResetView}
+                        className="p-1 hover:bg-slate-700 rounded text-slate-400 hover:text-white transition-colors"
+                        title="Reset View"
+                      >
+                        <RotateCcw className="w-4 h-4" />
+                      </button>
+                      <button
+                        onClick={() => handlePanDirection('right')}
+                        className="p-1 hover:bg-slate-700 rounded text-slate-400 hover:text-white transition-colors"
+                        title="Pan Right"
+                      >
+                        <ChevronRight className="w-4 h-4" />
+                      </button>
+                    </div>
+                    <button
+                      onClick={() => handlePanDirection('down')}
+                      className="p-1 hover:bg-slate-700 rounded text-slate-400 hover:text-white transition-colors"
+                      title="Pan Down"
+                    >
+                      <ChevronDown className="w-4 h-4" />
+                    </button>
+                  </div>
+                  
+                  <p className="text-[10px] text-slate-500 text-center mt-1">Alt+Drag to pan</p>
+                </div>
+
                 {/* Grid background */}
                 <div className="absolute inset-0 opacity-20" style={{
                   backgroundImage: 'radial-gradient(circle, #475569 1px, transparent 1px)',
-                  backgroundSize: '20px 20px'
+                  backgroundSize: `${20 * canvasZoom}px ${20 * canvasZoom}px`,
+                  transform: `translate(${canvasPan.x}px, ${canvasPan.y}px)`
                 }} />
 
                 {blocks.length === 0 ? (
@@ -1066,7 +1200,7 @@ export default function ProcessingPage() {
                 ) : (
                   <>
                     {/* SVG Layer for connection arrows */}
-                    <svg className="absolute inset-0 w-full h-full" style={{ zIndex: 1 }}>
+                    <svg className="absolute inset-0 w-full h-full" style={{ zIndex: 1, transform: `translate(${canvasPan.x}px, ${canvasPan.y}px) scale(${canvasZoom})`, transformOrigin: '0 0' }}>
                       <defs>
                         <marker
                           id="arrowhead"
@@ -1208,7 +1342,15 @@ export default function ProcessingPage() {
                       )}
                     </svg>
 
-                    {/* Blocks Layer */}
+                    {/* Blocks Layer - with zoom/pan transform */}
+                    <div 
+                      className="absolute inset-0" 
+                      style={{ 
+                        transform: `translate(${canvasPan.x}px, ${canvasPan.y}px) scale(${canvasZoom})`, 
+                        transformOrigin: '0 0',
+                        zIndex: 10 
+                      }}
+                    >
                     {blocks.map((block, index) => {
                       const Icon = getBlockIcon(block.type);
                       const colorClass = getBlockColor(block.type);
@@ -1325,6 +1467,7 @@ export default function ProcessingPage() {
                         </div>
                       );
                     })}
+                    </div>
                   </>
                 )}
               </div>
