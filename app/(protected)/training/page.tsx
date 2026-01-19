@@ -251,7 +251,7 @@ export default function TrainingPage() {
     learning_rate: 0.001, 
     model_name: '', 
     test_dataset_id: null as number | null,
-    window_size: 128,
+    window_size: 1000,
     test_split: 0.2,
     preprocessing_pipeline_id: null as number | null,
     data_type: 'auto' as 'auto' | 'csi' | 'imu',
@@ -483,6 +483,15 @@ export default function TrainingPage() {
     setPreprocessingPreview(null);
     setPreviewError(null);
   }, [showTrainingConfig]);
+
+  // Update window_size based on data_type (1000 for CSI, 128 for IMU)
+  useEffect(() => {
+    const defaultWindowSize = trainingConfig.data_type === 'csi' ? 1000 : trainingConfig.data_type === 'imu' ? 128 : 1000;
+    if (trainingConfig.window_size !== defaultWindowSize) {
+      setTrainingConfig(prev => ({ ...prev, window_size: defaultWindowSize }));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [trainingConfig.data_type]);
 
   useEffect(() => {
     if (!showTrainingConfig || !selectedDataset) return;
@@ -1699,7 +1708,7 @@ export default function TrainingPage() {
                       <span className="text-yellow-400 font-medium">Default (Auto-detect)</span>: Uses built-in preprocessing based on detected data type:
                     </p>
                     <ul className="text-xs text-slate-500 mt-1 ml-4 list-disc">
-                      <li><span className="text-cyan-400">CSI</span>: Extract amplitude+phase → Filter subcarriers (5-32) → Window (128 rows) → Flatten</li>
+                      <li><span className="text-cyan-400">CSI</span>: Extract amplitude+phase → Filter subcarriers (5-32) → Window (1000 rows) → Flatten</li>
                       <li><span className="text-green-400">IMU</span>: Window (128 rows) → Flatten to feature vector</li>
                     </ul>
                     <p className="text-xs text-slate-500 mt-1">
