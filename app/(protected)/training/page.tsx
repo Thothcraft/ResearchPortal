@@ -1678,11 +1678,25 @@ export default function TrainingPage() {
                 <div className="p-4 bg-slate-800/30 rounded-lg border border-slate-700">
                   <div className="flex items-center justify-between mb-3">
                     <h4 className="text-sm font-medium text-indigo-400">File → Pipeline → Split Assignment</h4>
-                    {pipelinesLoading ? <span className="text-xs text-slate-500">Loading pipelines...</span> : null}
+                    {pipelinesLoading ? <span className="text-xs text-slate-500">Loading pipelines...</span> : 
+                      <span className="text-xs text-slate-500">{preprocessingPipelines.length} saved pipeline(s)</span>
+                    }
                   </div>
-                  <p className="text-xs text-slate-500 mb-4">
-                    Assign a preprocessing pipeline and train/test split to each file. Pipelines are created in the Preprocessing page.
+                  <p className="text-xs text-slate-500 mb-2">
+                    Assign a preprocessing pipeline and train/test split to each file.
                   </p>
+                  <div className="p-2 bg-slate-900/50 rounded border border-slate-700 mb-4">
+                    <p className="text-xs text-slate-400">
+                      <span className="text-yellow-400 font-medium">Default (Auto-detect)</span>: Uses built-in preprocessing based on detected data type:
+                    </p>
+                    <ul className="text-xs text-slate-500 mt-1 ml-4 list-disc">
+                      <li><span className="text-cyan-400">CSI</span>: Extract amplitude+phase → Filter subcarriers (5-32) → Window (1000 rows) → Flatten</li>
+                      <li><span className="text-green-400">IMU</span>: Window (128 rows) → Flatten to feature vector</li>
+                    </ul>
+                    <p className="text-xs text-slate-500 mt-1">
+                      For custom preprocessing, create a pipeline in the <span className="text-indigo-400">Processing</span> page.
+                    </p>
+                  </div>
 
                   {selectedDataset?.files && selectedDataset.files.length > 0 ? (
                     <div className="space-y-3">
@@ -1739,9 +1753,12 @@ export default function TrainingPage() {
                                   }}
                                   className="w-full px-2 py-1.5 bg-slate-800 border border-slate-600 rounded text-white text-sm"
                                 >
-                                  <option value="">Default Pipeline</option>
+                                  <option value="">Default (Auto-detect)</option>
+                                  {preprocessingPipelines.length === 0 && !pipelinesLoading && (
+                                    <option disabled>No saved pipelines - create in Processing page</option>
+                                  )}
                                   {preprocessingPipelines.map(p => (
-                                    <option key={p.id} value={p.id}>{p.name}</option>
+                                    <option key={p.id} value={p.id}>{p.name} ({p.data_type}, {p.output_shape})</option>
                                   ))}
                                 </select>
                               </div>
@@ -1950,17 +1967,17 @@ export default function TrainingPage() {
                           const errors: string[] = [];
                           
                           // Check if we have at least 2 labels
-                          const allLabels = new Set([...Object.keys(trainLabelCounts), ...Object.keys(testLabelCounts)]);
-                          if (allLabels.size < 2) {
-                            errors.push(`Dataset needs at least 2 different labels for classification. Found: ${allLabels.size}`);
+                          const allLabelsArr = Array.from(new Set([...Object.keys(trainLabelCounts), ...Object.keys(testLabelCounts)]));
+                          if (allLabelsArr.length < 2) {
+                            errors.push(`Dataset needs at least 2 different labels for classification. Found: ${allLabelsArr.length}`);
                           }
                           
                           // Check if train and test have same labels
-                          const trainLabelsSet = new Set(Object.keys(trainLabelCounts));
-                          const testLabelsSet = new Set(Object.keys(testLabelCounts));
+                          const trainLabelsArr = Object.keys(trainLabelCounts);
+                          const testLabelsArr = Object.keys(testLabelCounts);
                           
-                          const missingInTrain = [...allLabels].filter(l => !trainLabelsSet.has(l));
-                          const missingInTest = [...allLabels].filter(l => !testLabelsSet.has(l));
+                          const missingInTrain = allLabelsArr.filter(l => !trainLabelsArr.includes(l));
+                          const missingInTest = allLabelsArr.filter(l => !testLabelsArr.includes(l));
                           
                           if (missingInTrain.length > 0) {
                             errors.push(`Training set is missing labels: ${missingInTrain.join(', ')}. All labels must be in training data.`);
@@ -2015,6 +2032,68 @@ export default function TrainingPage() {
 
             {trainingWizardStep === 1 && (
               <div className="space-y-4">
+                {/* Input/Output Shape Information from Preprocessing */}
+                {preprocessingPreview && (
+                  <div className="p-4 bg-slate-800/30 rounded-lg border border-slate-700">
+                    <h4 className="text-sm font-medium text-indigo-400 mb-3">Data Shape Information</h4>
+                    <div className="grid grid-cols-2 gap-4 text-sm">
+                      <div>
+                        <span className="text-slate-400">Data Type:</span>
+                        <span className="ml-2 text-cyan-400 font-medium">{preprocessingPreview.data_type?.toUpperCase() || 'Unknown'}</span>
+                      </div>
+                      <div>
+                        <span className="text-slate-400">Output Shape:</span>
+                        <span className="ml-2 text-green-400 font-medium">{trainingConfig.output_shape}</span>
+                      </div>
+                      {preprocessingPreview.stages && preprocessingPreview.stages.length > 0 && (
+                        <>
+                          <div>
+                            <span className="text-slate-400">Input Shape:</span>
+                            <span className="ml-2 text-yellow-400 font-mono text-xs">
+                              {preprocessingPreview.stages[0]?.shape ? `[${preprocessingPreview.stages[0].shape.join(', ')}]` : 'N/A'}
+                            </span>
+                          </div>
+                          <div>
+                            <span className="text-slate-400">Final Shape:</span>
+                            <span className="ml-2 text-purple-400 font-mono text-xs">
+                              {preprocessingPreview.stages[preprocessingPreview.stages.length - 1]?.shape 
+                                ? `[${preprocessingPreview.stages[preprocessingPreview.stages.length - 1].shape?.join(', ')}]` 
+                                : 'N/A'}
+                            </span>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                    {preprocessingPreview.stages && preprocessingPreview.stages.length > 0 && (
+                      <div className="mt-3 pt-3 border-t border-slate-700">
+                        <p className="text-xs text-slate-500 mb-2">Preprocessing Pipeline Stages:</p>
+                        <div className="flex flex-wrap gap-2">
+                          {preprocessingPreview.stages.map((stage, idx) => (
+                            <div key={idx} className="flex items-center gap-1">
+                              <span className="px-2 py-1 bg-slate-700 rounded text-xs text-slate-300">
+                                {stage.name}
+                                {stage.shape && <span className="text-slate-500 ml-1">[{stage.shape.join('×')}]</span>}
+                              </span>
+                              {idx < preprocessingPreview.stages.length - 1 && <span className="text-slate-600">→</span>}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    <p className="text-xs text-slate-500 mt-3">
+                      {trainingConfig.output_shape === 'flattened' 
+                        ? '✓ Flattened output is suitable for ML models (KNN, SVC, AdaBoost) and DL models'
+                        : '✓ Sequence output is suitable for DL models (CNN-LSTM) that process temporal patterns'}
+                    </p>
+                  </div>
+                )}
+                
+                {previewLoading && (
+                  <div className="p-4 bg-slate-800/30 rounded-lg border border-slate-700 text-center">
+                    <span className="text-slate-400 text-sm">Loading preprocessing preview...</span>
+                  </div>
+                )}
+
                 <div>
                   <label className="block text-sm text-slate-300 mb-1">Model Type</label>
                   <select 
