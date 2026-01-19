@@ -1386,7 +1386,16 @@ export default function TrainingPage() {
                         </button>
                       </div>
                     </div>
-                    <div className="mb-4"><div className="flex justify-between text-sm text-slate-400 mb-1"><span>{['knn', 'svc', 'adaboost', 'xgboost'].includes(job.model_type) ? (job.status === 'running' ? 'Training ML model...' : job.status === 'completed' ? 'Complete' : 'Pending') : `Epoch ${job.current_epoch}/${job.total_epochs}`}</span><span>{prog.toFixed(0)}%</span></div><div className="w-full bg-slate-700 rounded-full h-2"><div className={`h-2 rounded-full transition-all ${['knn', 'svc', 'adaboost', 'xgboost'].includes(job.model_type) && job.status === 'running' ? 'bg-yellow-500 animate-pulse' : 'bg-indigo-500'}`} style={{ width: `${['knn', 'svc', 'adaboost', 'xgboost'].includes(job.model_type) && job.status === 'running' ? 100 : prog}%` }} /></div></div>
+                    <div className="mb-4"><div className="flex justify-between text-sm text-slate-400 mb-1"><span>{['knn', 'svc', 'adaboost', 'xgboost'].includes(job.model_type) ? (job.status === 'running' ? (() => {
+                      const config = typeof job.config === 'string' ? JSON.parse(job.config || '{}') : (job.config || {});
+                      const stage = config.current_stage || 'initializing';
+                      const stageLabels: Record<string, string> = {
+                        'initializing': 'Initializing model...',
+                        'fitting': 'Training model (this may take a while)...',
+                        'computing_metrics': 'Computing metrics...'
+                      };
+                      return stageLabels[stage] || 'Training ML model...';
+                    })() : job.status === 'completed' ? 'Complete' : 'Pending') : `Epoch ${job.current_epoch}/${job.total_epochs}`}</span><span>{prog.toFixed(0)}%</span></div><div className="w-full bg-slate-700 rounded-full h-2"><div className={`h-2 rounded-full transition-all ${['knn', 'svc', 'adaboost', 'xgboost'].includes(job.model_type) && job.status === 'running' ? 'bg-yellow-500 animate-pulse' : 'bg-indigo-500'}`} style={{ width: `${['knn', 'svc', 'adaboost', 'xgboost'].includes(job.model_type) && job.status === 'running' ? 100 : prog}%` }} /></div></div>
                     <div className="grid grid-cols-4 gap-4">
                       <div className="bg-slate-900/50 rounded-lg p-3"><p className="text-slate-500 text-xs mb-1">Loss</p><p className="text-white font-medium">{job.metrics?.loss && job.metrics.loss.length > 0 ? job.metrics.loss[job.metrics.loss.length - 1]?.toFixed(4) : 'N/A'}</p></div>
                       <div className="bg-slate-900/50 rounded-lg p-3"><p className="text-slate-500 text-xs mb-1">Accuracy</p><p className="text-white font-medium">{job.metrics?.accuracy && job.metrics.accuracy.length > 0 ? `${(job.metrics.accuracy[job.metrics.accuracy.length - 1] * 100).toFixed(2)}%` : 'N/A'}</p></div>
@@ -1690,7 +1699,7 @@ export default function TrainingPage() {
                       <span className="text-yellow-400 font-medium">Default (Auto-detect)</span>: Uses built-in preprocessing based on detected data type:
                     </p>
                     <ul className="text-xs text-slate-500 mt-1 ml-4 list-disc">
-                      <li><span className="text-cyan-400">CSI</span>: Extract amplitude+phase → Filter subcarriers (5-32) → Window (1000 rows) → Flatten</li>
+                      <li><span className="text-cyan-400">CSI</span>: Extract amplitude+phase → Filter subcarriers (5-32) → Window (128 rows) → Flatten</li>
                       <li><span className="text-green-400">IMU</span>: Window (128 rows) → Flatten to feature vector</li>
                     </ul>
                     <p className="text-xs text-slate-500 mt-1">
