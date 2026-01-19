@@ -1943,12 +1943,68 @@ export default function TrainingPage() {
                           </div>
                         </div>
                         
-                        {/* Warning if labels are imbalanced */}
-                        {Object.keys(trainLabelCounts).length !== Object.keys(testLabelCounts).length && (
-                          <div className="p-2 bg-yellow-500/10 border border-yellow-500/30 rounded-lg text-xs text-yellow-300">
-                            ⚠️ Warning: Train and test sets have different labels. Consider adjusting file splits to ensure all labels are represented in both sets.
-                          </div>
-                        )}
+                        {/* Validation warnings and errors */}
+                        {(() => {
+                          const warnings: string[] = [];
+                          const errors: string[] = [];
+                          
+                          // Check if we have at least 2 labels
+                          const allLabels = new Set([...Object.keys(trainLabelCounts), ...Object.keys(testLabelCounts)]);
+                          if (allLabels.size < 2) {
+                            errors.push(`Dataset needs at least 2 different labels for classification. Found: ${allLabels.size}`);
+                          }
+                          
+                          // Check if train and test have same labels
+                          const trainLabelsSet = new Set(Object.keys(trainLabelCounts));
+                          const testLabelsSet = new Set(Object.keys(testLabelCounts));
+                          
+                          const missingInTrain = [...allLabels].filter(l => !trainLabelsSet.has(l));
+                          const missingInTest = [...allLabels].filter(l => !testLabelsSet.has(l));
+                          
+                          if (missingInTrain.length > 0) {
+                            errors.push(`Training set is missing labels: ${missingInTrain.join(', ')}. All labels must be in training data.`);
+                          }
+                          if (missingInTest.length > 0) {
+                            errors.push(`Test set is missing labels: ${missingInTest.join(', ')}. All labels must be in test data for proper evaluation.`);
+                          }
+                          
+                          // Check for very low sample counts
+                          Object.entries(trainLabelCounts).forEach(([label, info]) => {
+                            if (info.lines < 100) {
+                              warnings.push(`Label "${label}" has only ${info.lines} training lines. Consider adding more data for better results.`);
+                            }
+                          });
+                          
+                          // Check for imbalanced classes
+                          const lineCounts = Object.values(trainLabelCounts).map(c => c.lines);
+                          if (lineCounts.length >= 2) {
+                            const maxLines = Math.max(...lineCounts);
+                            const minLines = Math.min(...lineCounts);
+                            if (maxLines > minLines * 5) {
+                              warnings.push(`Class imbalance detected: largest class has ${maxLines} lines, smallest has ${minLines}. This may affect model performance.`);
+                            }
+                          }
+                          
+                          // Check total lines
+                          if (totalLines < 100) {
+                            warnings.push(`Total dataset has only ${totalLines} lines. Consider adding more data for better model performance.`);
+                          }
+                          
+                          return (
+                            <>
+                              {errors.map((err, i) => (
+                                <div key={`err-${i}`} className="p-2 bg-red-500/10 border border-red-500/30 rounded-lg text-xs text-red-300">
+                                  ❌ Error: {err}
+                                </div>
+                              ))}
+                              {warnings.map((warn, i) => (
+                                <div key={`warn-${i}`} className="p-2 bg-yellow-500/10 border border-yellow-500/30 rounded-lg text-xs text-yellow-300">
+                                  ⚠️ Warning: {warn}
+                                </div>
+                              ))}
+                            </>
+                          );
+                        })()}
                       </div>
                     );
                   })()}
