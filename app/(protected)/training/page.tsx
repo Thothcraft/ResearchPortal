@@ -1395,16 +1395,75 @@ export default function TrainingPage() {
                         </button>
                       </div>
                     </div>
-                    <div className="mb-4"><div className="flex justify-between text-sm text-slate-400 mb-1"><span>{['knn', 'svc', 'adaboost', 'xgboost'].includes(job.model_type) ? (job.status === 'running' ? (() => {
+                    {['knn', 'svc', 'adaboost', 'xgboost'].includes(job.model_type) ? (() => {
                       const config = typeof job.config === 'string' ? JSON.parse(job.config || '{}') : (job.config || {});
-                      const stage = config.current_stage || 'initializing';
-                      const stageLabels: Record<string, string> = {
-                        'initializing': 'Initializing model...',
-                        'fitting': 'Training model (this may take a while)...',
-                        'computing_metrics': 'Computing metrics...'
-                      };
-                      return stageLabels[stage] || 'Training ML model...';
-                    })() : job.status === 'completed' ? 'Complete' : 'Pending') : `Epoch ${job.current_epoch}/${job.total_epochs}`}</span><span>{prog.toFixed(0)}%</span></div><div className="w-full bg-slate-700 rounded-full h-2"><div className={`h-2 rounded-full transition-all ${['knn', 'svc', 'adaboost', 'xgboost'].includes(job.model_type) && job.status === 'running' ? 'bg-yellow-500 animate-pulse' : 'bg-indigo-500'}`} style={{ width: `${['knn', 'svc', 'adaboost', 'xgboost'].includes(job.model_type) && job.status === 'running' ? 100 : prog}%` }} /></div></div>
+                      const currentStage = config.current_stage || (job.status === 'completed' ? 'completed' : 'loading_data');
+                      const filesLoaded = config.files_loaded || 0;
+                      const totalFiles = config.total_files || 0;
+                      const currentFile = config.current_file || '';
+                      const stages = [
+                        { key: 'loading_data', label: 'Loading Data', icon: '📥' },
+                        { key: 'initializing', label: 'Initializing', icon: '⚙️' },
+                        { key: 'fitting', label: 'Training', icon: '🧠' },
+                        { key: 'computing_metrics', label: 'Metrics', icon: '📊' },
+                      ];
+                      const stageOrder = ['loading_data', 'initializing', 'fitting', 'computing_metrics', 'completed'];
+                      const currentIdx = stageOrder.indexOf(currentStage);
+                      
+                      // Calculate loading progress within the loading_data stage
+                      const loadingProgress = totalFiles > 0 ? (filesLoaded / totalFiles) * 100 : 0;
+                      
+                      return (
+                        <div className="mb-4 space-y-2">
+                          <div className="flex items-center justify-between text-sm text-slate-400">
+                            <span>
+                              {job.status === 'completed' ? 'Complete' : job.status === 'running' ? (
+                                currentStage === 'loading_data' && totalFiles > 0 
+                                  ? `Loading file ${filesLoaded}/${totalFiles}` 
+                                  : stages.find(s => s.key === currentStage)?.label || 'Training...'
+                              ) : 'Pending'}
+                            </span>
+                            <span>{job.status === 'completed' ? '100%' : job.status === 'running' ? `${Math.round((currentIdx + 1) / 5 * 100)}%` : '0%'}</span>
+                          </div>
+                          {currentStage === 'loading_data' && totalFiles > 0 && job.status === 'running' && (
+                            <div className="text-xs text-slate-500 truncate" title={currentFile}>
+                              {currentFile.length > 40 ? `...${currentFile.slice(-40)}` : currentFile}
+                            </div>
+                          )}
+                          <div className="grid grid-cols-4 gap-1">
+                            {stages.map((stage, idx) => {
+                              const isComplete = job.status === 'completed' || currentIdx > idx;
+                              const isActive = job.status === 'running' && currentStage === stage.key;
+                              // For loading_data stage, show partial progress
+                              const stageProgress = isComplete ? 100 : (isActive && stage.key === 'loading_data' ? loadingProgress : 0);
+                              return (
+                                <div key={stage.key} className="flex flex-col items-center">
+                                  <div className="w-full h-2 rounded-full bg-slate-700 overflow-hidden">
+                                    <div 
+                                      className={`h-full transition-all duration-300 ${isComplete ? 'bg-green-500' : isActive ? 'bg-yellow-500 animate-pulse' : 'bg-slate-700'}`}
+                                      style={{ width: `${isComplete ? 100 : stageProgress}%` }}
+                                    />
+                                  </div>
+                                  <span className={`text-[10px] mt-1 ${isComplete ? 'text-green-400' : isActive ? 'text-yellow-400' : 'text-slate-500'}`}>
+                                    {stage.icon} {stage.label}
+                                  </span>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      );
+                    })() : (
+                      <div className="mb-4">
+                        <div className="flex justify-between text-sm text-slate-400 mb-1">
+                          <span>Epoch {job.current_epoch}/{job.total_epochs}</span>
+                          <span>{prog.toFixed(0)}%</span>
+                        </div>
+                        <div className="w-full bg-slate-700 rounded-full h-2">
+                          <div className="bg-indigo-500 h-2 rounded-full transition-all" style={{ width: `${prog}%` }} />
+                        </div>
+                      </div>
+                    )}
                     <div className="grid grid-cols-4 gap-4">
                       <div className="bg-slate-900/50 rounded-lg p-3"><p className="text-slate-500 text-xs mb-1">Loss</p><p className="text-white font-medium">{job.metrics?.loss && job.metrics.loss.length > 0 ? job.metrics.loss[job.metrics.loss.length - 1]?.toFixed(4) : 'N/A'}</p></div>
                       <div className="bg-slate-900/50 rounded-lg p-3"><p className="text-slate-500 text-xs mb-1">Accuracy</p><p className="text-white font-medium">{job.metrics?.accuracy && job.metrics.accuracy.length > 0 ? `${(job.metrics.accuracy[job.metrics.accuracy.length - 1] * 100).toFixed(2)}%` : 'N/A'}</p></div>
