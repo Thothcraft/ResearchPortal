@@ -544,8 +544,14 @@ export default function TrainingPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab]);
 
+  // Check if there are any running jobs that need faster polling
+  const hasRunningJobs = trainingJobs.some(j => j.status === 'running' || j.status === 'pending');
+
   useEffect(() => {
     if (activeTab !== 'jobs' && activeTab !== 'models' && activeTab !== 'compare') return;
+
+    // Poll faster (3s) when jobs are running, slower (10s) otherwise
+    const pollInterval = activeTab === 'jobs' && hasRunningJobs ? 3000 : 10000;
 
     const interval = setInterval(async () => {
       const hasActiveOperation = Object.values(operations).some(v => v === true || v !== null);
@@ -559,11 +565,11 @@ export default function TrainingPage() {
           files: false,
         });
       } catch {}
-    }, 10000);
+    }, pollInterval);
 
     return () => clearInterval(interval);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTab, operations]);
+  }, [activeTab, operations, hasRunningJobs]);
 
   // Get available models based on dataset file types
   const getAvailableModels = useCallback((dataset: Dataset | null): ModelOption[] => {
@@ -1368,77 +1374,167 @@ export default function TrainingPage() {
               ) : trainingJobs.length === 0 ? (
                 <div className="text-center py-12 bg-slate-800/50 rounded-xl border border-slate-700"><BarChart3 className="w-16 h-16 text-slate-500 mx-auto mb-4" /><h3 className="text-xl font-medium text-white mb-2">No Training Jobs</h3><p className="text-slate-400">Start a training job from a dataset</p></div>
               ) : trainingJobs.map(job => {
-                const sc = STATUS_CONFIG[job.status] || STATUS_CONFIG.pending;
-                const Icon = sc.icon;
                 const prog = job.total_epochs > 0 ? (job.current_epoch / job.total_epochs) * 100 : 0;
                 const isExpanded = expandedJobs.has(job.job_id);
                 const isML = ['knn', 'svc', 'adaboost', 'xgboost'].includes(job.model_type);
                 const config = typeof job.config === 'string' ? JSON.parse(job.config || '{}') : (job.config || {});
-                const currentStage = config.current_stage || (job.status === 'completed' ? 'completed' : job.status === 'pending' ? 'pending' : 'loading_data');
+                const currentStage = config.current_stage || (job.status === 'completed' ? 'completed' : job.status === 'pending' ? 'pending' : job.status === 'failed' ? 'failed' : 'running');
                 const filesLoaded = config.files_loaded || 0;
                 const totalFiles = config.total_files || 0;
                 const currentFile = config.current_file || '';
+                const windowSize = config.window_size || 1000;
+                const dataType = config.data_type || 'auto';
+                const outputShape = config.output_shape || 'flattened';
                 
-                // Calculate overall progress for ML models
-                const stageWeights = { pending: 0, loading_data: 0.4, initializing: 0.5, fitting: 0.8, computing_metrics: 0.95, completed: 1 };
-                const baseProgress = stageWeights[currentStage as keyof typeof stageWeights] || 0;
-                const fileProgress = currentStage === 'loading_data' && totalFiles > 0 ? (filesLoaded / totalFiles) * 0.4 : 0;
-                const mlProgress = job.status === 'completed' ? 100 : job.status === 'pending' ? 0 : Math.round((currentStage === 'loading_data' ? fileProgress : baseProgress) * 100);
+                // Calculate overall progress for ML models based on stage
+                const stageWeights: Record<string, number> = { 
+                  pending: 0, 
+                  loading_data: 0.3, 
+                  preprocessing: 0.5,
+                  initializing: 0.6, 
+                  fitting: 0.85, 
+                  computing_metrics: 0.95, 
+                  completed: 1,
+                  failed: 0
+                };
+                const baseProgress = stageWeights[currentStage] ?? 0.1;
+                const fileProgress = currentStage === 'loading_data' && totalFiles > 0 ? (filesLoaded / totalFiles) * 0.3 : 0;
+                const mlProgress = job.status === 'completed' ? 100 : job.status === 'pending' ? 0 : job.status === 'failed' ? 0 : Math.round((currentStage === 'loading_data' ? fileProgress : baseProgress) * 100);
+                const displayProgress = isML ? mlProgress : prog;
                 
                 // Stage labels for display
                 const stageLabels: Record<string, string> = {
-                  pending: 'Waiting to start...',
-                  loading_data: totalFiles > 0 ? `Loading data (${filesLoaded}/${totalFiles} files)` : 'Loading data...',
+                  pending: 'Queued - Waiting to start',
+                  loading_data: totalFiles > 0 ? `Loading data (${filesLoaded}/${totalFiles} files)` : 'Loading dataset files...',
+                  preprocessing: 'Preprocessing data...',
                   initializing: 'Initializing model...',
                   fitting: 'Training model...',
-                  computing_metrics: 'Computing metrics...',
-                  completed: 'Training complete'
+                  computing_metrics: 'Computing final metrics...',
+                  completed: 'Training complete',
+                  failed: 'Training failed',
+                  running: 'Processing...'
                 };
                 
-                // Build detailed logs
-                const logs: string[] = [];
-                if (job.started_at) logs.push(`[${new Date(job.started_at).toLocaleTimeString()}] Training started`);
-                if (config.total_files) logs.push(`[INFO] Dataset contains ${config.total_files} files`);
-                if (currentStage === 'loading_data' && currentFile) logs.push(`[LOADING] Processing: ${currentFile}`);
-                if (filesLoaded > 0) logs.push(`[PROGRESS] Loaded ${filesLoaded}/${totalFiles} files`);
-                if (currentStage === 'initializing') logs.push(`[MODEL] Initializing ${job.model_type.toUpperCase()} model`);
-                if (currentStage === 'fitting') logs.push(`[TRAINING] Model training in progress...`);
-                if (currentStage === 'computing_metrics') logs.push(`[METRICS] Computing accuracy, precision, recall...`);
-                if (job.status === 'completed') {
-                  logs.push(`[COMPLETE] Training finished successfully`);
-                  if (job.best_metrics?.val_accuracy) logs.push(`[RESULT] Validation accuracy: ${(job.best_metrics.val_accuracy * 100).toFixed(2)}%`);
+                // Build comprehensive terminal logs
+                const terminalLogs: { time: string; level: 'INFO' | 'DEBUG' | 'WARN' | 'ERROR' | 'SUCCESS'; message: string }[] = [];
+                const now = new Date();
+                const formatTime = (d: Date) => d.toLocaleTimeString('en-US', { hour12: false });
+                
+                // Job creation
+                if (job.created_at) {
+                  terminalLogs.push({ time: formatTime(new Date(job.created_at)), level: 'INFO', message: `Job created: ${job.job_id.slice(0, 8)}...` });
                 }
-                if (job.status === 'failed') logs.push(`[ERROR] Training failed`);
+                
+                // Configuration info
+                terminalLogs.push({ time: formatTime(now), level: 'DEBUG', message: `Model: ${job.model_type.toUpperCase()} | Mode: ${job.training_mode}` });
+                terminalLogs.push({ time: formatTime(now), level: 'DEBUG', message: `Data type: ${dataType} | Window: ${windowSize} | Shape: ${outputShape}` });
+                if (totalFiles > 0) {
+                  terminalLogs.push({ time: formatTime(now), level: 'DEBUG', message: `Dataset: ${totalFiles} file(s) to process` });
+                }
+                
+                // Job started
+                if (job.started_at) {
+                  terminalLogs.push({ time: formatTime(new Date(job.started_at)), level: 'INFO', message: 'Training job started' });
+                }
+                
+                // Stage-specific logs
+                if (currentStage === 'loading_data') {
+                  if (currentFile) {
+                    terminalLogs.push({ time: formatTime(now), level: 'DEBUG', message: `Loading: ${currentFile}` });
+                  }
+                  if (filesLoaded > 0) {
+                    terminalLogs.push({ time: formatTime(now), level: 'INFO', message: `Progress: ${filesLoaded}/${totalFiles} files loaded` });
+                  }
+                }
+                
+                if (currentStage === 'preprocessing') {
+                  terminalLogs.push({ time: formatTime(now), level: 'INFO', message: 'Applying preprocessing pipeline...' });
+                }
+                
+                if (currentStage === 'initializing') {
+                  terminalLogs.push({ time: formatTime(now), level: 'INFO', message: `Initializing ${job.model_type.toUpperCase()} classifier...` });
+                }
+                
+                if (currentStage === 'fitting') {
+                  terminalLogs.push({ time: formatTime(now), level: 'INFO', message: 'Model training in progress...' });
+                  if (!isML && job.current_epoch > 0) {
+                    terminalLogs.push({ time: formatTime(now), level: 'DEBUG', message: `Epoch ${job.current_epoch}/${job.total_epochs}` });
+                  }
+                }
+                
+                if (currentStage === 'computing_metrics') {
+                  terminalLogs.push({ time: formatTime(now), level: 'INFO', message: 'Computing evaluation metrics...' });
+                }
+                
+                // Metrics if available
+                if (job.metrics?.accuracy?.length) {
+                  const lastAcc = job.metrics.accuracy[job.metrics.accuracy.length - 1];
+                  terminalLogs.push({ time: formatTime(now), level: 'DEBUG', message: `Current accuracy: ${(lastAcc * 100).toFixed(2)}%` });
+                }
+                
+                // Completion
+                if (job.status === 'completed') {
+                  if (job.completed_at) {
+                    terminalLogs.push({ time: formatTime(new Date(job.completed_at)), level: 'SUCCESS', message: 'Training completed successfully' });
+                  }
+                  if (job.best_metrics?.val_accuracy) {
+                    terminalLogs.push({ time: formatTime(now), level: 'SUCCESS', message: `Final validation accuracy: ${(job.best_metrics.val_accuracy * 100).toFixed(2)}%` });
+                  }
+                }
+                
+                // Error
+                if (job.status === 'failed') {
+                  terminalLogs.push({ time: formatTime(now), level: 'ERROR', message: job.error_message || 'Training failed with unknown error' });
+                }
+                
+                // Status color classes
+                const statusColors: Record<string, { bg: string; border: string; text: string; glow: string }> = {
+                  pending: { bg: 'bg-amber-500/10', border: 'border-amber-500/30', text: 'text-amber-400', glow: '' },
+                  running: { bg: 'bg-blue-500/10', border: 'border-blue-500/30', text: 'text-blue-400', glow: 'shadow-[0_0_15px_rgba(59,130,246,0.3)]' },
+                  completed: { bg: 'bg-emerald-500/10', border: 'border-emerald-500/30', text: 'text-emerald-400', glow: '' },
+                  failed: { bg: 'bg-red-500/10', border: 'border-red-500/30', text: 'text-red-400', glow: '' },
+                  cancelled: { bg: 'bg-slate-500/10', border: 'border-slate-500/30', text: 'text-slate-400', glow: '' },
+                };
+                const statusStyle = statusColors[job.status] || statusColors.pending;
                 
                 return (
-                  <div key={job.job_id} className="bg-slate-800/50 rounded-xl border border-slate-700 overflow-hidden">
+                  <div key={job.job_id} className={`rounded-xl border overflow-hidden transition-all duration-300 ${statusStyle.bg} ${statusStyle.border} ${statusStyle.glow}`}>
                     {/* Header */}
                     <div className="p-4 flex items-center justify-between">
-                      <div className="flex items-center gap-3">
-                        <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${job.status === 'running' ? 'bg-blue-500/20' : job.status === 'completed' ? 'bg-green-500/20' : job.status === 'failed' ? 'bg-red-500/20' : 'bg-slate-700'}`}>
-                          {job.status === 'running' ? <Loader2 className="w-5 h-5 text-blue-400 animate-spin" /> : 
-                           job.status === 'completed' ? <CheckCircle className="w-5 h-5 text-green-400" /> :
-                           job.status === 'failed' ? <AlertCircle className="w-5 h-5 text-red-400" /> :
-                           <Clock className="w-5 h-5 text-slate-400" />}
+                      <div className="flex items-center gap-4">
+                        <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${job.status === 'running' ? 'bg-blue-500/20 ring-2 ring-blue-500/40' : job.status === 'completed' ? 'bg-emerald-500/20' : job.status === 'failed' ? 'bg-red-500/20' : 'bg-slate-700/50'}`}>
+                          {job.status === 'running' ? <Loader2 className="w-6 h-6 text-blue-400 animate-spin" /> : 
+                           job.status === 'completed' ? <CheckCircle className="w-6 h-6 text-emerald-400" /> :
+                           job.status === 'failed' ? <AlertCircle className="w-6 h-6 text-red-400" /> :
+                           job.status === 'cancelled' ? <XCircle className="w-6 h-6 text-slate-400" /> :
+                           <Clock className="w-6 h-6 text-amber-400" />}
                         </div>
                         <div>
-                          <h3 className="text-white font-medium">{job.dataset_name || 'Training Job'}</h3>
-                          <p className="text-slate-500 text-xs">{job.model_type.toUpperCase()} • {job.started_at ? new Date(job.started_at).toLocaleString() : 'Queued'}</p>
+                          <div className="flex items-center gap-2">
+                            <h3 className="text-white font-semibold text-lg">{job.dataset_name || 'Training Job'}</h3>
+                            <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium uppercase tracking-wider ${statusStyle.bg} ${statusStyle.text} border ${statusStyle.border}`}>
+                              {job.status}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-3 mt-1">
+                            <span className="text-slate-400 text-sm font-mono bg-slate-800/50 px-2 py-0.5 rounded">{job.model_type.toUpperCase()}</span>
+                            <span className="text-slate-500 text-xs">{job.started_at ? new Date(job.started_at).toLocaleString() : 'Queued'}</span>
+                          </div>
                         </div>
                       </div>
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-1">
                         {job.status === 'completed' && (
-                          <button onClick={() => setSelectedJob(job)} className="p-2 text-blue-400 hover:bg-blue-500/10 rounded-lg" title="View Details">
-                            <TrendingUp className="w-4 h-4" />
+                          <button onClick={() => setSelectedJob(job)} className="p-2.5 text-blue-400 hover:bg-blue-500/20 rounded-lg transition-colors" title="View Details">
+                            <TrendingUp className="w-5 h-5" />
                           </button>
                         )}
                         {['pending', 'running'].includes(job.status) && (
-                          <button onClick={() => handleCancelJob(job.job_id)} disabled={operations.cancellingJob} className="p-2 text-orange-400 hover:bg-orange-500/10 rounded-lg" title="Cancel">
-                            <XCircle className="w-4 h-4" />
+                          <button onClick={() => handleCancelJob(job.job_id)} disabled={operations.cancellingJob} className="p-2.5 text-orange-400 hover:bg-orange-500/20 rounded-lg transition-colors" title="Cancel">
+                            <XCircle className="w-5 h-5" />
                           </button>
                         )}
-                        <button onClick={() => handleDeleteJob(job.job_id)} className="p-2 text-red-400 hover:bg-red-500/10 rounded-lg" title="Delete">
-                          <Trash2 className="w-4 h-4" />
+                        <button onClick={() => handleDeleteJob(job.job_id)} className="p-2.5 text-red-400 hover:bg-red-500/20 rounded-lg transition-colors" title="Delete">
+                          <Trash2 className="w-5 h-5" />
                         </button>
                         <button 
                           onClick={() => setExpandedJobs(prev => {
@@ -1447,72 +1543,163 @@ export default function TrainingPage() {
                             else next.add(job.job_id);
                             return next;
                           })}
-                          className="p-2 text-slate-400 hover:bg-slate-700 rounded-lg"
-                          title={isExpanded ? 'Collapse' : 'Expand'}
+                          className="p-2.5 text-slate-400 hover:bg-slate-700/50 rounded-lg transition-colors ml-1"
+                          title={isExpanded ? 'Collapse' : 'Expand Debug Console'}
                         >
-                          <ChevronDown className={`w-4 h-4 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
+                          <ChevronDown className={`w-5 h-5 transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`} />
                         </button>
                       </div>
                     </div>
                     
-                    {/* Progress Bar */}
+                    {/* Professional Progress Bar */}
                     <div className="px-4 pb-4">
-                      <div className="flex items-center justify-between text-xs mb-1.5">
-                        <span className={`font-medium ${job.status === 'running' ? 'text-blue-400' : job.status === 'completed' ? 'text-green-400' : 'text-slate-400'}`}>
-                          {isML ? stageLabels[currentStage] || 'Processing...' : `Epoch ${job.current_epoch}/${job.total_epochs}`}
-                        </span>
-                        <span className="text-slate-500">{isML ? mlProgress : prog.toFixed(0)}%</span>
+                      <div className="flex items-center justify-between text-sm mb-2">
+                        <div className="flex items-center gap-2">
+                          <span className={`font-medium ${statusStyle.text}`}>
+                            {stageLabels[currentStage] || 'Processing...'}
+                          </span>
+                          {job.status === 'running' && (
+                            <span className="flex items-center gap-1">
+                              <span className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-pulse"></span>
+                              <span className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-pulse" style={{ animationDelay: '0.2s' }}></span>
+                              <span className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-pulse" style={{ animationDelay: '0.4s' }}></span>
+                            </span>
+                          )}
+                        </div>
+                        <span className={`font-mono font-bold ${statusStyle.text}`}>{displayProgress.toFixed(0)}%</span>
                       </div>
-                      <div className="w-full h-1.5 bg-slate-700 rounded-full overflow-hidden">
+                      {/* Multi-layer progress bar */}
+                      <div className="relative w-full h-3 bg-slate-900/80 rounded-full overflow-hidden border border-slate-700/50">
+                        {/* Background glow for running */}
+                        {job.status === 'running' && (
+                          <div className="absolute inset-0 bg-gradient-to-r from-blue-500/20 via-blue-400/10 to-transparent animate-pulse"></div>
+                        )}
+                        {/* Progress fill */}
                         <div 
-                          className={`h-full rounded-full transition-all duration-500 ${
-                            job.status === 'completed' ? 'bg-green-500' : 
-                            job.status === 'failed' ? 'bg-red-500' : 
-                            job.status === 'running' ? 'bg-blue-500' : 'bg-slate-600'
+                          className={`absolute inset-y-0 left-0 rounded-full transition-all duration-700 ease-out ${
+                            job.status === 'completed' ? 'bg-gradient-to-r from-emerald-600 to-emerald-400' : 
+                            job.status === 'failed' ? 'bg-gradient-to-r from-red-600 to-red-400' : 
+                            job.status === 'running' ? 'bg-gradient-to-r from-blue-600 via-blue-500 to-blue-400' : 
+                            'bg-gradient-to-r from-amber-600 to-amber-400'
                           }`}
-                          style={{ width: `${isML ? mlProgress : prog}%` }}
-                        />
+                          style={{ width: `${displayProgress}%` }}
+                        >
+                          {/* Shimmer effect for running */}
+                          {job.status === 'running' && (
+                            <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent animate-shimmer"></div>
+                          )}
+                        </div>
+                        {/* Stage markers */}
+                        <div className="absolute inset-0 flex items-center justify-between px-1">
+                          {[25, 50, 75].map((mark) => (
+                            <div key={mark} className="w-px h-1.5 bg-slate-600/50" style={{ marginLeft: `${mark}%` }}></div>
+                          ))}
+                        </div>
                       </div>
+                      {/* Stage indicators */}
+                      {isML && (
+                        <div className="flex justify-between mt-2 text-[10px] text-slate-500">
+                          <span className={currentStage === 'loading_data' ? 'text-blue-400' : displayProgress >= 30 ? 'text-slate-400' : ''}>Load</span>
+                          <span className={currentStage === 'preprocessing' ? 'text-blue-400' : displayProgress >= 50 ? 'text-slate-400' : ''}>Preprocess</span>
+                          <span className={currentStage === 'fitting' ? 'text-blue-400' : displayProgress >= 85 ? 'text-slate-400' : ''}>Train</span>
+                          <span className={currentStage === 'completed' ? 'text-emerald-400' : ''}>Done</span>
+                        </div>
+                      )}
                     </div>
                     
-                    {/* Expanded Content */}
+                    {/* Expanded Debug Console */}
                     {isExpanded && (
-                      <div className="border-t border-slate-700">
-                        {/* Metrics Row */}
-                        {(job.status === 'completed' || job.metrics?.accuracy?.length) && (
-                          <div className="p-4 grid grid-cols-4 gap-3">
-                            <div className="bg-slate-900/50 rounded-lg p-2.5 text-center">
-                              <p className="text-slate-500 text-[10px] uppercase tracking-wide">Loss</p>
-                              <p className="text-white font-semibold text-sm">{job.metrics?.loss?.length ? job.metrics.loss[job.metrics.loss.length - 1]?.toFixed(4) : '—'}</p>
+                      <div className="border-t border-slate-700/50">
+                        {/* Quick Stats Row */}
+                        <div className="p-4 grid grid-cols-2 md:grid-cols-5 gap-3">
+                          <div className="bg-slate-900/60 rounded-lg p-3 border border-slate-700/50">
+                            <p className="text-slate-500 text-[10px] uppercase tracking-wider mb-1">Model</p>
+                            <p className="text-white font-mono font-semibold">{job.model_type.toUpperCase()}</p>
+                          </div>
+                          <div className="bg-slate-900/60 rounded-lg p-3 border border-slate-700/50">
+                            <p className="text-slate-500 text-[10px] uppercase tracking-wider mb-1">Data Type</p>
+                            <p className="text-cyan-400 font-mono font-semibold">{dataType.toUpperCase()}</p>
+                          </div>
+                          <div className="bg-slate-900/60 rounded-lg p-3 border border-slate-700/50">
+                            <p className="text-slate-500 text-[10px] uppercase tracking-wider mb-1">Window</p>
+                            <p className="text-purple-400 font-mono font-semibold">{windowSize}</p>
+                          </div>
+                          <div className="bg-slate-900/60 rounded-lg p-3 border border-slate-700/50">
+                            <p className="text-slate-500 text-[10px] uppercase tracking-wider mb-1">Val Accuracy</p>
+                            <p className="text-emerald-400 font-mono font-semibold">{job.best_metrics?.val_accuracy ? `${(job.best_metrics.val_accuracy * 100).toFixed(1)}%` : '—'}</p>
+                          </div>
+                          <div className="bg-slate-900/60 rounded-lg p-3 border border-slate-700/50">
+                            <p className="text-slate-500 text-[10px] uppercase tracking-wider mb-1">{isML ? 'Stage' : 'Epoch'}</p>
+                            <p className="text-blue-400 font-mono font-semibold">{isML ? currentStage : `${job.current_epoch}/${job.total_epochs}`}</p>
+                          </div>
+                        </div>
+                        
+                        {/* Terminal-style Debug Console */}
+                        <div className="p-4 pt-0">
+                          <div className="flex items-center justify-between mb-2">
+                            <div className="flex items-center gap-2">
+                              <div className="flex gap-1.5">
+                                <div className="w-3 h-3 rounded-full bg-red-500/80"></div>
+                                <div className="w-3 h-3 rounded-full bg-yellow-500/80"></div>
+                                <div className="w-3 h-3 rounded-full bg-green-500/80"></div>
+                              </div>
+                              <span className="text-slate-500 text-xs font-mono ml-2">training-console — {job.job_id.slice(0, 8)}</span>
                             </div>
-                            <div className="bg-slate-900/50 rounded-lg p-2.5 text-center">
-                              <p className="text-slate-500 text-[10px] uppercase tracking-wide">Accuracy</p>
-                              <p className="text-white font-semibold text-sm">{job.metrics?.accuracy?.length ? `${(job.metrics.accuracy[job.metrics.accuracy.length - 1] * 100).toFixed(1)}%` : '—'}</p>
+                            <span className="text-slate-600 text-[10px] font-mono">{terminalLogs.length} entries</span>
+                          </div>
+                          <div className="bg-[#0d1117] rounded-lg border border-slate-800 overflow-hidden">
+                            <div className="p-4 font-mono text-xs max-h-64 overflow-y-auto space-y-1 scrollbar-thin scrollbar-thumb-slate-700 scrollbar-track-transparent">
+                              {terminalLogs.map((log, i) => (
+                                <div key={i} className="flex items-start gap-2 hover:bg-slate-800/30 px-1 -mx-1 rounded">
+                                  <span className="text-slate-600 select-none shrink-0">{log.time}</span>
+                                  <span className={`shrink-0 px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                                    log.level === 'ERROR' ? 'bg-red-500/20 text-red-400' :
+                                    log.level === 'WARN' ? 'bg-yellow-500/20 text-yellow-400' :
+                                    log.level === 'SUCCESS' ? 'bg-emerald-500/20 text-emerald-400' :
+                                    log.level === 'DEBUG' ? 'bg-slate-500/20 text-slate-400' :
+                                    'bg-blue-500/20 text-blue-400'
+                                  }`}>{log.level}</span>
+                                  <span className={`${
+                                    log.level === 'ERROR' ? 'text-red-300' :
+                                    log.level === 'SUCCESS' ? 'text-emerald-300' :
+                                    'text-slate-300'
+                                  }`}>{log.message}</span>
+                                </div>
+                              ))}
+                              {job.status === 'running' && (
+                                <div className="flex items-center gap-2 text-slate-500 pt-2">
+                                  <span className="animate-pulse">▋</span>
+                                  <span>Waiting for updates...</span>
+                                </div>
+                              )}
                             </div>
-                            <div className="bg-slate-900/50 rounded-lg p-2.5 text-center">
-                              <p className="text-slate-500 text-[10px] uppercase tracking-wide">Val Acc</p>
-                              <p className="text-green-400 font-semibold text-sm">{job.best_metrics?.val_accuracy ? `${(job.best_metrics.val_accuracy * 100).toFixed(1)}%` : '—'}</p>
-                            </div>
-                            <div className="bg-slate-900/50 rounded-lg p-2.5 text-center">
-                              <p className="text-slate-500 text-[10px] uppercase tracking-wide">Best Epoch</p>
-                              <p className="text-white font-semibold text-sm">{job.best_metrics?.best_epoch || '—'}</p>
+                          </div>
+                        </div>
+                        
+                        {/* Metrics Grid (if completed) */}
+                        {job.status === 'completed' && job.best_metrics && (
+                          <div className="p-4 pt-0">
+                            <p className="text-slate-500 text-[10px] uppercase tracking-wider mb-2">Final Metrics</p>
+                            <div className="grid grid-cols-4 gap-2">
+                              <div className="bg-slate-900/60 rounded-lg p-2.5 text-center border border-slate-700/50">
+                                <p className="text-slate-500 text-[10px] uppercase">Loss</p>
+                                <p className="text-white font-mono font-semibold text-sm">{job.metrics?.loss?.length ? job.metrics.loss[job.metrics.loss.length - 1]?.toFixed(4) : '—'}</p>
+                              </div>
+                              <div className="bg-slate-900/60 rounded-lg p-2.5 text-center border border-slate-700/50">
+                                <p className="text-slate-500 text-[10px] uppercase">Train Acc</p>
+                                <p className="text-white font-mono font-semibold text-sm">{job.metrics?.accuracy?.length ? `${(job.metrics.accuracy[job.metrics.accuracy.length - 1] * 100).toFixed(1)}%` : '—'}</p>
+                              </div>
+                              <div className="bg-slate-900/60 rounded-lg p-2.5 text-center border border-emerald-500/30">
+                                <p className="text-emerald-500 text-[10px] uppercase">Val Acc</p>
+                                <p className="text-emerald-400 font-mono font-bold text-sm">{job.best_metrics?.val_accuracy ? `${(job.best_metrics.val_accuracy * 100).toFixed(1)}%` : '—'}</p>
+                              </div>
+                              <div className="bg-slate-900/60 rounded-lg p-2.5 text-center border border-slate-700/50">
+                                <p className="text-slate-500 text-[10px] uppercase">Best Epoch</p>
+                                <p className="text-white font-mono font-semibold text-sm">{job.best_metrics?.best_epoch || '—'}</p>
+                              </div>
                             </div>
                           </div>
                         )}
-                        
-                        {/* Logs Section */}
-                        <div className="p-4 pt-0">
-                          <p className="text-slate-500 text-[10px] uppercase tracking-wide mb-2">Training Logs</p>
-                          <div className="bg-slate-900 rounded-lg p-3 font-mono text-xs max-h-40 overflow-y-auto">
-                            {logs.length > 0 ? logs.map((log, i) => (
-                              <div key={i} className={`${log.includes('[ERROR]') ? 'text-red-400' : log.includes('[COMPLETE]') || log.includes('[RESULT]') ? 'text-green-400' : log.includes('[LOADING]') || log.includes('[PROGRESS]') ? 'text-blue-400' : 'text-slate-400'}`}>
-                                {log}
-                              </div>
-                            )) : (
-                              <div className="text-slate-500">Waiting for logs...</div>
-                            )}
-                          </div>
-                        </div>
                       </div>
                     )}
                   </div>
