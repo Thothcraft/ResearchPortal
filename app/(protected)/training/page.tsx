@@ -6,7 +6,7 @@ import { useApi } from '@/hooks/useApi';
 import { useAuth } from '@/contexts/AuthContext';
 import {
   Brain, Cloud, Smartphone, Network, Play, RefreshCw, Plus, Tag, Database,
-  FileText, Trash2, ChevronRight, BarChart3, CheckCircle, Clock, AlertCircle,
+  FileText, Trash2, ChevronRight, ChevronDown, BarChart3, CheckCircle, Clock, AlertCircle,
   Download, Rocket, Loader2, X, XCircle, Edit2, TrendingUp,
 } from 'lucide-react';
 import FigureExport from '@/components/FigureExport';
@@ -356,6 +356,7 @@ export default function TrainingPage() {
   const [renamingModel, setRenamingModel] = useState<TrainedModel | null>(null);
   const [newModelName, setNewModelName] = useState('');
   const [selectedJob, setSelectedJob] = useState<TrainingJob | null>(null);
+  const [expandedJobs, setExpandedJobs] = useState<Set<string>>(new Set());
   
   // Granular loading states
   const [loadingStates, setLoadingStates] = useState({
@@ -1370,106 +1371,150 @@ export default function TrainingPage() {
                 const sc = STATUS_CONFIG[job.status] || STATUS_CONFIG.pending;
                 const Icon = sc.icon;
                 const prog = job.total_epochs > 0 ? (job.current_epoch / job.total_epochs) * 100 : 0;
+                const isExpanded = expandedJobs.has(job.job_id);
+                const isML = ['knn', 'svc', 'adaboost', 'xgboost'].includes(job.model_type);
+                const config = typeof job.config === 'string' ? JSON.parse(job.config || '{}') : (job.config || {});
+                const currentStage = config.current_stage || (job.status === 'completed' ? 'completed' : job.status === 'pending' ? 'pending' : 'loading_data');
+                const filesLoaded = config.files_loaded || 0;
+                const totalFiles = config.total_files || 0;
+                const currentFile = config.current_file || '';
+                
+                // Calculate overall progress for ML models
+                const stageWeights = { pending: 0, loading_data: 0.4, initializing: 0.5, fitting: 0.8, computing_metrics: 0.95, completed: 1 };
+                const baseProgress = stageWeights[currentStage as keyof typeof stageWeights] || 0;
+                const fileProgress = currentStage === 'loading_data' && totalFiles > 0 ? (filesLoaded / totalFiles) * 0.4 : 0;
+                const mlProgress = job.status === 'completed' ? 100 : job.status === 'pending' ? 0 : Math.round((currentStage === 'loading_data' ? fileProgress : baseProgress) * 100);
+                
+                // Stage labels for display
+                const stageLabels: Record<string, string> = {
+                  pending: 'Waiting to start...',
+                  loading_data: totalFiles > 0 ? `Loading data (${filesLoaded}/${totalFiles} files)` : 'Loading data...',
+                  initializing: 'Initializing model...',
+                  fitting: 'Training model...',
+                  computing_metrics: 'Computing metrics...',
+                  completed: 'Training complete'
+                };
+                
+                // Build detailed logs
+                const logs: string[] = [];
+                if (job.started_at) logs.push(`[${new Date(job.started_at).toLocaleTimeString()}] Training started`);
+                if (config.total_files) logs.push(`[INFO] Dataset contains ${config.total_files} files`);
+                if (currentStage === 'loading_data' && currentFile) logs.push(`[LOADING] Processing: ${currentFile}`);
+                if (filesLoaded > 0) logs.push(`[PROGRESS] Loaded ${filesLoaded}/${totalFiles} files`);
+                if (currentStage === 'initializing') logs.push(`[MODEL] Initializing ${job.model_type.toUpperCase()} model`);
+                if (currentStage === 'fitting') logs.push(`[TRAINING] Model training in progress...`);
+                if (currentStage === 'computing_metrics') logs.push(`[METRICS] Computing accuracy, precision, recall...`);
+                if (job.status === 'completed') {
+                  logs.push(`[COMPLETE] Training finished successfully`);
+                  if (job.best_metrics?.val_accuracy) logs.push(`[RESULT] Validation accuracy: ${(job.best_metrics.val_accuracy * 100).toFixed(2)}%`);
+                }
+                if (job.status === 'failed') logs.push(`[ERROR] Training failed`);
+                
                 return (
-                  <div key={job.job_id} className="bg-slate-800/50 rounded-xl border border-slate-700 p-6">
-                    <div className="flex items-center justify-between mb-4">
-                      <div><h3 className="text-lg font-semibold text-white">{job.dataset_name || 'Training Job'}</h3><p className="text-slate-400 text-sm">{job.model_type.toUpperCase()} • {job.started_at ? new Date(job.started_at).toLocaleString() : 'Pending'}</p></div>
+                  <div key={job.job_id} className="bg-slate-800/50 rounded-xl border border-slate-700 overflow-hidden">
+                    {/* Header */}
+                    <div className="p-4 flex items-center justify-between">
                       <div className="flex items-center gap-3">
-                        <span className={`flex items-center gap-1 px-3 py-1 rounded-full text-sm ${sc.bg} ${sc.color}`}><Icon className={`w-4 h-4 ${job.status === 'running' ? 'animate-spin' : ''}`} />{job.status}</span>
+                        <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${job.status === 'running' ? 'bg-blue-500/20' : job.status === 'completed' ? 'bg-green-500/20' : job.status === 'failed' ? 'bg-red-500/20' : 'bg-slate-700'}`}>
+                          {job.status === 'running' ? <Loader2 className="w-5 h-5 text-blue-400 animate-spin" /> : 
+                           job.status === 'completed' ? <CheckCircle className="w-5 h-5 text-green-400" /> :
+                           job.status === 'failed' ? <AlertCircle className="w-5 h-5 text-red-400" /> :
+                           <Clock className="w-5 h-5 text-slate-400" />}
+                        </div>
+                        <div>
+                          <h3 className="text-white font-medium">{job.dataset_name || 'Training Job'}</h3>
+                          <p className="text-slate-500 text-xs">{job.model_type.toUpperCase()} • {job.started_at ? new Date(job.started_at).toLocaleString() : 'Queued'}</p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
                         {job.status === 'completed' && (
-                          <button onClick={() => setSelectedJob(job)} className="p-2 text-blue-400 hover:bg-blue-500/10 rounded-lg">
-                            <TrendingUp className="w-5 h-5" />
+                          <button onClick={() => setSelectedJob(job)} className="p-2 text-blue-400 hover:bg-blue-500/10 rounded-lg" title="View Details">
+                            <TrendingUp className="w-4 h-4" />
                           </button>
                         )}
                         {['pending', 'running'].includes(job.status) && (
-                          <button onClick={() => handleCancelJob(job.job_id)} disabled={operations.cancellingJob} className="p-2 text-red-400 hover:bg-red-500/10 disabled:text-red-600 disabled:hover:bg-red-500/5 rounded-lg">
-                            {operations.cancellingJob ? (
-                              <Loader2 className="w-5 h-5 animate-spin" />
-                            ) : (
-                              <XCircle className="w-5 h-5" />
-                            )}
+                          <button onClick={() => handleCancelJob(job.job_id)} disabled={operations.cancellingJob} className="p-2 text-orange-400 hover:bg-orange-500/10 rounded-lg" title="Cancel">
+                            <XCircle className="w-4 h-4" />
                           </button>
                         )}
-                        <button onClick={() => handleDeleteJob(job.job_id)} className="p-2 text-red-400 hover:bg-red-500/10 rounded-lg">
-                          <Trash2 className="w-5 h-5" />
+                        <button onClick={() => handleDeleteJob(job.job_id)} className="p-2 text-red-400 hover:bg-red-500/10 rounded-lg" title="Delete">
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                        <button 
+                          onClick={() => setExpandedJobs(prev => {
+                            const next = new Set(prev);
+                            if (next.has(job.job_id)) next.delete(job.job_id);
+                            else next.add(job.job_id);
+                            return next;
+                          })}
+                          className="p-2 text-slate-400 hover:bg-slate-700 rounded-lg"
+                          title={isExpanded ? 'Collapse' : 'Expand'}
+                        >
+                          <ChevronDown className={`w-4 h-4 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
                         </button>
                       </div>
                     </div>
-                    {['knn', 'svc', 'adaboost', 'xgboost'].includes(job.model_type) ? (() => {
-                      const config = typeof job.config === 'string' ? JSON.parse(job.config || '{}') : (job.config || {});
-                      const currentStage = config.current_stage || (job.status === 'completed' ? 'completed' : 'loading_data');
-                      const filesLoaded = config.files_loaded || 0;
-                      const totalFiles = config.total_files || 0;
-                      const currentFile = config.current_file || '';
-                      const stages = [
-                        { key: 'loading_data', label: 'Loading Data', icon: '📥' },
-                        { key: 'initializing', label: 'Initializing', icon: '⚙️' },
-                        { key: 'fitting', label: 'Training', icon: '🧠' },
-                        { key: 'computing_metrics', label: 'Metrics', icon: '📊' },
-                      ];
-                      const stageOrder = ['loading_data', 'initializing', 'fitting', 'computing_metrics', 'completed'];
-                      const currentIdx = stageOrder.indexOf(currentStage);
-                      
-                      // Calculate loading progress within the loading_data stage
-                      const loadingProgress = totalFiles > 0 ? (filesLoaded / totalFiles) * 100 : 0;
-                      
-                      return (
-                        <div className="mb-4 space-y-2">
-                          <div className="flex items-center justify-between text-sm text-slate-400">
-                            <span>
-                              {job.status === 'completed' ? 'Complete' : job.status === 'running' ? (
-                                currentStage === 'loading_data' && totalFiles > 0 
-                                  ? `Loading file ${filesLoaded}/${totalFiles}` 
-                                  : stages.find(s => s.key === currentStage)?.label || 'Training...'
-                              ) : 'Pending'}
-                            </span>
-                            <span>{job.status === 'completed' ? '100%' : job.status === 'running' ? `${Math.round((currentIdx + 1) / 5 * 100)}%` : '0%'}</span>
-                          </div>
-                          {currentStage === 'loading_data' && totalFiles > 0 && job.status === 'running' && (
-                            <div className="text-xs text-slate-500 truncate" title={currentFile}>
-                              {currentFile.length > 40 ? `...${currentFile.slice(-40)}` : currentFile}
+                    
+                    {/* Progress Bar */}
+                    <div className="px-4 pb-4">
+                      <div className="flex items-center justify-between text-xs mb-1.5">
+                        <span className={`font-medium ${job.status === 'running' ? 'text-blue-400' : job.status === 'completed' ? 'text-green-400' : 'text-slate-400'}`}>
+                          {isML ? stageLabels[currentStage] || 'Processing...' : `Epoch ${job.current_epoch}/${job.total_epochs}`}
+                        </span>
+                        <span className="text-slate-500">{isML ? mlProgress : prog.toFixed(0)}%</span>
+                      </div>
+                      <div className="w-full h-1.5 bg-slate-700 rounded-full overflow-hidden">
+                        <div 
+                          className={`h-full rounded-full transition-all duration-500 ${
+                            job.status === 'completed' ? 'bg-green-500' : 
+                            job.status === 'failed' ? 'bg-red-500' : 
+                            job.status === 'running' ? 'bg-blue-500' : 'bg-slate-600'
+                          }`}
+                          style={{ width: `${isML ? mlProgress : prog}%` }}
+                        />
+                      </div>
+                    </div>
+                    
+                    {/* Expanded Content */}
+                    {isExpanded && (
+                      <div className="border-t border-slate-700">
+                        {/* Metrics Row */}
+                        {(job.status === 'completed' || job.metrics?.accuracy?.length) && (
+                          <div className="p-4 grid grid-cols-4 gap-3">
+                            <div className="bg-slate-900/50 rounded-lg p-2.5 text-center">
+                              <p className="text-slate-500 text-[10px] uppercase tracking-wide">Loss</p>
+                              <p className="text-white font-semibold text-sm">{job.metrics?.loss?.length ? job.metrics.loss[job.metrics.loss.length - 1]?.toFixed(4) : '—'}</p>
                             </div>
-                          )}
-                          <div className="grid grid-cols-4 gap-1">
-                            {stages.map((stage, idx) => {
-                              const isComplete = job.status === 'completed' || currentIdx > idx;
-                              const isActive = job.status === 'running' && currentStage === stage.key;
-                              // For loading_data stage, show partial progress
-                              const stageProgress = isComplete ? 100 : (isActive && stage.key === 'loading_data' ? loadingProgress : 0);
-                              return (
-                                <div key={stage.key} className="flex flex-col items-center">
-                                  <div className="w-full h-2 rounded-full bg-slate-700 overflow-hidden">
-                                    <div 
-                                      className={`h-full transition-all duration-300 ${isComplete ? 'bg-green-500' : isActive ? 'bg-yellow-500 animate-pulse' : 'bg-slate-700'}`}
-                                      style={{ width: `${isComplete ? 100 : stageProgress}%` }}
-                                    />
-                                  </div>
-                                  <span className={`text-[10px] mt-1 ${isComplete ? 'text-green-400' : isActive ? 'text-yellow-400' : 'text-slate-500'}`}>
-                                    {stage.icon} {stage.label}
-                                  </span>
-                                </div>
-                              );
-                            })}
+                            <div className="bg-slate-900/50 rounded-lg p-2.5 text-center">
+                              <p className="text-slate-500 text-[10px] uppercase tracking-wide">Accuracy</p>
+                              <p className="text-white font-semibold text-sm">{job.metrics?.accuracy?.length ? `${(job.metrics.accuracy[job.metrics.accuracy.length - 1] * 100).toFixed(1)}%` : '—'}</p>
+                            </div>
+                            <div className="bg-slate-900/50 rounded-lg p-2.5 text-center">
+                              <p className="text-slate-500 text-[10px] uppercase tracking-wide">Val Acc</p>
+                              <p className="text-green-400 font-semibold text-sm">{job.best_metrics?.val_accuracy ? `${(job.best_metrics.val_accuracy * 100).toFixed(1)}%` : '—'}</p>
+                            </div>
+                            <div className="bg-slate-900/50 rounded-lg p-2.5 text-center">
+                              <p className="text-slate-500 text-[10px] uppercase tracking-wide">Best Epoch</p>
+                              <p className="text-white font-semibold text-sm">{job.best_metrics?.best_epoch || '—'}</p>
+                            </div>
                           </div>
-                        </div>
-                      );
-                    })() : (
-                      <div className="mb-4">
-                        <div className="flex justify-between text-sm text-slate-400 mb-1">
-                          <span>Epoch {job.current_epoch}/{job.total_epochs}</span>
-                          <span>{prog.toFixed(0)}%</span>
-                        </div>
-                        <div className="w-full bg-slate-700 rounded-full h-2">
-                          <div className="bg-indigo-500 h-2 rounded-full transition-all" style={{ width: `${prog}%` }} />
+                        )}
+                        
+                        {/* Logs Section */}
+                        <div className="p-4 pt-0">
+                          <p className="text-slate-500 text-[10px] uppercase tracking-wide mb-2">Training Logs</p>
+                          <div className="bg-slate-900 rounded-lg p-3 font-mono text-xs max-h-40 overflow-y-auto">
+                            {logs.length > 0 ? logs.map((log, i) => (
+                              <div key={i} className={`${log.includes('[ERROR]') ? 'text-red-400' : log.includes('[COMPLETE]') || log.includes('[RESULT]') ? 'text-green-400' : log.includes('[LOADING]') || log.includes('[PROGRESS]') ? 'text-blue-400' : 'text-slate-400'}`}>
+                                {log}
+                              </div>
+                            )) : (
+                              <div className="text-slate-500">Waiting for logs...</div>
+                            )}
+                          </div>
                         </div>
                       </div>
                     )}
-                    <div className="grid grid-cols-4 gap-4">
-                      <div className="bg-slate-900/50 rounded-lg p-3"><p className="text-slate-500 text-xs mb-1">Loss</p><p className="text-white font-medium">{job.metrics?.loss && job.metrics.loss.length > 0 ? job.metrics.loss[job.metrics.loss.length - 1]?.toFixed(4) : 'N/A'}</p></div>
-                      <div className="bg-slate-900/50 rounded-lg p-3"><p className="text-slate-500 text-xs mb-1">Accuracy</p><p className="text-white font-medium">{job.metrics?.accuracy && job.metrics.accuracy.length > 0 ? `${(job.metrics.accuracy[job.metrics.accuracy.length - 1] * 100).toFixed(2)}%` : 'N/A'}</p></div>
-                      <div className="bg-slate-900/50 rounded-lg p-3"><p className="text-slate-500 text-xs mb-1">Best Val Acc</p><p className="text-green-400 font-medium">{job.best_metrics?.val_accuracy ? `${(job.best_metrics.val_accuracy * 100).toFixed(2)}%` : 'N/A'}</p></div>
-                      <div className="bg-slate-900/50 rounded-lg p-3"><p className="text-slate-500 text-xs mb-1">Best Epoch</p><p className="text-white font-medium">{job.best_metrics?.best_epoch || 'N/A'}</p></div>
-                    </div>
                   </div>
                 );
               })}
@@ -2707,21 +2752,6 @@ export default function TrainingPage() {
                     </div>
                   </div>
 
-                  <div className="mt-4">
-                    <label className="block text-sm text-slate-300 mb-1">Separate Test Dataset (optional)</label>
-                    <select
-                      value={trainingConfig.test_dataset_id || ''}
-                      onChange={(e) => setTrainingConfig({ ...trainingConfig, test_dataset_id: e.target.value ? parseInt(e.target.value) : null })}
-                      className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white"
-                    >
-                      <option value="">None (use test split from training data)</option>
-                      {datasets.map(dataset => (
-                        <option key={dataset.id} value={dataset.id}>
-                          {dataset.name} ({dataset.file_count} files)
-                        </option>
-                      ))}
-                    </select>
-                  </div>
                   <div className="mt-4">
                     <label className="block text-sm text-slate-300 mb-1">Model Name (optional)</label>
                     <input
