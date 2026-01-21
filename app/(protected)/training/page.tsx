@@ -3211,14 +3211,52 @@ export default function TrainingPage() {
                 return null;
               })()}
 
-              {selectedJob.metrics && (selectedJob.metrics.accuracy || selectedJob.metrics.loss) && (
+              {/* ML Model Summary (for KNN, SVC, AdaBoost - no epochs) */}
+              {['knn', 'svc', 'adaboost', 'xgboost'].includes(selectedJob.model_type) && selectedJob.metrics && (
+                <div className="bg-slate-800/50 rounded-lg p-4">
+                  <h4 className="text-white font-medium mb-4">Model Training Summary</h4>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    <div className="bg-slate-900/50 rounded-lg p-4 text-center">
+                      <p className="text-slate-400 text-xs uppercase mb-1">Train Accuracy</p>
+                      <p className="text-2xl font-bold text-green-400">
+                        {selectedJob.metrics.accuracy?.[0] ? `${(selectedJob.metrics.accuracy[0] * 100).toFixed(1)}%` : '—'}
+                      </p>
+                    </div>
+                    <div className="bg-slate-900/50 rounded-lg p-4 text-center">
+                      <p className="text-slate-400 text-xs uppercase mb-1">Validation Accuracy</p>
+                      <p className="text-2xl font-bold text-blue-400">
+                        {selectedJob.best_metrics?.val_accuracy ? `${(selectedJob.best_metrics.val_accuracy * 100).toFixed(1)}%` : '—'}
+                      </p>
+                    </div>
+                    <div className="bg-slate-900/50 rounded-lg p-4 text-center">
+                      <p className="text-slate-400 text-xs uppercase mb-1">Train Samples</p>
+                      <p className="text-2xl font-bold text-white">
+                        {selectedJob.best_metrics?.model_architecture?.num_train_samples || 
+                         (typeof selectedJob.config === 'string' ? JSON.parse(selectedJob.config || '{}') : selectedJob.config)?.num_train_samples || '—'}
+                      </p>
+                    </div>
+                    <div className="bg-slate-900/50 rounded-lg p-4 text-center">
+                      <p className="text-slate-400 text-xs uppercase mb-1">Val Samples</p>
+                      <p className="text-2xl font-bold text-white">
+                        {selectedJob.best_metrics?.model_architecture?.num_val_samples || 
+                         (typeof selectedJob.config === 'string' ? JSON.parse(selectedJob.config || '{}') : selectedJob.config)?.num_val_samples || '—'}
+                      </p>
+                    </div>
+                  </div>
+                  <p className="text-slate-500 text-xs mt-3">
+                    ML models ({selectedJob.model_type.toUpperCase()}) train in a single pass without epochs
+                  </p>
+                </div>
+              )}
+              {/* Deep Learning Training Progress Charts (only for models with multiple epochs) */}
+              {!['knn', 'svc', 'adaboost', 'xgboost'].includes(selectedJob.model_type) && selectedJob.metrics && (selectedJob.metrics.accuracy?.length > 1 || selectedJob.metrics.loss?.length > 1) && (
                 <div className="bg-slate-800/50 rounded-lg p-4">
                   <div className="flex justify-between items-center mb-4">
                     <h4 className="text-white font-medium">Training Progress Charts</h4>
                     <button onClick={() => exportTrainingCurves(selectedJob)} className="px-2 py-1 text-xs bg-slate-700 hover:bg-slate-600 text-white rounded">Export CSV</button>
                   </div>
                   <div className="grid grid-cols-2 gap-6">
-                    {selectedJob.metrics.accuracy && selectedJob.metrics.val_accuracy && (
+                    {selectedJob.metrics.accuracy && selectedJob.metrics.val_accuracy && selectedJob.metrics.accuracy.length > 1 && (
                       <div>
                         <div className="flex justify-between items-center mb-3">
                           <p className="text-slate-400 text-sm font-medium">Accuracy Over Epochs</p>
@@ -3245,8 +3283,8 @@ export default function TrainingPage() {
                               const minAcc = trainAcc.length > 0 || valAcc.length > 0 ? Math.min(...trainAcc, ...valAcc) : 0;
                               const range = maxAcc - minAcc || 0.1;
                               const xStep = 380 / (trainAcc.length - 1 || 1);
-                              const trainPoints = trainAcc && trainAcc.length > 0 ? trainAcc.map((acc, i) => `${10 + i * xStep},${140 - ((acc - minAcc) / range) * 120}`).join(' ') : '';
-                              const valPoints = valAcc && valAcc.length > 0 ? valAcc.map((acc, i) => `${10 + i * xStep},${140 - ((acc - minAcc) / range) * 120}`).join(' ') : '';
+                              const trainPoints = trainAcc && trainAcc.length > 0 ? trainAcc.map((acc: number, i: number) => `${10 + i * xStep},${140 - ((acc - minAcc) / range) * 120}`).join(' ') : '';
+                              const valPoints = valAcc && valAcc.length > 0 ? valAcc.map((acc: number, i: number) => `${10 + i * xStep},${140 - ((acc - minAcc) / range) * 120}`).join(' ') : '';
                               return (
                                 <>
                                   <polyline points={trainPoints} fill="none" stroke="rgb(34, 197, 94)" strokeWidth="2"/>
@@ -3265,7 +3303,7 @@ export default function TrainingPage() {
                         </div>
                       </div>
                     )}
-                    {selectedJob.metrics.loss && selectedJob.metrics.val_loss && (
+                    {selectedJob.metrics.loss && selectedJob.metrics.val_loss && selectedJob.metrics.loss.length > 1 && (
                       <div>
                         <div className="flex justify-between items-center mb-3">
                           <p className="text-slate-400 text-sm font-medium">Loss Over Epochs</p>
@@ -3292,8 +3330,8 @@ export default function TrainingPage() {
                               const minLoss = trainLoss.length > 0 || valLoss.length > 0 ? Math.min(...trainLoss, ...valLoss) : 0;
                               const range = maxLoss - minLoss || 0.1;
                               const xStep = 380 / (trainLoss.length - 1 || 1);
-                              const trainPoints = trainLoss && trainLoss.length > 0 ? trainLoss.map((loss, i) => `${10 + i * xStep},${140 - ((loss - minLoss) / range) * 120}`).join(' ') : '';
-                              const valPoints = valLoss && valLoss.length > 0 ? valLoss.map((loss, i) => `${10 + i * xStep},${140 - ((loss - minLoss) / range) * 120}`).join(' ') : '';
+                              const trainPoints = trainLoss && trainLoss.length > 0 ? trainLoss.map((loss: number, i: number) => `${10 + i * xStep},${140 - ((loss - minLoss) / range) * 120}`).join(' ') : '';
+                              const valPoints = valLoss && valLoss.length > 0 ? valLoss.map((loss: number, i: number) => `${10 + i * xStep},${140 - ((loss - minLoss) / range) * 120}`).join(' ') : '';
                               return (
                                 <>
                                   <polyline points={trainPoints} fill="none" stroke="rgb(239, 68, 68)" strokeWidth="2"/>

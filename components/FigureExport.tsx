@@ -45,7 +45,7 @@ export default function FigureExport({ jobId, onError }: FigureExportProps) {
   }, [jobId]);
 
   const getAuthHeaders = () => {
-    const token = localStorage.getItem('token');
+    const token = localStorage.getItem('auth_token');
     return {
       'Authorization': `Bearer ${token}`,
       'Content-Type': 'application/json',
