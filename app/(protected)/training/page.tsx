@@ -3315,7 +3315,7 @@ export default function TrainingPage() {
                   </div>
                 </div>
               )}
-              {selectedJob.best_metrics?.model_architecture && (
+              {selectedJob.best_metrics?.model_architecture && selectedJob.best_metrics.model_architecture.layers && Array.isArray(selectedJob.best_metrics.model_architecture.layers) && (
                 <div className="bg-slate-800/50 rounded-lg p-4">
                   <h4 className="text-white font-medium mb-4">Model Architecture</h4>
                   <div className="overflow-x-auto">
@@ -3329,18 +3329,20 @@ export default function TrainingPage() {
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-700">
-                        {selectedJob.best_metrics.model_architecture.layers.map((layer, idx) => (
+                        {selectedJob.best_metrics.model_architecture.layers.map((layer: any, idx: number) => (
                           <tr key={idx}>
                             <td className="px-4 py-2 text-white font-medium">{layer.type}</td>
                             <td className="px-4 py-2 text-slate-300">{layer.shape || (layer.units ? `(${layer.units},)` : '-')}</td>
                             <td className="px-4 py-2 text-blue-400">{layer.activation || (layer.rate ? `rate=${layer.rate}` : '-')}</td>
-                            <td className="px-4 py-2 text-right text-green-400">{layer.params.toLocaleString()}</td>
+                            <td className="px-4 py-2 text-right text-green-400">{layer.params?.toLocaleString() || '-'}</td>
                           </tr>
                         ))}
-                        <tr className="bg-slate-900/50 font-bold">
-                          <td className="px-4 py-2 text-white" colSpan={3}>Total Parameters</td>
-                          <td className="px-4 py-2 text-right text-green-400">{selectedJob.best_metrics.model_architecture.total_params.toLocaleString()}</td>
-                        </tr>
+                        {selectedJob.best_metrics.model_architecture.total_params !== undefined && (
+                          <tr className="bg-slate-900/50 font-bold">
+                            <td className="px-4 py-2 text-white" colSpan={3}>Total Parameters</td>
+                            <td className="px-4 py-2 text-right text-green-400">{selectedJob.best_metrics.model_architecture.total_params.toLocaleString()}</td>
+                          </tr>
+                        )}
                       </tbody>
                     </table>
                   </div>
