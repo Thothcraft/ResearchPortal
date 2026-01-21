@@ -11,6 +11,7 @@ import {
   Download, Rocket, Loader2, X, XCircle, Edit2, TrendingUp,
 } from 'lucide-react';
 import FigureExport from '@/components/FigureExport';
+import FederatedLearningDashboard from '@/components/FederatedLearningDashboard';
 
 const PREPROCESSING_STEP_HELP: Record<string, { title: string; details: string }> = {
   csi_loader: {
@@ -1275,7 +1276,7 @@ export default function TrainingPage() {
           <Network className={`w-8 h-8 mb-3 ${selectedMode === 'federated' ? 'text-purple-400' : 'text-slate-400'}`} />
           <h3 className="text-lg font-semibold text-white mb-1">Federated Learning</h3>
           <p className="text-sm text-slate-400">Privacy-preserving training using Flower framework</p>
-          <span className="inline-block mt-2 px-2 py-1 bg-yellow-500/20 text-yellow-400 text-xs rounded">Coming Soon</span>
+          <span className="inline-block mt-2 px-2 py-1 bg-purple-500/20 text-purple-400 text-xs rounded">Flower FL</span>
         </button>
       </div>
 
@@ -1293,6 +1294,10 @@ export default function TrainingPage() {
         <div className="bg-slate-800/50 rounded-xl p-4 border border-slate-700"><p className="text-slate-400 text-sm mb-1">Trained Models</p><p className="text-2xl font-bold text-green-400">{trainedModels.length}</p></div>
         <div className="bg-slate-800/50 rounded-xl p-4 border border-slate-700"><p className="text-slate-400 text-sm mb-1">Best Accuracy</p><p className="text-2xl font-bold text-purple-400">{trainedModels.length > 0 && trainedModels.some(m => m.accuracy) ? `${(Math.max(...trainedModels.filter(m => m.accuracy).map(m => m.accuracy || 0)) * 100).toFixed(1)}%` : 'N/A'}</p></div>
       </div>
+
+      {selectedMode === 'federated' && (
+        <FederatedLearningDashboard />
+      )}
 
       {selectedMode === 'cloud' && (
         <>
