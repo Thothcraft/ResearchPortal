@@ -1,9 +1,10 @@
 'use client';
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import jsPDF from 'jspdf';
 import { useApi } from '@/hooks/useApi';
 import { useAuth } from '@/contexts/AuthContext';
+import { subscribeToTrainingJobs, parseRealtimeJob, isRealtimeConfigured, RealtimeTrainingJob } from '@/lib/supabase';
 import {
   Brain, Cloud, Smartphone, Network, Play, RefreshCw, Plus, Tag, Database,
   FileText, Trash2, ChevronRight, ChevronDown, BarChart3, CheckCircle, Clock, AlertCircle,
@@ -546,12 +547,64 @@ export default function TrainingPage() {
 
   // Check if there are any running jobs that need faster polling
   const hasRunningJobs = trainingJobs.some(j => j.status === 'running' || j.status === 'pending');
+  
+  // Track if realtime is active to avoid duplicate polling
+  const realtimeActiveRef = useRef(false);
 
+  // Supabase Realtime subscription for training jobs
+  useEffect(() => {
+    if (activeTab !== 'jobs') return;
+    if (!user?.userId) return;
+    
+    // Try to set up realtime subscription
+    const unsubscribe = subscribeToTrainingJobs(
+      user.userId,
+      // On job update
+      (realtimeJob: RealtimeTrainingJob) => {
+        const parsedJob = parseRealtimeJob(realtimeJob);
+        setTrainingJobs(prev => prev.map(job => 
+          job.job_id === parsedJob.job_id ? { ...job, ...parsedJob } : job
+        ));
+        console.log('[Realtime] Job updated:', parsedJob.job_id, parsedJob.status);
+      },
+      // On new job
+      (realtimeJob: RealtimeTrainingJob) => {
+        const parsedJob = parseRealtimeJob(realtimeJob);
+        setTrainingJobs(prev => {
+          // Avoid duplicates
+          if (prev.some(j => j.job_id === parsedJob.job_id)) return prev;
+          return [parsedJob as any, ...prev];
+        });
+        console.log('[Realtime] New job:', parsedJob.job_id);
+      },
+      // On job delete
+      (jobId: string) => {
+        setTrainingJobs(prev => prev.filter(job => job.job_id !== jobId));
+        console.log('[Realtime] Job deleted:', jobId);
+      }
+    );
+    
+    if (unsubscribe) {
+      realtimeActiveRef.current = true;
+      console.log('[Realtime] Subscribed to training job updates');
+      return () => {
+        unsubscribe();
+        realtimeActiveRef.current = false;
+      };
+    } else {
+      realtimeActiveRef.current = false;
+      console.log('[Realtime] Not available, using polling fallback');
+    }
+  }, [activeTab, user?.userId]);
+
+  // Polling fallback (only when realtime is not active)
   useEffect(() => {
     if (activeTab !== 'jobs' && activeTab !== 'models' && activeTab !== 'compare') return;
 
-    // Poll faster (3s) when jobs are running, slower (10s) otherwise
-    const pollInterval = activeTab === 'jobs' && hasRunningJobs ? 3000 : 10000;
+    // If realtime is active for jobs tab, use slower polling (just for models/compare or as backup)
+    const pollInterval = realtimeActiveRef.current && activeTab === 'jobs' 
+      ? 30000  // 30s backup poll when realtime is active
+      : (activeTab === 'jobs' && hasRunningJobs ? 3000 : 10000);  // Fast poll when no realtime
 
     const interval = setInterval(async () => {
       const hasActiveOperation = Object.values(operations).some(v => v === true || v !== null);
