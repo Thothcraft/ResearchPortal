@@ -61,7 +61,22 @@ const DATASETS = [
   { id: 'svhn', name: 'SVHN', description: 'Street View House Numbers', num_classes: 10, samples: '73K' },
 ];
 
+type FLTab = 'sessions' | 'models' | 'compare';
+
+interface FLTrainedModel {
+  model_id: string;
+  session_id: string;
+  session_name: string;
+  algorithm: string;
+  accuracy: number;
+  loss: number;
+  rounds_completed: number;
+  created_at: string;
+  dataset: string;
+}
+
 const FederatedLearningDashboard: React.FC = () => {
+  const [activeTab, setActiveTab] = useState<FLTab>('sessions');
   const [view, setView] = useState<'list' | 'create' | 'monitor'>('list');
   const [sessions, setSessions] = useState<FLSession[]>([]);
   const [selectedSession, setSelectedSession] = useState<string | null>(null);
@@ -69,6 +84,8 @@ const FederatedLearningDashboard: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  const [trainedModels, setTrainedModels] = useState<FLTrainedModel[]>([]);
+  const [selectedModelsForCompare, setSelectedModelsForCompare] = useState<string[]>([]);
 
   const [form, setForm] = useState({
     session_name: '',
@@ -88,6 +105,7 @@ const FederatedLearningDashboard: React.FC = () => {
 
   useEffect(() => {
     loadSessions();
+    loadTrainedModels();
   }, []);
 
   useEffect(() => {
@@ -98,17 +116,45 @@ const FederatedLearningDashboard: React.FC = () => {
     }
   }, [selectedSession, view]);
 
+  // Real-time polling for sessions list
+  useEffect(() => {
+    if (activeTab === 'sessions' && view === 'list') {
+      const interval = setInterval(loadSessions, 5000);
+      return () => clearInterval(interval);
+    }
+  }, [activeTab, view]);
+
   const loadSessions = async () => {
     setLoading(true);
     try {
       const res = await fetch(`${API_BASE_URL}/fl/sessions`, { credentials: 'include' });
       const data = await res.json();
       setSessions(data.sessions || []);
+      
+      // Extract trained models from completed sessions
+      const completedSessions = (data.sessions || []).filter((s: FLSession) => s.status === 'completed');
+      const models: FLTrainedModel[] = completedSessions.map((s: FLSession) => ({
+        model_id: `fl_model_${s.session_id}`,
+        session_id: s.session_id,
+        session_name: s.session_name,
+        algorithm: s.algorithm,
+        accuracy: s.best_accuracy,
+        loss: 0,
+        rounds_completed: s.current_round,
+        created_at: s.created_at,
+        dataset: 'cifar10', // Default, would come from session config
+      }));
+      setTrainedModels(models);
     } catch (err) {
       console.error('Failed to load sessions:', err);
     } finally {
       setLoading(false);
     }
+  };
+
+  const loadTrainedModels = async () => {
+    // Models are derived from completed sessions in loadSessions
+    // This could be extended to fetch from a dedicated endpoint
   };
 
   const loadSessionDetails = async (sessionId: string) => {
@@ -591,6 +637,244 @@ const FederatedLearningDashboard: React.FC = () => {
         </div>
       </div>
 
+      {/* Algorithm-Specific Parameters */}
+      <div className="bg-slate-800/50 rounded-xl border border-slate-700 p-6">
+        <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+          <Layers className="w-5 h-5 text-orange-400" />
+          Algorithm-Specific Parameters
+          <span className="text-xs text-slate-400 font-normal ml-2">
+            ({ALGORITHMS.find(a => a.id === form.algorithm)?.name || form.algorithm})
+          </span>
+        </h3>
+
+        <div className="grid grid-cols-3 gap-4">
+          {/* FedProx: mu parameter */}
+          {form.algorithm === 'fedprox' && (
+            <div>
+              <label className="block text-sm font-medium text-slate-300 mb-2">
+                Proximal μ (mu)
+                <span className="text-xs text-slate-500 ml-1">regularization strength</span>
+              </label>
+              <input
+                type="number"
+                step="0.001"
+                value={form.proximal_mu}
+                onChange={(e) => setForm({ ...form, proximal_mu: parseFloat(e.target.value) || 0.01 })}
+                className="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-purple-500"
+                min={0}
+                max={1}
+              />
+              <p className="text-xs text-slate-500 mt-1">Higher values = stronger regularization toward global model</p>
+            </div>
+          )}
+
+          {/* Adaptive algorithms: server learning rate */}
+          {['fedadam', 'fedyogi', 'fedadagrad', 'fedavgm'].includes(form.algorithm) && (
+            <div>
+              <label className="block text-sm font-medium text-slate-300 mb-2">
+                Server Learning Rate
+                <span className="text-xs text-slate-500 ml-1">η (eta)</span>
+              </label>
+              <input
+                type="number"
+                step="0.01"
+                value={form.server_learning_rate}
+                onChange={(e) => setForm({ ...form, server_learning_rate: parseFloat(e.target.value) || 1.0 })}
+                className="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-purple-500"
+                min={0.001}
+                max={10}
+              />
+              <p className="text-xs text-slate-500 mt-1">Server-side optimizer step size</p>
+            </div>
+          )}
+
+          {/* QFedAvg: q parameter */}
+          {form.algorithm === 'qfedavg' && (
+            <div>
+              <label className="block text-sm font-medium text-slate-300 mb-2">
+                Fairness q
+                <span className="text-xs text-slate-500 ml-1">reweighting factor</span>
+              </label>
+              <input
+                type="number"
+                step="0.1"
+                defaultValue={0.2}
+                className="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-purple-500"
+                min={0}
+                max={5}
+              />
+              <p className="text-xs text-slate-500 mt-1">Higher q = more weight to worse-performing clients</p>
+            </div>
+          )}
+
+          {/* DP algorithms: noise/clipping */}
+          {form.algorithm.startsWith('dpfedavg') && (
+            <>
+              <div>
+                <label className="block text-sm font-medium text-slate-300 mb-2">
+                  Noise Multiplier
+                  <span className="text-xs text-slate-500 ml-1">σ</span>
+                </label>
+                <input
+                  type="number"
+                  step="0.01"
+                  defaultValue={1.0}
+                  className="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-purple-500"
+                  min={0}
+                />
+                <p className="text-xs text-slate-500 mt-1">Gaussian noise scale for privacy</p>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-300 mb-2">
+                  Clipping Norm
+                  <span className="text-xs text-slate-500 ml-1">C</span>
+                </label>
+                <input
+                  type="number"
+                  step="0.1"
+                  defaultValue={1.0}
+                  className="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-purple-500"
+                  min={0.1}
+                />
+                <p className="text-xs text-slate-500 mt-1">Max gradient norm before clipping</p>
+              </div>
+            </>
+          )}
+
+          {/* Byzantine-robust: trimming/selection params */}
+          {['fedtrimmedavg', 'bulyan'].includes(form.algorithm) && (
+            <div>
+              <label className="block text-sm font-medium text-slate-300 mb-2">
+                Trim Ratio
+                <span className="text-xs text-slate-500 ml-1">β</span>
+              </label>
+              <input
+                type="number"
+                step="0.05"
+                defaultValue={0.1}
+                className="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-purple-500"
+                min={0}
+                max={0.45}
+              />
+              <p className="text-xs text-slate-500 mt-1">Fraction of extreme updates to trim</p>
+            </div>
+          )}
+
+          {/* Default message for algorithms without special params */}
+          {!['fedprox', 'fedadam', 'fedyogi', 'fedadagrad', 'fedavgm', 'qfedavg', 'dpfedavg_adaptive', 'dpfedavg_fixed', 'fedtrimmedavg', 'bulyan'].includes(form.algorithm) && (
+            <div className="col-span-3 text-center py-4 text-slate-500">
+              <p>No additional parameters for {ALGORITHMS.find(a => a.id === form.algorithm)?.name || form.algorithm}</p>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Model Architecture Preview */}
+      <div className="bg-slate-800/50 rounded-xl border border-slate-700 p-6">
+        <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+          <Layers className="w-5 h-5 text-blue-400" />
+          Model Architecture
+        </h3>
+        <div className="bg-slate-900 rounded-lg p-4 font-mono text-sm">
+          {form.model_architecture === 'cnn' && (
+            <div className="space-y-2 text-slate-300">
+              <div className="flex items-center gap-2">
+                <span className="text-blue-400">Input:</span>
+                <span>32×32×3 (RGB image)</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-green-400">Conv2D:</span>
+                <span>32 filters, 3×3, ReLU → 32×32×32</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-yellow-400">MaxPool:</span>
+                <span>2×2 → 16×16×32</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-green-400">Conv2D:</span>
+                <span>64 filters, 3×3, ReLU → 16×16×64</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-yellow-400">MaxPool:</span>
+                <span>2×2 → 8×8×64</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-purple-400">Flatten:</span>
+                <span>→ 4096</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-orange-400">Dense:</span>
+                <span>128, ReLU</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-red-400">Output:</span>
+                <span>{DATASETS.find(d => d.id === form.dataset)?.num_classes || 10} classes (softmax)</span>
+              </div>
+            </div>
+          )}
+          {form.model_architecture === 'resnet18' && (
+            <div className="space-y-2 text-slate-300">
+              <div className="flex items-center gap-2">
+                <span className="text-blue-400">Input:</span>
+                <span>32×32×3 (RGB image)</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-green-400">Conv2D:</span>
+                <span>64 filters, 7×7, stride 2</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-purple-400">ResBlock×2:</span>
+                <span>64 channels</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-purple-400">ResBlock×2:</span>
+                <span>128 channels (stride 2)</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-purple-400">ResBlock×2:</span>
+                <span>256 channels (stride 2)</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-purple-400">ResBlock×2:</span>
+                <span>512 channels (stride 2)</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-yellow-400">AvgPool:</span>
+                <span>Global → 512</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-red-400">Output:</span>
+                <span>{DATASETS.find(d => d.id === form.dataset)?.num_classes || 10} classes (softmax)</span>
+              </div>
+            </div>
+          )}
+          {form.model_architecture === 'mlp' && (
+            <div className="space-y-2 text-slate-300">
+              <div className="flex items-center gap-2">
+                <span className="text-blue-400">Input:</span>
+                <span>32×32×3 = 3072 (flattened)</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-orange-400">Dense:</span>
+                <span>512, ReLU</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-orange-400">Dense:</span>
+                <span>256, ReLU</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-orange-400">Dense:</span>
+                <span>128, ReLU</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-red-400">Output:</span>
+                <span>{DATASETS.find(d => d.id === form.dataset)?.num_classes || 10} classes (softmax)</span>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
       {/* Create Button */}
       <div className="flex justify-end">
         <button
@@ -782,11 +1066,280 @@ const FederatedLearningDashboard: React.FC = () => {
     );
   };
 
+  // Trained Models Tab
+  const renderModelsTab = () => (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-xl font-semibold text-white flex items-center gap-2">
+            <Database className="w-5 h-5 text-green-400" />
+            FL Trained Models
+          </h2>
+          <p className="text-sm text-slate-400 mt-1">Models from completed federated learning sessions</p>
+        </div>
+      </div>
+
+      {trainedModels.length === 0 ? (
+        <div className="bg-slate-800/50 rounded-xl border border-slate-700 p-12 text-center">
+          <Database className="w-16 h-16 text-slate-600 mx-auto mb-4" />
+          <h3 className="text-lg font-medium text-white mb-2">No Trained Models</h3>
+          <p className="text-slate-400">Complete an FL session to see trained models here</p>
+        </div>
+      ) : (
+        <div className="grid gap-4">
+          {trainedModels.map((model) => (
+            <div
+              key={model.model_id}
+              className="bg-slate-800/50 rounded-xl border border-slate-700 p-5 hover:border-slate-600 transition-all"
+            >
+              <div className="flex items-start justify-between">
+                <div className="flex-1">
+                  <div className="flex items-center gap-3 mb-2">
+                    <h3 className="text-lg font-semibold text-white">{model.session_name}</h3>
+                    <span className={`px-2 py-0.5 rounded text-xs font-medium text-white ${getAlgoColor(model.algorithm)}`}>
+                      {model.algorithm.toUpperCase()}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-4 gap-4 text-sm">
+                    <div>
+                      <span className="text-slate-500">Accuracy</span>
+                      <p className="text-green-400 font-medium">{(model.accuracy * 100).toFixed(2)}%</p>
+                    </div>
+                    <div>
+                      <span className="text-slate-500">Rounds</span>
+                      <p className="text-white">{model.rounds_completed}</p>
+                    </div>
+                    <div>
+                      <span className="text-slate-500">Dataset</span>
+                      <p className="text-white">{model.dataset}</p>
+                    </div>
+                    <div>
+                      <span className="text-slate-500">Created</span>
+                      <p className="text-white">{new Date(model.created_at).toLocaleDateString()}</p>
+                    </div>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={selectedModelsForCompare.includes(model.model_id)}
+                    onChange={(e) => {
+                      if (e.target.checked) {
+                        setSelectedModelsForCompare(prev => [...prev, model.model_id]);
+                      } else {
+                        setSelectedModelsForCompare(prev => prev.filter(id => id !== model.model_id));
+                      }
+                    }}
+                    className="w-4 h-4 rounded border-slate-600 bg-slate-700 text-purple-500 focus:ring-purple-500"
+                  />
+                  <span className="text-xs text-slate-400">Compare</span>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {selectedModelsForCompare.length >= 2 && (
+        <div className="fixed bottom-6 right-6">
+          <button
+            onClick={() => setActiveTab('compare')}
+            className="flex items-center gap-2 px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg shadow-lg transition-colors"
+          >
+            <BarChart3 className="w-4 h-4" />
+            Compare {selectedModelsForCompare.length} Models
+          </button>
+        </div>
+      )}
+    </div>
+  );
+
+  // Compare Models Tab
+  const renderCompareTab = () => {
+    const modelsToCompare = trainedModels.filter(m => selectedModelsForCompare.includes(m.model_id));
+    
+    return (
+      <div className="space-y-6">
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-xl font-semibold text-white flex items-center gap-2">
+              <BarChart3 className="w-5 h-5 text-purple-400" />
+              Compare FL Models
+            </h2>
+            <p className="text-sm text-slate-400 mt-1">Side-by-side comparison of selected models</p>
+          </div>
+          <button
+            onClick={() => setSelectedModelsForCompare([])}
+            className="text-sm text-slate-400 hover:text-white transition-colors"
+          >
+            Clear Selection
+          </button>
+        </div>
+
+        {modelsToCompare.length < 2 ? (
+          <div className="bg-slate-800/50 rounded-xl border border-slate-700 p-12 text-center">
+            <BarChart3 className="w-16 h-16 text-slate-600 mx-auto mb-4" />
+            <h3 className="text-lg font-medium text-white mb-2">Select Models to Compare</h3>
+            <p className="text-slate-400 mb-4">Go to the Models tab and select at least 2 models</p>
+            <button
+              onClick={() => setActiveTab('models')}
+              className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg transition-colors"
+            >
+              Go to Models
+            </button>
+          </div>
+        ) : (
+          <div className="space-y-6">
+            {/* Comparison Table */}
+            <div className="bg-slate-800/50 rounded-xl border border-slate-700 overflow-hidden">
+              <table className="w-full">
+                <thead>
+                  <tr className="border-b border-slate-700">
+                    <th className="px-4 py-3 text-left text-sm font-medium text-slate-400">Metric</th>
+                    {modelsToCompare.map(model => (
+                      <th key={model.model_id} className="px-4 py-3 text-left text-sm font-medium text-white">
+                        {model.session_name}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr className="border-b border-slate-700/50">
+                    <td className="px-4 py-3 text-sm text-slate-400">Algorithm</td>
+                    {modelsToCompare.map(model => (
+                      <td key={model.model_id} className="px-4 py-3">
+                        <span className={`px-2 py-0.5 rounded text-xs font-medium text-white ${getAlgoColor(model.algorithm)}`}>
+                          {model.algorithm.toUpperCase()}
+                        </span>
+                      </td>
+                    ))}
+                  </tr>
+                  <tr className="border-b border-slate-700/50">
+                    <td className="px-4 py-3 text-sm text-slate-400">Accuracy</td>
+                    {modelsToCompare.map(model => {
+                      const maxAcc = Math.max(...modelsToCompare.map(m => m.accuracy));
+                      const isMax = model.accuracy === maxAcc;
+                      return (
+                        <td key={model.model_id} className={`px-4 py-3 text-sm font-medium ${isMax ? 'text-green-400' : 'text-white'}`}>
+                          {(model.accuracy * 100).toFixed(2)}%
+                          {isMax && <span className="ml-2 text-xs">🏆</span>}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                  <tr className="border-b border-slate-700/50">
+                    <td className="px-4 py-3 text-sm text-slate-400">Rounds</td>
+                    {modelsToCompare.map(model => (
+                      <td key={model.model_id} className="px-4 py-3 text-sm text-white">
+                        {model.rounds_completed}
+                      </td>
+                    ))}
+                  </tr>
+                  <tr>
+                    <td className="px-4 py-3 text-sm text-slate-400">Dataset</td>
+                    {modelsToCompare.map(model => (
+                      <td key={model.model_id} className="px-4 py-3 text-sm text-white">
+                        {model.dataset}
+                      </td>
+                    ))}
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            {/* Visual Comparison */}
+            <div className="bg-slate-800/50 rounded-xl border border-slate-700 p-6">
+              <h3 className="text-lg font-semibold text-white mb-4">Accuracy Comparison</h3>
+              <div className="flex items-end gap-4 h-48">
+                {modelsToCompare.map((model, index) => {
+                  const colors = ['bg-purple-500', 'bg-blue-500', 'bg-green-500', 'bg-orange-500', 'bg-pink-500'];
+                  return (
+                    <div key={model.model_id} className="flex-1 flex flex-col items-center">
+                      <div
+                        className={`w-full ${colors[index % colors.length]} rounded-t transition-all`}
+                        style={{ height: `${model.accuracy * 100}%` }}
+                      />
+                      <div className="mt-2 text-center">
+                        <p className="text-xs text-slate-400 truncate max-w-[100px]">{model.session_name}</p>
+                        <p className="text-sm font-medium text-white">{(model.accuracy * 100).toFixed(1)}%</p>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  const activeSessionsCount = sessions.filter(s => s.status === 'running').length;
+
   return (
     <div className="space-y-6">
-      {view === 'list' && renderSessionsList()}
-      {view === 'create' && renderCreateSession()}
-      {view === 'monitor' && renderMonitor()}
+      {/* Tabs */}
+      <div className="flex gap-2 border-b border-slate-700">
+        <button
+          onClick={() => { setActiveTab('sessions'); setView('list'); }}
+          className={`px-4 py-2 font-medium transition-colors flex items-center gap-2 ${
+            activeTab === 'sessions' 
+              ? 'text-purple-400 border-b-2 border-purple-400' 
+              : 'text-slate-400 hover:text-white'
+          }`}
+        >
+          <Network className="w-4 h-4" />
+          Sessions
+          {activeSessionsCount > 0 && (
+            <span className="px-2 py-0.5 bg-blue-500/20 text-blue-400 text-xs rounded-full">
+              {activeSessionsCount}
+            </span>
+          )}
+        </button>
+        <button
+          onClick={() => setActiveTab('models')}
+          className={`px-4 py-2 font-medium transition-colors flex items-center gap-2 ${
+            activeTab === 'models' 
+              ? 'text-purple-400 border-b-2 border-purple-400' 
+              : 'text-slate-400 hover:text-white'
+          }`}
+        >
+          <Database className="w-4 h-4" />
+          Trained Models
+          {trainedModels.length > 0 && (
+            <span className="px-2 py-0.5 bg-green-500/20 text-green-400 text-xs rounded-full">
+              {trainedModels.length}
+            </span>
+          )}
+        </button>
+        <button
+          onClick={() => setActiveTab('compare')}
+          className={`px-4 py-2 font-medium transition-colors flex items-center gap-2 ${
+            activeTab === 'compare' 
+              ? 'text-purple-400 border-b-2 border-purple-400' 
+              : 'text-slate-400 hover:text-white'
+          }`}
+        >
+          <BarChart3 className="w-4 h-4" />
+          Compare
+          {selectedModelsForCompare.length > 0 && (
+            <span className="px-2 py-0.5 bg-purple-500/20 text-purple-400 text-xs rounded-full">
+              {selectedModelsForCompare.length}
+            </span>
+          )}
+        </button>
+      </div>
+
+      {/* Tab Content */}
+      {activeTab === 'sessions' && (
+        <>
+          {view === 'list' && renderSessionsList()}
+          {view === 'create' && renderCreateSession()}
+          {view === 'monitor' && renderMonitor()}
+        </>
+      )}
+      {activeTab === 'models' && renderModelsTab()}
+      {activeTab === 'compare' && renderCompareTab()}
     </div>
   );
 };

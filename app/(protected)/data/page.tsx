@@ -22,6 +22,15 @@ import {
   Upload,
   Check,
   Trash2,
+  FolderPlus,
+  Folder,
+  FolderOpen,
+  Eye,
+  X,
+  ChevronRight,
+  GripVertical,
+  Edit3,
+  Music,
 } from 'lucide-react';
 
 type Device = {
@@ -46,6 +55,16 @@ type DataFile = {
   cloudFileId?: number;
   downloading?: boolean;
   uploading?: boolean;
+  folderId?: string;
+  previewData?: string;  // First few lines for sensor/text, thumbnail URL for images/videos
+};
+
+type DataFolder = {
+  id: string;
+  name: string;
+  parentId?: string;
+  createdAt: string;
+  fileCount: number;
 };
 
 const FILE_TYPE_CONFIG = {
@@ -136,6 +155,17 @@ export default function DataPage() {
   const [selectedFileType, setSelectedFileType] = useState<DataFile['type']>('other');
   const [uploadDate, setUploadDate] = useState<string>(new Date().toISOString().split('T')[0]);
   const { get, post } = useApi();
+  
+  // Folder and preview state
+  const [folders, setFolders] = useState<DataFolder[]>([]);
+  const [currentFolderId, setCurrentFolderId] = useState<string | null>(null);
+  const [showCreateFolderModal, setShowCreateFolderModal] = useState(false);
+  const [newFolderName, setNewFolderName] = useState('');
+  const [previewFile, setPreviewFile] = useState<DataFile | null>(null);
+  const [previewContent, setPreviewContent] = useState<string | null>(null);
+  const [isLoadingPreview, setIsLoadingPreview] = useState(false);
+  const [draggedFile, setDraggedFile] = useState<DataFile | null>(null);
+  const [editingFileType, setEditingFileType] = useState<DataFile | null>(null);
 
   // Fetch devices and files from Brain server
   const fetchData = async () => {
@@ -248,6 +278,130 @@ export default function DataPage() {
       setIsLoading(false);
     }
   };
+
+  // Create a new folder
+  const handleCreateFolder = () => {
+    if (!newFolderName.trim()) return;
+    
+    const newFolder: DataFolder = {
+      id: `folder_${Date.now()}`,
+      name: newFolderName.trim(),
+      parentId: currentFolderId || undefined,
+      createdAt: new Date().toISOString(),
+      fileCount: 0,
+    };
+    
+    setFolders(prev => [...prev, newFolder]);
+    setNewFolderName('');
+    setShowCreateFolderModal(false);
+    
+    // Save to localStorage for persistence
+    const updatedFolders = [...folders, newFolder];
+    localStorage.setItem('dataFolders', JSON.stringify(updatedFolders));
+  };
+
+  // Move file to folder
+  const handleMoveFileToFolder = (file: DataFile, folderId: string | null) => {
+    setFiles(prev => prev.map(f => 
+      f.name === file.name && f.deviceId === file.deviceId 
+        ? { ...f, folderId: folderId || undefined } 
+        : f
+    ));
+    
+    // Update folder file counts
+    setFolders(prev => prev.map(folder => ({
+      ...folder,
+      fileCount: files.filter(f => f.folderId === folder.id).length
+    })));
+    
+    setDraggedFile(null);
+  };
+
+  // Load file preview
+  const handlePreviewFile = async (file: DataFile) => {
+    setPreviewFile(file);
+    setPreviewContent(null);
+    setIsLoadingPreview(true);
+    
+    try {
+      const token = localStorage.getItem('auth_token');
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'https://web-production-d7d37.up.railway.app';
+      
+      if (file.type === 'image' && file.onCloud && file.cloudFileId) {
+        // For images, we'll use the download URL directly
+        setPreviewContent(`${apiUrl}/file/${file.cloudFileId}/download`);
+      } else if (file.type === 'video' && file.onCloud && file.cloudFileId) {
+        // For videos, show first frame or thumbnail
+        setPreviewContent(`${apiUrl}/file/${file.cloudFileId}/download`);
+      } else if ((file.type === 'sensor' || file.type === 'other') && file.onCloud && file.cloudFileId) {
+        // For sensor/text files, fetch first few lines
+        const response = await fetch(`${apiUrl}/file/${file.cloudFileId}/preview?lines=10`, {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        if (response.ok) {
+          const data = await response.json();
+          setPreviewContent(data.preview || 'No preview available');
+        } else {
+          setPreviewContent('Preview not available');
+        }
+      } else {
+        setPreviewContent('Preview not available for this file');
+      }
+    } catch (err) {
+      setPreviewContent('Failed to load preview');
+    } finally {
+      setIsLoadingPreview(false);
+    }
+  };
+
+  // Update file type manually
+  const handleUpdateFileType = async (file: DataFile, newType: DataFile['type']) => {
+    if (!file.id && !file.cloudFileId) {
+      setError('Cannot update type: File ID not found');
+      return;
+    }
+    
+    try {
+      const token = localStorage.getItem('auth_token');
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'https://web-production-d7d37.up.railway.app';
+      
+      // Use device file endpoint if it has an id, otherwise cloud file
+      const fileId = file.id || file.cloudFileId;
+      const response = await fetch(`${apiUrl}/device/file/${fileId}/type`, {
+        method: 'PATCH',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ file_type: newType })
+      });
+      
+      if (response.ok) {
+        setFiles(prev => prev.map(f => 
+          (f.name === file.name && f.deviceId === file.deviceId) 
+            ? { ...f, type: newType } 
+            : f
+        ));
+        setEditingFileType(null);
+      } else {
+        setError('Failed to update file type');
+      }
+    } catch (err) {
+      setError('Failed to update file type');
+    }
+  };
+
+  // Load folders from localStorage on mount
+  useEffect(() => {
+    const savedFolders = localStorage.getItem('dataFolders');
+    if (savedFolders) {
+      try {
+        setFolders(JSON.parse(savedFolders));
+      } catch (e) {
+        console.error('Failed to load folders:', e);
+      }
+    }
+  }, []);
 
   // Upload file from device to cloud
   // Requests Brain to mark file for upload, Thoth will upload on next registration
@@ -736,6 +890,177 @@ export default function DataPage() {
         </div>
       </div>
 
+      {/* Folders Section */}
+      <div className="mb-6">
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-2">
+            <Folder className="w-5 h-5 text-slate-400" />
+            <h2 className="text-lg font-semibold text-white">Folders</h2>
+            {currentFolderId && (
+              <button
+                onClick={() => setCurrentFolderId(null)}
+                className="ml-2 text-sm text-indigo-400 hover:text-indigo-300"
+              >
+                ← Back to root
+              </button>
+            )}
+          </div>
+          <button
+            onClick={() => setShowCreateFolderModal(true)}
+            className="flex items-center gap-2 px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-white rounded-lg text-sm transition-colors"
+          >
+            <FolderPlus className="w-4 h-4" />
+            New Folder
+          </button>
+        </div>
+        
+        {folders.filter(f => f.parentId === (currentFolderId || undefined)).length > 0 ? (
+          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3 mb-4">
+            {folders
+              .filter(f => f.parentId === (currentFolderId || undefined))
+              .map(folder => (
+                <div
+                  key={folder.id}
+                  onClick={() => setCurrentFolderId(folder.id)}
+                  onDragOver={(e) => { e.preventDefault(); e.currentTarget.classList.add('ring-2', 'ring-indigo-500'); }}
+                  onDragLeave={(e) => { e.currentTarget.classList.remove('ring-2', 'ring-indigo-500'); }}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    e.currentTarget.classList.remove('ring-2', 'ring-indigo-500');
+                    if (draggedFile) handleMoveFileToFolder(draggedFile, folder.id);
+                  }}
+                  className="flex items-center gap-3 p-3 bg-slate-800/50 border border-slate-700 rounded-lg cursor-pointer hover:border-slate-600 transition-all"
+                >
+                  <FolderOpen className="w-8 h-8 text-yellow-400" />
+                  <div>
+                    <p className="text-white font-medium text-sm truncate">{folder.name}</p>
+                    <p className="text-slate-500 text-xs">{folder.fileCount} files</p>
+                  </div>
+                </div>
+              ))}
+          </div>
+        ) : (
+          <p className="text-slate-500 text-sm mb-4">No folders yet. Create one to organize your files.</p>
+        )}
+      </div>
+
+      {/* Create Folder Modal */}
+      {showCreateFolderModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-slate-800 rounded-xl p-6 w-full max-w-md border border-slate-700">
+            <h3 className="text-lg font-semibold text-white mb-4">Create New Folder</h3>
+            <input
+              type="text"
+              value={newFolderName}
+              onChange={(e) => setNewFolderName(e.target.value)}
+              placeholder="Folder name..."
+              className="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 mb-4"
+              autoFocus
+            />
+            <div className="flex gap-3 justify-end">
+              <button
+                onClick={() => { setShowCreateFolderModal(false); setNewFolderName(''); }}
+                className="px-4 py-2 text-slate-400 hover:text-white transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleCreateFolder}
+                disabled={!newFolderName.trim()}
+                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg transition-colors disabled:opacity-50"
+              >
+                Create
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* File Preview Modal */}
+      {previewFile && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+          <div className="bg-slate-800 rounded-xl w-full max-w-4xl max-h-[90vh] overflow-hidden border border-slate-700">
+            <div className="flex items-center justify-between p-4 border-b border-slate-700">
+              <div className="flex items-center gap-3">
+                <Eye className="w-5 h-5 text-indigo-400" />
+                <h3 className="text-lg font-semibold text-white truncate">{previewFile.name}</h3>
+              </div>
+              <button
+                onClick={() => { setPreviewFile(null); setPreviewContent(null); }}
+                className="p-2 hover:bg-slate-700 rounded-lg transition-colors"
+              >
+                <X className="w-5 h-5 text-slate-400" />
+              </button>
+            </div>
+            <div className="p-4 overflow-auto max-h-[calc(90vh-80px)]">
+              {isLoadingPreview ? (
+                <div className="flex items-center justify-center py-12">
+                  <Loader2 className="w-8 h-8 text-indigo-400 animate-spin" />
+                </div>
+              ) : previewFile.type === 'image' && previewContent ? (
+                <img 
+                  src={previewContent} 
+                  alt={previewFile.name}
+                  className="max-w-full h-auto mx-auto rounded-lg"
+                />
+              ) : previewFile.type === 'video' && previewContent ? (
+                <video 
+                  src={previewContent} 
+                  controls
+                  className="max-w-full h-auto mx-auto rounded-lg"
+                />
+              ) : previewFile.type === 'audio' && previewContent ? (
+                <div className="flex flex-col items-center py-8">
+                  <Music className="w-16 h-16 text-blue-400 mb-4" />
+                  <audio src={previewContent} controls className="w-full max-w-md" />
+                </div>
+              ) : (
+                <pre className="bg-slate-900 p-4 rounded-lg text-sm text-slate-300 overflow-x-auto whitespace-pre-wrap font-mono">
+                  {previewContent || 'No preview available'}
+                </pre>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit File Type Modal */}
+      {editingFileType && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-slate-800 rounded-xl p-6 w-full max-w-md border border-slate-700">
+            <h3 className="text-lg font-semibold text-white mb-2">Change File Type</h3>
+            <p className="text-slate-400 text-sm mb-4 truncate">{editingFileType.name}</p>
+            <div className="grid grid-cols-2 gap-2 mb-4">
+              {Object.entries(FILE_TYPE_CONFIG).map(([key, config]) => {
+                const TypeIcon = config.icon;
+                return (
+                  <button
+                    key={key}
+                    onClick={() => handleUpdateFileType(editingFileType, key as DataFile['type'])}
+                    className={`flex items-center gap-2 p-3 rounded-lg border transition-all ${
+                      editingFileType.type === key
+                        ? 'bg-indigo-600 border-indigo-500 text-white'
+                        : 'bg-slate-700 border-slate-600 text-slate-300 hover:border-slate-500'
+                    }`}
+                  >
+                    <TypeIcon className={`w-5 h-5 ${editingFileType.type === key ? 'text-white' : config.color}`} />
+                    <span className="text-sm">{config.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+            <div className="flex justify-end">
+              <button
+                onClick={() => setEditingFileType(null)}
+                className="px-4 py-2 text-slate-400 hover:text-white transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* File Type Filters */}
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 mb-8">
         <button
@@ -805,7 +1130,9 @@ export default function DataPage() {
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {filteredFiles.map((file, index) => {
+          {filteredFiles
+            .filter(f => currentFolderId ? f.folderId === currentFolderId : !f.folderId)
+            .map((file, index) => {
             const config = FILE_TYPE_CONFIG[file.type];
             const Icon = config.icon;
             const canDownload = file.onCloud || file.deviceOnline;
@@ -813,28 +1140,47 @@ export default function DataPage() {
             return (
               <div
                 key={index}
-                className="bg-slate-800/50 backdrop-blur-sm rounded-xl p-5 border border-slate-700 hover:border-slate-600 transition-all group"
+                draggable
+                onDragStart={() => setDraggedFile(file)}
+                onDragEnd={() => setDraggedFile(null)}
+                className="bg-slate-800/50 backdrop-blur-sm rounded-xl p-5 border border-slate-700 hover:border-slate-600 transition-all group cursor-grab active:cursor-grabbing"
               >
                 <div className="flex items-start justify-between mb-4">
-                  <div className={`p-3 rounded-lg ${config.bg}`}>
-                    <Icon className={`w-6 h-6 ${config.color}`} />
+                  <div className="flex items-center gap-2">
+                    <GripVertical className="w-4 h-4 text-slate-600 opacity-0 group-hover:opacity-100 transition-opacity" />
+                    <div className={`p-3 rounded-lg ${config.bg}`}>
+                      <Icon className={`w-6 h-6 ${config.color}`} />
+                    </div>
                   </div>
                   <div className="flex items-center gap-2">
+                    {/* Preview button */}
+                    {file.onCloud && (
+                      <button
+                        onClick={() => handlePreviewFile(file)}
+                        className="p-1.5 rounded hover:bg-slate-700 text-slate-400 hover:text-white transition-colors"
+                        title="Preview file"
+                      >
+                        <Eye className="w-4 h-4" />
+                      </button>
+                    )}
+                    {/* Edit type button */}
+                    <button
+                      onClick={() => setEditingFileType(file)}
+                      className="p-1.5 rounded hover:bg-slate-700 text-slate-400 hover:text-white transition-colors"
+                      title="Change file type"
+                    >
+                      <Edit3 className="w-4 h-4" />
+                    </button>
                     {/* Cloud status indicator */}
                     {file.onCloud ? (
-                      <>
-                        <span className="flex items-center gap-1 px-2 py-1 rounded text-xs font-medium bg-green-500/10 text-green-400">
-                          <Cloud className="w-3 h-3" />
-                          On Cloud
-                        </span>
-                        <span className="flex items-center gap-1 px-2 py-1 rounded text-xs font-medium bg-blue-500/10 text-blue-400">
-                          Uploaded
-                        </span>
-                      </>
+                      <span className="flex items-center gap-1 px-2 py-1 rounded text-xs font-medium bg-green-500/10 text-green-400">
+                        <Cloud className="w-3 h-3" />
+                        Cloud
+                      </span>
                     ) : (
                       <span className="flex items-center gap-1 px-2 py-1 rounded text-xs font-medium bg-slate-500/10 text-slate-400">
                         <CloudOff className="w-3 h-3" />
-                        Device Only
+                        Local
                       </span>
                     )}
                   </div>
