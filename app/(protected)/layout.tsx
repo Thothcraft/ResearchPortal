@@ -20,7 +20,7 @@ export default function ProtectedLayout({
 
   useEffect(() => {
     if (!isLoading && !isAuthenticated && isClient) {
-      router.push('/auth/login');
+      router.push('/auth');
     }
   }, [isAuthenticated, isLoading, router, isClient]);
 

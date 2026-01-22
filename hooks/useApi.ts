@@ -27,7 +27,7 @@ export const useApi = () => {
         // Token might be expired, clear auth and redirect to login
         localStorage.removeItem('auth_token');
         localStorage.removeItem('user');
-        window.location.href = '/auth/login';
+        window.location.href = '/auth';
         return null;
       }
 
