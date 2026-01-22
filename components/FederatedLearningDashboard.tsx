@@ -582,8 +582,8 @@ const FederatedLearningDashboard: React.FC = () => {
                 className="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-purple-500"
               >
                 <option value="iid">IID (Uniform)</option>
-                <option value="dirichlet">Non-IID (Dirichlet)</option>
-                <option value="shard">Non-IID (Shard)</option>
+                <option value="non_iid_dirichlet">Non-IID (Dirichlet)</option>
+                <option value="non_iid_label">Non-IID (Shard/Label)</option>
                 <option value="pathological">Pathological</option>
               </select>
             </div>
