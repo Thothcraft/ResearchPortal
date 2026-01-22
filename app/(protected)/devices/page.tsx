@@ -418,7 +418,8 @@ export default function DevicesPage() {
     } finally {
       setIsLoading(false);
     }
-  }, [get]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     fetchDevices();
