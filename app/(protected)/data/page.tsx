@@ -334,40 +334,32 @@ export default function DataPage() {
         return;
       }
       
-      const downloadUrl = `${apiUrl}/file/${file.cloudFileId}/download`;
+      // Correct endpoint: /file/{id}?download=false for inline viewing
+      const fileUrl = `${apiUrl}/file/${file.cloudFileId}?download=false`;
       
-      if (file.type === 'image') {
-        // For images, use the download URL directly
-        setPreviewContent(downloadUrl);
-      } else if (file.type === 'video') {
-        // For videos, use the download URL directly
-        setPreviewContent(downloadUrl);
-      } else if (file.type === 'audio') {
-        // For audio, use the download URL directly
-        setPreviewContent(downloadUrl);
-      } else if (file.type === 'timelapse') {
-        // For timelapse, show as video
-        setPreviewContent(downloadUrl);
-      } else if (file.type === 'sensor' || file.type === 'other') {
-        // For sensor/text files, fetch first few lines
-        const response = await fetch(`${apiUrl}/file/${file.cloudFileId}/preview?lines=20`, {
+      if (file.type === 'image' || file.type === 'video' || file.type === 'audio' || file.type === 'timelapse') {
+        // For media files, fetch as blob and create object URL for proper auth
+        const response = await fetch(fileUrl, {
           headers: { 'Authorization': `Bearer ${token}` }
         });
         if (response.ok) {
-          const data = await response.json();
-          setPreviewContent(data.preview || 'No content to preview');
+          const blob = await response.blob();
+          const objectUrl = URL.createObjectURL(blob);
+          setPreviewContent(objectUrl);
         } else {
-          // Fallback: try to get raw content
-          const rawResponse = await fetch(downloadUrl, {
-            headers: { 'Authorization': `Bearer ${token}` }
-          });
-          if (rawResponse.ok) {
-            const text = await rawResponse.text();
-            // Show first 2000 characters
-            setPreviewContent(text.substring(0, 2000) + (text.length > 2000 ? '\n\n... (truncated)' : ''));
-          } else {
-            setPreviewContent('Preview not available');
-          }
+          setPreviewContent('Failed to load file');
+        }
+      } else if (file.type === 'sensor' || file.type === 'other') {
+        // For sensor/text files, fetch content directly
+        const response = await fetch(fileUrl, {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        if (response.ok) {
+          const text = await response.text();
+          // Show first 3000 characters
+          setPreviewContent(text.substring(0, 3000) + (text.length > 3000 ? '\n\n... (truncated)' : ''));
+        } else {
+          setPreviewContent('Preview not available');
         }
       } else {
         setPreviewContent('Preview not available for this file type');

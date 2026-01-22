@@ -34,6 +34,10 @@ interface RoundMetric {
   avg_accuracy: number;
   avg_loss: number;
   participating_clients: number;
+  timestamp?: string;
+  min_accuracy?: number;
+  max_accuracy?: number;
+  fairness_index?: number;
 }
 
 const ALGORITHMS = [
@@ -50,10 +54,11 @@ const ALGORITHMS = [
   { id: 'qfedavg', name: 'QFedAvg', description: 'Fair federated learning', category: 'fair', color: 'bg-purple-500' },
   { id: 'dpfedavg_adaptive', name: 'DP-FedAvg (Adaptive)', description: 'Differential privacy', category: 'privacy', color: 'bg-pink-500' },
   { id: 'dpfedavg_fixed', name: 'DP-FedAvg (Fixed)', description: 'Fixed clipping DP', category: 'privacy', color: 'bg-fuchsia-500' },
+  { id: 'fedxgb_bagging', name: 'FedXgbBagging', description: 'XGBoost bagging for trees', category: 'tree', color: 'bg-lime-500' },
 ];
 
 // Dataset types for model filtering
-type DatasetType = 'image_rgb' | 'image_gray' | 'tabular' | 'text' | 'time_series';
+type DatasetType = 'image_rgb' | 'image_gray' | 'tabular' | 'text' | 'time_series' | 'imu' | 'csi';
 
 interface DatasetConfig {
   id: string;
@@ -63,9 +68,12 @@ interface DatasetConfig {
   samples: string;
   type: DatasetType;
   input_shape: string;
+  isUserDataset?: boolean;
+  dataset_id?: number;
 }
 
-const DATASETS: DatasetConfig[] = [
+// Built-in datasets
+const BUILTIN_DATASETS: DatasetConfig[] = [
   // RGB Image datasets (32x32x3)
   { id: 'cifar10', name: 'CIFAR-10', description: '60K 32x32 color images', num_classes: 10, samples: '50K', type: 'image_rgb', input_shape: '32×32×3' },
   { id: 'cifar100', name: 'CIFAR-100', description: '60K images, 100 classes', num_classes: 100, samples: '50K', type: 'image_rgb', input_shape: '32×32×3' },
@@ -85,14 +93,21 @@ interface ModelConfig {
 }
 
 const MODEL_ARCHITECTURES: ModelConfig[] = [
+  // Image models
   { id: 'cnn', name: 'CNN', description: 'Convolutional Neural Network', compatible_types: ['image_rgb', 'image_gray'] },
   { id: 'resnet18', name: 'ResNet-18', description: 'Deep residual network', compatible_types: ['image_rgb', 'image_gray'] },
-  { id: 'mlp', name: 'MLP', description: 'Multi-layer perceptron', compatible_types: ['image_rgb', 'image_gray', 'tabular', 'time_series'] },
+  // Time-series models
+  { id: 'lstm', name: 'LSTM', description: 'Long Short-Term Memory', compatible_types: ['time_series', 'imu', 'csi'] },
+  { id: 'gru', name: 'GRU', description: 'Gated Recurrent Unit', compatible_types: ['time_series', 'imu', 'csi'] },
+  { id: 'cnn_lstm', name: 'CNN-LSTM', description: 'Hybrid CNN + LSTM', compatible_types: ['time_series', 'imu', 'csi'] },
+  { id: 'tcn', name: 'TCN', description: 'Temporal Convolutional Network', compatible_types: ['time_series', 'imu', 'csi'] },
+  // Universal models
+  { id: 'mlp', name: 'MLP', description: 'Multi-layer perceptron', compatible_types: ['image_rgb', 'image_gray', 'tabular', 'time_series', 'imu', 'csi'] },
 ];
 
-// Get compatible models for a dataset
-const getCompatibleModels = (datasetId: string): ModelConfig[] => {
-  const dataset = DATASETS.find(d => d.id === datasetId);
+// Helper to get compatible models for a dataset from a datasets array
+const getCompatibleModelsFromList = (datasetId: string, datasets: DatasetConfig[]): ModelConfig[] => {
+  const dataset = datasets.find((d: DatasetConfig) => d.id === datasetId);
   if (!dataset) return MODEL_ARCHITECTURES;
   return MODEL_ARCHITECTURES.filter(m => m.compatible_types.includes(dataset.type));
 };
@@ -136,6 +151,42 @@ const FederatedLearningDashboard: React.FC = () => {
   const [creating, setCreating] = useState(false);
   const [trainedModels, setTrainedModels] = useState<FLTrainedModel[]>([]);
   const [selectedModelsForCompare, setSelectedModelsForCompare] = useState<string[]>([]);
+  const [userDatasets, setUserDatasets] = useState<DatasetConfig[]>([]);
+  const [loadingUserDatasets, setLoadingUserDatasets] = useState(false);
+
+  // Combined datasets (built-in + user)
+  const allDatasets = [...BUILTIN_DATASETS, ...userDatasets];
+
+  // Load user datasets from API
+  const loadUserDatasets = async () => {
+    setLoadingUserDatasets(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/datasets`, {
+        credentials: 'include',
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const datasets = data.datasets || [];
+        // Convert to DatasetConfig format
+        const userDs: DatasetConfig[] = datasets.map((ds: any) => ({
+          id: `user_${ds.id}`,
+          name: ds.name,
+          description: ds.description || 'User dataset',
+          num_classes: ds.label_counts ? Object.keys(ds.label_counts).length : 2,
+          samples: ds.file_count ? `${ds.file_count} files` : 'N/A',
+          type: 'time_series' as DatasetType, // Default to time_series for user data
+          input_shape: 'variable',
+          isUserDataset: true,
+          dataset_id: ds.id,
+        }));
+        setUserDatasets(userDs);
+      }
+    } catch (err) {
+      console.error('Failed to load user datasets:', err);
+    } finally {
+      setLoadingUserDatasets(false);
+    }
+  };
 
   const [form, setForm] = useState({
     session_name: '',
@@ -157,16 +208,29 @@ const FederatedLearningDashboard: React.FC = () => {
     clipping_norm: 1.0,
     trim_ratio: 0.1,
     momentum: 0.9,
+    // Advanced server params
+    min_fit_clients: 2,
+    min_evaluate_clients: 2,
+    fraction_evaluate: 0.5,
+    accept_failures: true,
+    // Advanced client params
+    weight_decay: 0.0001,
+    optimizer: 'sgd',
+    // Dirichlet alpha for non-IID
+    dirichlet_alpha: 0.5,
+    // Privacy params
+    differential_privacy: false,
+    delta: 1e-5,
   });
 
   // Update model architecture when dataset changes (ensure compatibility)
   useEffect(() => {
-    const compatibleModels = getCompatibleModels(form.dataset);
-    if (!compatibleModels.find(m => m.id === form.model_architecture)) {
+    const compatibleModels = getCompatibleModelsFromList(form.dataset, allDatasets);
+    if (!compatibleModels.find((m: ModelConfig) => m.id === form.model_architecture)) {
       // Current model not compatible, switch to first compatible one
       setForm(prev => ({ ...prev, model_architecture: compatibleModels[0]?.id || 'mlp' }));
     }
-  }, [form.dataset]);
+  }, [form.dataset, allDatasets]);
 
   // Update algorithm-specific params when algorithm changes
   useEffect(() => {
@@ -179,6 +243,7 @@ const FederatedLearningDashboard: React.FC = () => {
   useEffect(() => {
     loadSessions();
     loadTrainedModels();
+    loadUserDatasets();
   }, []);
 
   useEffect(() => {
@@ -248,6 +313,11 @@ const FederatedLearningDashboard: React.FC = () => {
     setCreating(true);
     setError(null);
     try {
+      // Check if using a user dataset
+      const isUserDataset = form.dataset.startsWith('user_');
+      const userDatasetId = isUserDataset ? parseInt(form.dataset.replace('user_', '')) : null;
+      const selectedDataset = allDatasets.find((d: DatasetConfig) => d.id === form.dataset);
+      
       const payload = {
         session_name: form.session_name,
         algorithm: form.algorithm,
@@ -255,22 +325,41 @@ const FederatedLearningDashboard: React.FC = () => {
         server: {
           num_rounds: form.num_rounds,
           fraction_fit: form.fraction_fit,
-          min_fit_clients: 1,
-          min_available_clients: 1,
+          fraction_evaluate: form.fraction_evaluate,
+          min_fit_clients: form.min_fit_clients,
+          min_evaluate_clients: form.min_evaluate_clients,
+          min_available_clients: Math.max(form.min_fit_clients, form.min_evaluate_clients),
+          accept_failures: form.accept_failures,
         },
         client: {
           local_epochs: form.local_epochs,
           local_batch_size: form.local_batch_size,
           learning_rate: form.learning_rate,
+          weight_decay: form.weight_decay,
+          optimizer: form.optimizer,
         },
         data: {
-          dataset: form.dataset,
+          dataset: isUserDataset ? 'custom' : form.dataset,
+          dataset_id: userDatasetId,
+          data_type: selectedDataset?.type || 'time_series',
           num_partitions: form.num_partitions,
           partition_strategy: form.partition_strategy,
+          dirichlet_alpha: form.dirichlet_alpha,
         },
         algorithm_params: {
           proximal_mu: form.proximal_mu,
           server_learning_rate: form.server_learning_rate,
+          momentum: form.momentum,
+          q_param: form.q_param,
+          noise_multiplier: form.noise_multiplier,
+          clipping_norm: form.clipping_norm,
+          trim_ratio: form.trim_ratio,
+        },
+        privacy: {
+          differential_privacy: form.differential_privacy,
+          delta: form.delta,
+          noise_multiplier: form.noise_multiplier,
+          max_grad_norm: form.clipping_norm,
         },
       };
 
@@ -602,22 +691,34 @@ const FederatedLearningDashboard: React.FC = () => {
                 className="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-purple-500"
               >
                 <optgroup label="RGB Images (32×32×3)">
-                  {DATASETS.filter(ds => ds.type === 'image_rgb').map(ds => (
+                  {BUILTIN_DATASETS.filter((ds: DatasetConfig) => ds.type === 'image_rgb').map((ds: DatasetConfig) => (
                     <option key={ds.id} value={ds.id}>
                       {ds.name} ({ds.num_classes} classes, {ds.samples})
                     </option>
                   ))}
                 </optgroup>
                 <optgroup label="Grayscale Images (28×28×1)">
-                  {DATASETS.filter(ds => ds.type === 'image_gray').map(ds => (
+                  {BUILTIN_DATASETS.filter((ds: DatasetConfig) => ds.type === 'image_gray').map((ds: DatasetConfig) => (
                     <option key={ds.id} value={ds.id}>
                       {ds.name} ({ds.num_classes} classes, {ds.samples})
                     </option>
                   ))}
                 </optgroup>
+                {userDatasets.length > 0 && (
+                  <optgroup label="📁 Your Datasets (IMU/CSI/Sensor)">
+                    {userDatasets.map((ds: DatasetConfig) => (
+                      <option key={ds.id} value={ds.id}>
+                        {ds.name} ({ds.num_classes} classes, {ds.samples})
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
               </select>
               <p className="text-xs text-slate-500 mt-1">
-                Input: {DATASETS.find(d => d.id === form.dataset)?.input_shape}
+                Input: {allDatasets.find((d: DatasetConfig) => d.id === form.dataset)?.input_shape || 'variable'}
+                {form.dataset.startsWith('user_') && (
+                  <span className="ml-2 text-green-400">✓ Custom dataset</span>
+                )}
               </p>
             </div>
 
@@ -625,7 +726,7 @@ const FederatedLearningDashboard: React.FC = () => {
               <label className="block text-sm font-medium text-slate-300 mb-2">
                 Model Architecture
                 <span className="text-xs text-slate-500 ml-2">
-                  ({getCompatibleModels(form.dataset).length} compatible)
+                  ({getCompatibleModelsFromList(form.dataset, allDatasets).length} compatible)
                 </span>
               </label>
               <select
@@ -633,7 +734,7 @@ const FederatedLearningDashboard: React.FC = () => {
                 onChange={(e) => setForm({ ...form, model_architecture: e.target.value })}
                 className="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-purple-500"
               >
-                {getCompatibleModels(form.dataset).map(model => (
+                {getCompatibleModelsFromList(form.dataset, allDatasets).map((model: ModelConfig) => (
                   <option key={model.id} value={model.id}>
                     {model.name} - {model.description}
                   </option>
@@ -861,18 +962,155 @@ const FederatedLearningDashboard: React.FC = () => {
         </div>
       </div>
 
+      {/* Advanced Settings */}
+      <div className="bg-slate-800/50 rounded-xl border border-slate-700 p-6">
+        <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+          <Settings className="w-5 h-5 text-slate-400" />
+          Advanced Settings
+        </h3>
+
+        <div className="grid grid-cols-2 gap-6">
+          {/* Server Settings */}
+          <div className="space-y-4">
+            <h4 className="text-sm font-medium text-slate-300 border-b border-slate-700 pb-2">Server Configuration</h4>
+            
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs text-slate-400 mb-1">Min Fit Clients</label>
+                <input
+                  type="number"
+                  value={form.min_fit_clients}
+                  onChange={(e) => setForm({ ...form, min_fit_clients: parseInt(e.target.value) || 2 })}
+                  className="w-full px-3 py-1.5 bg-slate-700 border border-slate-600 rounded text-white text-sm"
+                  min={1}
+                  max={100}
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-slate-400 mb-1">Min Evaluate Clients</label>
+                <input
+                  type="number"
+                  value={form.min_evaluate_clients}
+                  onChange={(e) => setForm({ ...form, min_evaluate_clients: parseInt(e.target.value) || 2 })}
+                  className="w-full px-3 py-1.5 bg-slate-700 border border-slate-600 rounded text-white text-sm"
+                  min={1}
+                  max={100}
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs text-slate-400 mb-1">Fraction Evaluate</label>
+              <input
+                type="number"
+                step="0.1"
+                value={form.fraction_evaluate}
+                onChange={(e) => setForm({ ...form, fraction_evaluate: parseFloat(e.target.value) || 0.5 })}
+                className="w-full px-3 py-1.5 bg-slate-700 border border-slate-600 rounded text-white text-sm"
+                min={0}
+                max={1}
+              />
+              <p className="text-xs text-slate-500 mt-1">Fraction of clients for evaluation</p>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                id="accept_failures"
+                checked={form.accept_failures}
+                onChange={(e) => setForm({ ...form, accept_failures: e.target.checked })}
+                className="w-4 h-4 rounded bg-slate-700 border-slate-600"
+              />
+              <label htmlFor="accept_failures" className="text-sm text-slate-300">Accept client failures</label>
+            </div>
+          </div>
+
+          {/* Client Settings */}
+          <div className="space-y-4">
+            <h4 className="text-sm font-medium text-slate-300 border-b border-slate-700 pb-2">Client Configuration</h4>
+            
+            <div>
+              <label className="block text-xs text-slate-400 mb-1">Optimizer</label>
+              <select
+                value={form.optimizer}
+                onChange={(e) => setForm({ ...form, optimizer: e.target.value })}
+                className="w-full px-3 py-1.5 bg-slate-700 border border-slate-600 rounded text-white text-sm"
+              >
+                <option value="sgd">SGD</option>
+                <option value="adam">Adam</option>
+                <option value="adamw">AdamW</option>
+                <option value="rmsprop">RMSprop</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-xs text-slate-400 mb-1">Weight Decay (L2)</label>
+              <input
+                type="number"
+                step="0.0001"
+                value={form.weight_decay}
+                onChange={(e) => setForm({ ...form, weight_decay: parseFloat(e.target.value) || 0 })}
+                className="w-full px-3 py-1.5 bg-slate-700 border border-slate-600 rounded text-white text-sm"
+                min={0}
+                max={0.1}
+              />
+            </div>
+
+            {form.partition_strategy === 'non_iid_dirichlet' && (
+              <div>
+                <label className="block text-xs text-slate-400 mb-1">Dirichlet Alpha (α)</label>
+                <input
+                  type="number"
+                  step="0.1"
+                  value={form.dirichlet_alpha}
+                  onChange={(e) => setForm({ ...form, dirichlet_alpha: parseFloat(e.target.value) || 0.5 })}
+                  className="w-full px-3 py-1.5 bg-slate-700 border border-slate-600 rounded text-white text-sm"
+                  min={0.01}
+                  max={100}
+                />
+                <p className="text-xs text-slate-500 mt-1">Lower = more heterogeneous</p>
+              </div>
+            )}
+
+            <div className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                id="differential_privacy"
+                checked={form.differential_privacy}
+                onChange={(e) => setForm({ ...form, differential_privacy: e.target.checked })}
+                className="w-4 h-4 rounded bg-slate-700 border-slate-600"
+              />
+              <label htmlFor="differential_privacy" className="text-sm text-slate-300">Enable Differential Privacy</label>
+            </div>
+
+            {form.differential_privacy && (
+              <div>
+                <label className="block text-xs text-slate-400 mb-1">Privacy Delta (δ)</label>
+                <input
+                  type="number"
+                  step="0.00001"
+                  value={form.delta}
+                  onChange={(e) => setForm({ ...form, delta: parseFloat(e.target.value) || 1e-5 })}
+                  className="w-full px-3 py-1.5 bg-slate-700 border border-slate-600 rounded text-white text-sm"
+                />
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
       {/* Model Architecture Preview */}
       <div className="bg-slate-800/50 rounded-xl border border-slate-700 p-6">
         <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
           <Layers className="w-5 h-5 text-blue-400" />
           Model Architecture
           <span className="text-xs text-slate-400 font-normal ml-2">
-            (for {DATASETS.find(d => d.id === form.dataset)?.input_shape} input)
+            (for {BUILTIN_DATASETS.find((d: DatasetConfig) => d.id === form.dataset)?.input_shape} input)
           </span>
         </h3>
         <div className="bg-slate-900 rounded-lg p-4 font-mono text-sm">
           {(() => {
-            const dataset = DATASETS.find(d => d.id === form.dataset);
+            const dataset = BUILTIN_DATASETS.find((d: DatasetConfig) => d.id === form.dataset);
             const isGray = dataset?.type === 'image_gray';
             const inputShape = dataset?.input_shape || '32×32×3';
             const numClasses = dataset?.num_classes || 10;
@@ -1162,6 +1400,46 @@ const FederatedLearningDashboard: React.FC = () => {
                 <span>Round {round_metrics[Math.max(0, round_metrics.length - 30)]?.round || 1}</span>
                 <span>Round {round_metrics[round_metrics.length - 1]?.round || 1}</span>
               </div>
+            )}
+          </div>
+        </div>
+
+        {/* Training Activity Log */}
+        <div className="bg-slate-800/50 rounded-xl border border-slate-700 p-6">
+          <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+            <Activity className="w-5 h-5 text-purple-400" />
+            Training Activity Log
+          </h3>
+          <div className="bg-slate-900 rounded-lg p-4 max-h-48 overflow-y-auto font-mono text-xs space-y-1">
+            {round_metrics.length === 0 ? (
+              <div className="text-slate-500">
+                {session.status === 'running' ? (
+                  <>
+                    <div className="text-green-400">[{new Date().toLocaleTimeString()}] Session started</div>
+                    <div className="text-blue-400">[{new Date().toLocaleTimeString()}] Initializing {session.algorithm.toUpperCase()} strategy...</div>
+                    <div className="text-yellow-400">[{new Date().toLocaleTimeString()}] Loading dataset partitions...</div>
+                    <div className="animate-pulse text-purple-400">[{new Date().toLocaleTimeString()}] Waiting for first round to complete...</div>
+                  </>
+                ) : (
+                  <div className="text-slate-500">No training activity yet</div>
+                )}
+              </div>
+            ) : (
+              <>
+                <div className="text-green-400">[{session.started_at ? new Date(session.started_at).toLocaleTimeString() : '-'}] Training started with {session.algorithm.toUpperCase()}</div>
+                {round_metrics.slice(-10).map((m: RoundMetric, i: number) => (
+                  <div key={i} className={m.avg_accuracy > session.best_accuracy * 0.99 ? 'text-green-400' : 'text-slate-300'}>
+                    [{m.timestamp ? new Date(m.timestamp).toLocaleTimeString() : '--:--:--'}] Round {m.round}: acc={((m.avg_accuracy || 0) * 100).toFixed(2)}%, loss={m.avg_loss?.toFixed(4) || 'N/A'}, clients={m.participating_clients}
+                    {m.avg_accuracy === session.best_accuracy && ' ⭐ Best'}
+                  </div>
+                ))}
+                {session.status === 'running' && (
+                  <div className="animate-pulse text-purple-400">[{new Date().toLocaleTimeString()}] Round {session.current_round + 1} in progress...</div>
+                )}
+                {session.status === 'completed' && (
+                  <div className="text-green-400">[{session.completed_at ? new Date(session.completed_at).toLocaleTimeString() : '-'}] ✓ Training completed! Best accuracy: {(session.best_accuracy * 100).toFixed(2)}%</div>
+                )}
+              </>
             )}
           </div>
         </div>

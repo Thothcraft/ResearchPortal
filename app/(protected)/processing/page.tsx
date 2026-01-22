@@ -386,6 +386,12 @@ export default function ProcessingPage() {
   const [panStart, setPanStart] = useState({ x: 0, y: 0 });
   const { get, post, put } = useApi();
 
+  // Data sample preview state
+  const [showDataPreview, setShowDataPreview] = useState(false);
+  const [previewBlock, setPreviewBlock] = useState<ProcessingBlock | null>(null);
+  const [previewData, setPreviewData] = useState<number[][] | null>(null);
+  const [isLoadingPreview, setIsLoadingPreview] = useState(false);
+
   // Connection drawing state (Obsidian-like)
   const [isDrawingConnection, setIsDrawingConnection] = useState(false);
   const [connectionStart, setConnectionStart] = useState<{ blockId: string; port: 'input' | 'output' } | null>(null);
@@ -719,6 +725,58 @@ export default function ProcessingPage() {
     setConnections(newConnections);
     // Recalculate shapes with updated connections
     setBlocks(recalculateShapesFromConnections(updatedBlocks, newConnections));
+  };
+
+  // Generate sample data for a block (simulated processing preview)
+  const generateSampleData = (block: ProcessingBlock, blockIndex: number): number[][] => {
+    const rows = 5; // Show 5 sample rows
+    const cols = block.outputShape[1] || block.outputShape[0] || 10;
+    const actualCols = Math.min(cols, 10); // Limit to 10 columns for display
+    
+    // Generate sample data based on block type
+    const data: number[][] = [];
+    for (let i = 0; i < rows; i++) {
+      const row: number[] = [];
+      for (let j = 0; j < actualCols; j++) {
+        // Different patterns based on block type
+        if (block.type.includes('loader')) {
+          // Raw data - random values
+          row.push(parseFloat((Math.random() * 100 - 50).toFixed(2)));
+        } else if (block.type.includes('amplitude')) {
+          // Amplitude - positive values
+          row.push(parseFloat((Math.random() * 50 + 10).toFixed(2)));
+        } else if (block.type.includes('filter') || block.type.includes('denoise')) {
+          // Filtered - smoother values
+          row.push(parseFloat((Math.sin(i * 0.5 + j * 0.3) * 20 + 30).toFixed(2)));
+        } else if (block.type.includes('pca')) {
+          // PCA - normalized values
+          row.push(parseFloat((Math.random() * 2 - 1).toFixed(3)));
+        } else if (block.type.includes('normalize') || block.type.includes('scaler')) {
+          // Normalized - values between -1 and 1
+          row.push(parseFloat((Math.random() * 2 - 1).toFixed(3)));
+        } else {
+          // Default - processed values
+          row.push(parseFloat((Math.random() * 40 + blockIndex * 5).toFixed(2)));
+        }
+      }
+      data.push(row);
+    }
+    return data;
+  };
+
+  // Handle block click to show data preview
+  const handleBlockClick = (block: ProcessingBlock) => {
+    const blockIndex = blocks.findIndex(b => b.id === block.id);
+    setPreviewBlock(block);
+    setIsLoadingPreview(true);
+    setShowDataPreview(true);
+    
+    // Simulate loading delay then generate sample data
+    setTimeout(() => {
+      const sampleData = generateSampleData(block, blockIndex);
+      setPreviewData(sampleData);
+      setIsLoadingPreview(false);
+    }, 300);
   };
 
   // Drag handlers for blocks - improved with canvas-relative positioning
@@ -1534,16 +1592,27 @@ export default function ProcessingPage() {
                               </div>
                             )}
                             
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setSelectedBlock(block);
-                                setShowBlockConfig(true);
-                              }}
-                              className="mt-2 w-full px-2 py-1 bg-slate-700 hover:bg-slate-600 text-white rounded text-xs font-medium transition-colors"
-                            >
-                              ⚙️ Configure
-                            </button>
+                            <div className="mt-2 flex gap-1">
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setSelectedBlock(block);
+                                  setShowBlockConfig(true);
+                                }}
+                                className="flex-1 px-2 py-1 bg-slate-700 hover:bg-slate-600 text-white rounded text-xs font-medium transition-colors"
+                              >
+                                ⚙️ Config
+                              </button>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleBlockClick(block);
+                                }}
+                                className="flex-1 px-2 py-1 bg-indigo-600 hover:bg-indigo-500 text-white rounded text-xs font-medium transition-colors"
+                              >
+                                📊 Preview
+                              </button>
+                            </div>
 
                             {/* Connection ports - Interactive for drag-to-connect */}
                             {/* Input port (left side) - not shown for source blocks */}
@@ -1747,6 +1816,88 @@ export default function ProcessingPage() {
             <div className="flex gap-3 mt-6">
               <button
                 onClick={() => setShowBlockConfig(false)}
+                className="flex-1 px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg font-medium"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Data Preview Modal */}
+      {showDataPreview && previewBlock && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
+          <div className="bg-slate-900 rounded-xl p-6 w-full max-w-2xl border border-slate-700">
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h3 className="text-xl font-semibold text-white">Data Preview: {previewBlock.name}</h3>
+                <p className="text-sm text-slate-400 mt-1">
+                  Output shape: [{previewBlock.outputShape.join(' × ')}]
+                </p>
+              </div>
+              <button
+                onClick={() => setShowDataPreview(false)}
+                className="p-2 hover:bg-slate-700 rounded-lg transition-colors"
+              >
+                <X className="w-5 h-5 text-slate-400" />
+              </button>
+            </div>
+            
+            {isLoadingPreview ? (
+              <div className="flex items-center justify-center py-12">
+                <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-indigo-500"></div>
+              </div>
+            ) : previewData ? (
+              <div className="space-y-4">
+                <div className="bg-slate-800 rounded-lg p-4 overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-slate-700">
+                        <th className="text-left text-slate-400 py-2 px-2 font-medium">Row</th>
+                        {previewData[0]?.map((_, colIdx) => (
+                          <th key={colIdx} className="text-left text-slate-400 py-2 px-2 font-medium">
+                            Col {colIdx + 1}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {previewData.map((row, rowIdx) => (
+                        <tr key={rowIdx} className="border-b border-slate-700/50 hover:bg-slate-700/30">
+                          <td className="py-2 px-2 text-slate-500 font-mono">{rowIdx + 1}</td>
+                          {row.map((val, colIdx) => (
+                            <td key={colIdx} className="py-2 px-2 text-white font-mono">
+                              {val}
+                            </td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                
+                <div className="flex items-center justify-between text-xs text-slate-500">
+                  <span>Showing 5 sample rows × {previewData[0]?.length || 0} columns (max 10)</span>
+                  <span className="text-indigo-400">Simulated preview data</span>
+                </div>
+                
+                <div className="bg-slate-800/50 rounded-lg p-3 border border-slate-700">
+                  <p className="text-xs text-slate-400">
+                    <strong className="text-slate-300">Processing applied:</strong> {previewBlock.name} transforms the input 
+                    from shape [{previewBlock.inputShape.join(' × ')}] to [{previewBlock.outputShape.join(' × ')}]
+                  </p>
+                </div>
+              </div>
+            ) : (
+              <div className="text-center py-8 text-slate-400">
+                No preview data available
+              </div>
+            )}
+            
+            <div className="flex gap-3 mt-6">
+              <button
+                onClick={() => setShowDataPreview(false)}
                 className="flex-1 px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg font-medium"
               >
                 Close
