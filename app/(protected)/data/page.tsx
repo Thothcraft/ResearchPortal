@@ -35,7 +35,7 @@ type Device = {
 type DataFile = {
   id?: number;  // DeviceFile ID from Brain server
   name: string;
-  type: 'imu' | 'csi' | 'mfcw' | 'img' | 'vid' | 'other';
+  type: 'image' | 'video' | 'audio' | 'sensor' | 'timelapse' | 'other';
   size: number;
   timestamp: string;
   extension: string;
@@ -49,11 +49,11 @@ type DataFile = {
 };
 
 const FILE_TYPE_CONFIG = {
-  imu: { label: 'IMU Data', icon: Activity, color: 'text-blue-400', bg: 'bg-blue-500/10' },
-  csi: { label: 'CSI Data', icon: Wifi, color: 'text-green-400', bg: 'bg-green-500/10' },
-  mfcw: { label: 'MFCW Data', icon: Radio, color: 'text-purple-400', bg: 'bg-purple-500/10' },
-  img: { label: 'Image', icon: Image, color: 'text-yellow-400', bg: 'bg-yellow-500/10' },
-  vid: { label: 'Video', icon: Film, color: 'text-red-400', bg: 'bg-red-500/10' },
+  image: { label: 'Image', icon: Image, color: 'text-yellow-400', bg: 'bg-yellow-500/10' },
+  video: { label: 'Video', icon: Film, color: 'text-red-400', bg: 'bg-red-500/10' },
+  audio: { label: 'Audio', icon: Activity, color: 'text-blue-400', bg: 'bg-blue-500/10' },
+  sensor: { label: 'Sensor', icon: Wifi, color: 'text-green-400', bg: 'bg-green-500/10' },
+  timelapse: { label: 'Timelapse', icon: Radio, color: 'text-purple-400', bg: 'bg-purple-500/10' },
   other: { label: 'Other', icon: FileText, color: 'text-slate-400', bg: 'bg-slate-500/10' },
 };
 
@@ -65,26 +65,57 @@ function formatFileSize(bytes: number): string {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
 }
 
-function parseFileName(name: string): { type: DataFile['type']; timestamp: string } {
-  const lowerName = name.toLowerCase();
-  let type: DataFile['type'] = 'other';
-  let timestamp = '';
+function getFileTypeFromExtension(filename: string): DataFile['type'] {
+  const ext = filename.split('.').pop()?.toLowerCase() || '';
+  
+  const IMAGE_EXTENSIONS = ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'tiff', 'heic'];
+  const VIDEO_EXTENSIONS = ['mp4', 'avi', 'mov', 'mkv', 'webm', 'm4v'];
+  const AUDIO_EXTENSIONS = ['wav', 'mp3', 'm4a', 'flac', 'ogg', 'aac'];
+  const SENSOR_EXTENSIONS = ['json', 'csv'];
+  
+  if (IMAGE_EXTENSIONS.includes(ext)) return 'image';
+  if (VIDEO_EXTENSIONS.includes(ext)) return 'video';
+  if (AUDIO_EXTENSIONS.includes(ext)) return 'audio';
+  if (SENSOR_EXTENSIONS.includes(ext)) return 'sensor';
+  
+  return 'other';
+}
 
-  if (lowerName.startsWith('imu_')) {
-    type = 'imu';
-    timestamp = name.substring(4).split('.')[0];
-  } else if (lowerName.startsWith('csi_')) {
-    type = 'csi';
-    timestamp = name.substring(4).split('.')[0];
-  } else if (lowerName.startsWith('mfcw_')) {
-    type = 'mfcw';
-    timestamp = name.substring(5).split('.')[0];
-  } else if (lowerName.startsWith('img_')) {
-    type = 'img';
-    timestamp = name.substring(4).split('.')[0];
-  } else if (lowerName.startsWith('vid_')) {
-    type = 'vid';
-    timestamp = name.substring(4).split('.')[0];
+function parseFileName(name: string, serverType?: string): { type: DataFile['type']; timestamp: string } {
+  let timestamp = '';
+  
+  // Extract timestamp from filename if it has a date pattern
+  const dateMatch = name.match(/(\d{4}-\d{2}-\d{2})/)
+    || name.match(/(\d{4}_\d{2}_\d{2})/);
+  if (dateMatch) {
+    timestamp = dateMatch[1].replace(/_/g, '-');
+  }
+  
+  // Use server-provided type if available, otherwise detect from extension
+  let type: DataFile['type'] = 'other';
+  if (serverType && serverType !== 'other') {
+    // Map server types to our types
+    const typeMap: Record<string, DataFile['type']> = {
+      'image': 'image',
+      'video': 'video', 
+      'audio': 'audio',
+      'sensor': 'sensor',
+      'timelapse': 'timelapse',
+      // Legacy mappings
+      'imu': 'sensor',
+      'csi': 'sensor',
+      'mfcw': 'sensor',
+      'img': 'image',
+      'vid': 'video',
+    };
+    type = typeMap[serverType] || getFileTypeFromExtension(name);
+  } else {
+    type = getFileTypeFromExtension(name);
+  }
+  
+  // Check for timelapse folder
+  if (name.startsWith('timelapse_')) {
+    type = 'timelapse';
   }
 
   return { type, timestamp };
@@ -165,7 +196,7 @@ export default function DataPage() {
       deviceFilesResults.flat().forEach((f: any) => {
         if (!f || !f._device) return;
         const device = f._device;
-        const { type, timestamp } = parseFileName(f.filename);
+        const { type, timestamp } = parseFileName(f.filename, f.file_type);
         allFiles.push({
           id: f.id,
           name: f.filename,
@@ -190,7 +221,7 @@ export default function DataPage() {
       if (cloudFilesData && Array.isArray(cloudFilesData.files)) {
         cloudFilesData.files.forEach((f: any) => {
           if (seenCloudFileIds.has(f.file_id)) return;
-          const { type, timestamp } = parseFileName(f.filename);
+          const { type, timestamp } = parseFileName(f.filename, f.file_type);
           allFiles.push({
             id: undefined,
             name: f.filename,
@@ -420,15 +451,9 @@ export default function DataPage() {
     }
   };
 
-  // Infer file type from extension
+  // Infer file type from extension (uses the global function)
   const inferFileType = (filename: string): DataFile['type'] => {
-    const ext = filename.split('.').pop()?.toLowerCase() || '';
-    if (['png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp'].includes(ext)) return 'img';
-    if (['mp4', 'avi', 'mov', 'mkv', 'webm'].includes(ext)) return 'vid';
-    if (['json'].includes(ext)) return 'imu';  // Default JSON to IMU
-    if (['csv'].includes(ext)) return 'csi';   // Default CSV to CSI
-    if (['bin'].includes(ext)) return 'mfcw';  // Default binary to MFCW
-    return 'other';
+    return getFileTypeFromExtension(filename);
   };
 
   // Show upload modal when files are selected
@@ -602,11 +627,11 @@ export default function DataPage() {
                 onChange={(e) => setSelectedFileType(e.target.value as DataFile['type'])}
                 className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
               >
-                <option value="imu">IMU Data</option>
-                <option value="csi">CSI Data</option>
-                <option value="mfcw">MFCW Data</option>
-                <option value="img">Image</option>
-                <option value="vid">Video</option>
+                <option value="image">Image</option>
+                <option value="video">Video</option>
+                <option value="audio">Audio</option>
+                <option value="sensor">Sensor Data</option>
+                <option value="timelapse">Timelapse</option>
                 <option value="other">Other</option>
               </select>
             </div>
