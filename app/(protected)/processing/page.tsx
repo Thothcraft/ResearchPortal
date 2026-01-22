@@ -295,8 +295,72 @@ const BLOCK_TYPES = {
   },
 };
 
+// Default template pipelines for new users
+const DEFAULT_TEMPLATE_PIPELINES: Pipeline[] = [
+  {
+    id: -1,
+    name: 'CSI Basic Processing',
+    description: 'Standard CSI preprocessing: amplitude extraction, subcarrier filtering, and normalization',
+    data_type: 'csi',
+    output_shape: 'flattened',
+    created_at: new Date().toISOString(),
+    config: {
+      blocks: [
+        { id: 'csi_loader_1', type: 'csi_loader', name: 'CSI Loader', dataType: 'csi', inputShape: [], outputShape: [1000, 128], config: {}, position: { x: 50, y: 100 } },
+        { id: 'amp_ext_1', type: 'amplitude_extractor', name: 'Amplitude Extractor', dataType: 'csi', inputShape: [1000, 128], outputShape: [1000, 64], config: {}, position: { x: 320, y: 100 } },
+        { id: 'sub_filter_1', type: 'subcarrier_filter', name: 'Subcarrier Filter', dataType: 'csi', inputShape: [1000, 64], outputShape: [1000, 27], config: { start: 5, end: 32 }, position: { x: 590, y: 100 } },
+      ],
+      connections: [
+        { from: 'csi_loader_1', to: 'amp_ext_1' },
+        { from: 'amp_ext_1', to: 'sub_filter_1' },
+      ]
+    }
+  },
+  {
+    id: -2,
+    name: 'IMU Activity Recognition',
+    description: 'IMU preprocessing for activity recognition: windowing, feature extraction',
+    data_type: 'imu',
+    output_shape: 'features',
+    created_at: new Date().toISOString(),
+    config: {
+      blocks: [
+        { id: 'imu_loader_1', type: 'imu_loader', name: 'IMU Loader', dataType: 'imu', inputShape: [], outputShape: [1000, 6], config: {}, position: { x: 50, y: 100 } },
+        { id: 'moving_avg_1', type: 'moving_average', name: 'Moving Average', dataType: 'imu', inputShape: [1000, 6], outputShape: [1000, 6], config: { window_size: 5 }, position: { x: 320, y: 100 } },
+        { id: 'stat_filter_1', type: 'statistical_filter', name: 'Outlier Removal', dataType: 'imu', inputShape: [1000, 6], outputShape: [1000, 6], config: { method: 'zscore', threshold: 3 }, position: { x: 590, y: 100 } },
+      ],
+      connections: [
+        { from: 'imu_loader_1', to: 'moving_avg_1' },
+        { from: 'moving_avg_1', to: 'stat_filter_1' },
+      ]
+    }
+  },
+  {
+    id: -3,
+    name: 'CSI Advanced Denoising',
+    description: 'Advanced CSI pipeline with wavelet denoising and PCA reduction',
+    data_type: 'csi',
+    output_shape: 'reduced',
+    created_at: new Date().toISOString(),
+    config: {
+      blocks: [
+        { id: 'csi_loader_2', type: 'csi_loader', name: 'CSI Loader', dataType: 'csi', inputShape: [], outputShape: [1000, 128], config: {}, position: { x: 50, y: 100 } },
+        { id: 'amp_ext_2', type: 'amplitude_extractor', name: 'Amplitude Extractor', dataType: 'csi', inputShape: [1000, 128], outputShape: [1000, 64], config: {}, position: { x: 320, y: 100 } },
+        { id: 'wavelet_1', type: 'wavelet_denoise', name: 'Wavelet Denoise', dataType: 'csi', inputShape: [1000, 64], outputShape: [1000, 64], config: { wavelet: 'db4', level: 3 }, position: { x: 590, y: 100 } },
+        { id: 'pca_1', type: 'pca_reduction', name: 'PCA Reduction', dataType: 'csi', inputShape: [1000, 64], outputShape: [1000, 10], config: { n_components: 10 }, position: { x: 860, y: 100 } },
+      ],
+      connections: [
+        { from: 'csi_loader_2', to: 'amp_ext_2' },
+        { from: 'amp_ext_2', to: 'wavelet_1' },
+        { from: 'wavelet_1', to: 'pca_1' },
+      ]
+    }
+  },
+];
+
 export default function ProcessingPage() {
   const [pipelines, setPipelines] = useState<Pipeline[]>([]);
+  const [templatePipelines, setTemplatePipelines] = useState<Pipeline[]>(DEFAULT_TEMPLATE_PIPELINES);
   const [selectedPipeline, setSelectedPipeline] = useState<Pipeline | null>(null);
   const [blocks, setBlocks] = useState<ProcessingBlock[]>([]);
   const [connections, setConnections] = useState<Array<{ from: string; to: string }>>([]);
@@ -392,6 +456,21 @@ export default function ProcessingPage() {
     setConnections([]);
     setNewPipelineName('');
     setNewPipelineDesc('');
+  };
+
+  // Use a template pipeline - loads it into the canvas for editing
+  const handleUseTemplate = (template: Pipeline) => {
+    if (template.config?.blocks) {
+      setBlocks(template.config.blocks);
+    }
+    if (template.config?.connections) {
+      setConnections(template.config.connections);
+    }
+    setNewPipelineName(`${template.name} (Copy)`);
+    setNewPipelineDesc(template.description || '');
+    setIsCreatingNew(true);
+    setCanvasMode('create');
+    setSelectedPipeline(null);
   };
 
   const handleCreatePipeline = async () => {
@@ -942,12 +1021,11 @@ export default function ProcessingPage() {
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
         {/* Pipelines List */}
         <div className="lg:col-span-1">
-          <h2 className="text-xl font-semibold text-white mb-4">Pipelines</h2>
-          <div className="space-y-2">
+          <h2 className="text-xl font-semibold text-white mb-4">My Pipelines</h2>
+          <div className="space-y-2 mb-6">
             {pipelines.length === 0 ? (
-              <div className="text-center py-8 bg-slate-800/50 rounded-xl border border-slate-700">
-                <Workflow className="w-12 h-12 text-slate-500 mx-auto mb-3" />
-                <p className="text-slate-400 text-sm">No pipelines yet</p>
+              <div className="text-center py-4 bg-slate-800/50 rounded-xl border border-slate-700">
+                <p className="text-slate-400 text-sm">No saved pipelines yet</p>
               </div>
             ) : (
               pipelines.map(pipeline => {
@@ -984,6 +1062,31 @@ export default function ProcessingPage() {
                 );
               })
             )}
+          </div>
+
+          {/* Template Pipelines */}
+          <h3 className="text-lg font-medium text-white mb-3 flex items-center gap-2">
+            <Zap className="w-4 h-4 text-yellow-400" />
+            Templates
+          </h3>
+          <div className="space-y-2">
+            {templatePipelines.map(template => {
+              const templateBlocks = template.config?.blocks || [];
+              return (
+                <button
+                  key={template.id}
+                  onClick={() => handleUseTemplate(template)}
+                  className="w-full p-3 rounded-xl border border-dashed border-slate-600 bg-slate-800/30 hover:border-yellow-500/50 hover:bg-yellow-500/5 text-left transition-all group"
+                >
+                  <div className="flex items-center justify-between">
+                    <h4 className="font-medium text-slate-300 group-hover:text-white text-sm">{template.name}</h4>
+                    <span className="text-xs px-2 py-0.5 rounded bg-slate-700 text-slate-400">{template.data_type}</span>
+                  </div>
+                  <p className="text-slate-500 text-xs mt-1 line-clamp-2">{template.description}</p>
+                  <p className="text-slate-600 text-xs mt-1">{templateBlocks.length} blocks</p>
+                </button>
+              );
+            })}
           </div>
         </div>
 

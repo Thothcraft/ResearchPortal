@@ -327,27 +327,53 @@ export default function DataPage() {
       const token = localStorage.getItem('auth_token');
       const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'https://web-production-d7d37.up.railway.app';
       
-      if (file.type === 'image' && file.onCloud && file.cloudFileId) {
-        // For images, we'll use the download URL directly
-        setPreviewContent(`${apiUrl}/file/${file.cloudFileId}/download`);
-      } else if (file.type === 'video' && file.onCloud && file.cloudFileId) {
-        // For videos, show first frame or thumbnail
-        setPreviewContent(`${apiUrl}/file/${file.cloudFileId}/download`);
-      } else if ((file.type === 'sensor' || file.type === 'other') && file.onCloud && file.cloudFileId) {
+      // Check if file is on cloud
+      if (!file.onCloud || !file.cloudFileId) {
+        setPreviewContent('File not uploaded to cloud. Upload to preview.');
+        setIsLoadingPreview(false);
+        return;
+      }
+      
+      const downloadUrl = `${apiUrl}/file/${file.cloudFileId}/download`;
+      
+      if (file.type === 'image') {
+        // For images, use the download URL directly
+        setPreviewContent(downloadUrl);
+      } else if (file.type === 'video') {
+        // For videos, use the download URL directly
+        setPreviewContent(downloadUrl);
+      } else if (file.type === 'audio') {
+        // For audio, use the download URL directly
+        setPreviewContent(downloadUrl);
+      } else if (file.type === 'timelapse') {
+        // For timelapse, show as video
+        setPreviewContent(downloadUrl);
+      } else if (file.type === 'sensor' || file.type === 'other') {
         // For sensor/text files, fetch first few lines
-        const response = await fetch(`${apiUrl}/file/${file.cloudFileId}/preview?lines=10`, {
+        const response = await fetch(`${apiUrl}/file/${file.cloudFileId}/preview?lines=20`, {
           headers: { 'Authorization': `Bearer ${token}` }
         });
         if (response.ok) {
           const data = await response.json();
-          setPreviewContent(data.preview || 'No preview available');
+          setPreviewContent(data.preview || 'No content to preview');
         } else {
-          setPreviewContent('Preview not available');
+          // Fallback: try to get raw content
+          const rawResponse = await fetch(downloadUrl, {
+            headers: { 'Authorization': `Bearer ${token}` }
+          });
+          if (rawResponse.ok) {
+            const text = await rawResponse.text();
+            // Show first 2000 characters
+            setPreviewContent(text.substring(0, 2000) + (text.length > 2000 ? '\n\n... (truncated)' : ''));
+          } else {
+            setPreviewContent('Preview not available');
+          }
         }
       } else {
-        setPreviewContent('Preview not available for this file');
+        setPreviewContent('Preview not available for this file type');
       }
     } catch (err) {
+      console.error('Preview error:', err);
       setPreviewContent('Failed to load preview');
     } finally {
       setIsLoadingPreview(false);
@@ -1002,17 +1028,19 @@ export default function DataPage() {
                   src={previewContent} 
                   alt={previewFile.name}
                   className="max-w-full h-auto mx-auto rounded-lg"
+                  onError={() => setPreviewContent(null)}
                 />
-              ) : previewFile.type === 'video' && previewContent ? (
+              ) : (previewFile.type === 'video' || previewFile.type === 'timelapse') && previewContent ? (
                 <video 
                   src={previewContent} 
                   controls
                   className="max-w-full h-auto mx-auto rounded-lg"
+                  onError={() => setPreviewContent(null)}
                 />
               ) : previewFile.type === 'audio' && previewContent ? (
                 <div className="flex flex-col items-center py-8">
                   <Music className="w-16 h-16 text-blue-400 mb-4" />
-                  <audio src={previewContent} controls className="w-full max-w-md" />
+                  <audio src={previewContent} controls className="w-full max-w-md" onError={() => setPreviewContent(null)} />
                 </div>
               ) : (
                 <pre className="bg-slate-900 p-4 rounded-lg text-sm text-slate-300 overflow-x-auto whitespace-pre-wrap font-mono">

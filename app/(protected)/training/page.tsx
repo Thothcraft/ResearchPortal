@@ -161,35 +161,75 @@ const STATUS_CONFIG: Record<string, { color: string; bg: string; icon: React.Ele
 
 // Model configurations for different data types
 const MODEL_OPTIONS: ModelOption[] = [
+  // Deep Learning - Time Series
   {
     value: 'dl_cnn_lstm',
     label: 'DL: CNN-LSTM',
     description: 'Deep learning CNN+LSTM for time-series classification',
-    supported_data: ['imu', 'csi', 'other']
+    supported_data: ['imu', 'csi', 'sensor', 'other']
   },
+  {
+    value: 'dl_lstm',
+    label: 'DL: LSTM',
+    description: 'Long Short-Term Memory for sequential data',
+    supported_data: ['imu', 'csi', 'sensor', 'other']
+  },
+  // Deep Learning - Images
+  {
+    value: 'dl_cnn',
+    label: 'DL: CNN',
+    description: 'Convolutional Neural Network for image classification',
+    supported_data: ['image', 'img', 'timelapse']
+  },
+  {
+    value: 'dl_resnet18',
+    label: 'DL: ResNet-18',
+    description: 'Deep residual network for image classification',
+    supported_data: ['image', 'img', 'timelapse']
+  },
+  {
+    value: 'dl_mobilenet',
+    label: 'DL: MobileNet',
+    description: 'Lightweight CNN for mobile/edge deployment',
+    supported_data: ['image', 'img', 'timelapse']
+  },
+  // Deep Learning - General
+  {
+    value: 'dl_mlp',
+    label: 'DL: MLP',
+    description: 'Multi-layer perceptron (works with any data type)',
+    supported_data: ['imu', 'csi', 'sensor', 'image', 'img', 'timelapse', 'other']
+  },
+  // Machine Learning - Classical
   {
     value: 'knn',
     label: 'ML: KNN',
     description: 'K-Nearest Neighbors (fast, interpretable)',
-    supported_data: ['imu', 'csi', 'other']
+    supported_data: ['imu', 'csi', 'sensor', 'other']
   },
   {
     value: 'svc',
     label: 'ML: SVC',
     description: 'Support Vector Classifier (strong for smaller datasets)',
-    supported_data: ['imu', 'csi', 'other']
+    supported_data: ['imu', 'csi', 'sensor', 'other']
+  },
+  {
+    value: 'random_forest',
+    label: 'ML: Random Forest',
+    description: 'Ensemble of decision trees (robust, handles noise)',
+    supported_data: ['imu', 'csi', 'sensor', 'other']
   },
   {
     value: 'adaboost',
     label: 'ML: AdaBoost',
     description: 'AdaBoost ensemble of weak learners',
-    supported_data: ['imu', 'csi', 'other']
+    supported_data: ['imu', 'csi', 'sensor', 'other']
   },
   {
     value: 'xgboost',
     label: 'ML: XGBoost',
     description: 'Gradient boosting (high performance, handles missing data)',
-    supported_data: ['imu', 'csi', 'other']
+    supported_data: ['imu', 'csi', 'sensor', 'other']
   },
 ];
 

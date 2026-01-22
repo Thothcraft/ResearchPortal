@@ -52,14 +52,64 @@ const ALGORITHMS = [
   { id: 'dpfedavg_fixed', name: 'DP-FedAvg (Fixed)', description: 'Fixed clipping DP', category: 'privacy', color: 'bg-fuchsia-500' },
 ];
 
-const DATASETS = [
-  { id: 'cifar10', name: 'CIFAR-10', description: '60K 32x32 color images', num_classes: 10, samples: '50K' },
-  { id: 'cifar100', name: 'CIFAR-100', description: '60K images, 100 classes', num_classes: 100, samples: '50K' },
-  { id: 'mnist', name: 'MNIST', description: 'Handwritten digits', num_classes: 10, samples: '60K' },
-  { id: 'fashion_mnist', name: 'Fashion-MNIST', description: 'Fashion items', num_classes: 10, samples: '60K' },
-  { id: 'emnist', name: 'EMNIST', description: 'Extended MNIST', num_classes: 62, samples: '697K' },
-  { id: 'svhn', name: 'SVHN', description: 'Street View House Numbers', num_classes: 10, samples: '73K' },
+// Dataset types for model filtering
+type DatasetType = 'image_rgb' | 'image_gray' | 'tabular' | 'text' | 'time_series';
+
+interface DatasetConfig {
+  id: string;
+  name: string;
+  description: string;
+  num_classes: number;
+  samples: string;
+  type: DatasetType;
+  input_shape: string;
+}
+
+const DATASETS: DatasetConfig[] = [
+  // RGB Image datasets (32x32x3)
+  { id: 'cifar10', name: 'CIFAR-10', description: '60K 32x32 color images', num_classes: 10, samples: '50K', type: 'image_rgb', input_shape: '32×32×3' },
+  { id: 'cifar100', name: 'CIFAR-100', description: '60K images, 100 classes', num_classes: 100, samples: '50K', type: 'image_rgb', input_shape: '32×32×3' },
+  { id: 'svhn', name: 'SVHN', description: 'Street View House Numbers', num_classes: 10, samples: '73K', type: 'image_rgb', input_shape: '32×32×3' },
+  // Grayscale Image datasets (28x28x1)
+  { id: 'mnist', name: 'MNIST', description: 'Handwritten digits', num_classes: 10, samples: '60K', type: 'image_gray', input_shape: '28×28×1' },
+  { id: 'fashion_mnist', name: 'Fashion-MNIST', description: 'Fashion items', num_classes: 10, samples: '60K', type: 'image_gray', input_shape: '28×28×1' },
+  { id: 'emnist', name: 'EMNIST', description: 'Extended MNIST (letters+digits)', num_classes: 62, samples: '814K', type: 'image_gray', input_shape: '28×28×1' },
 ];
+
+// Model architectures with compatibility info
+interface ModelConfig {
+  id: string;
+  name: string;
+  description: string;
+  compatible_types: DatasetType[];
+}
+
+const MODEL_ARCHITECTURES: ModelConfig[] = [
+  { id: 'cnn', name: 'CNN', description: 'Convolutional Neural Network', compatible_types: ['image_rgb', 'image_gray'] },
+  { id: 'resnet18', name: 'ResNet-18', description: 'Deep residual network', compatible_types: ['image_rgb', 'image_gray'] },
+  { id: 'mlp', name: 'MLP', description: 'Multi-layer perceptron', compatible_types: ['image_rgb', 'image_gray', 'tabular', 'time_series'] },
+];
+
+// Get compatible models for a dataset
+const getCompatibleModels = (datasetId: string): ModelConfig[] => {
+  const dataset = DATASETS.find(d => d.id === datasetId);
+  if (!dataset) return MODEL_ARCHITECTURES;
+  return MODEL_ARCHITECTURES.filter(m => m.compatible_types.includes(dataset.type));
+};
+
+// Algorithm-specific default parameters
+const ALGORITHM_DEFAULTS: Record<string, Record<string, number>> = {
+  fedprox: { proximal_mu: 0.01 },
+  fedadam: { server_learning_rate: 0.1, beta_1: 0.9, beta_2: 0.99 },
+  fedyogi: { server_learning_rate: 0.1, beta_1: 0.9, beta_2: 0.99 },
+  fedadagrad: { server_learning_rate: 0.1 },
+  fedavgm: { server_learning_rate: 1.0, momentum: 0.9 },
+  qfedavg: { q_param: 0.2 },
+  dpfedavg_adaptive: { noise_multiplier: 1.0, clipping_norm: 1.0 },
+  dpfedavg_fixed: { noise_multiplier: 1.0, clipping_norm: 1.0 },
+  fedtrimmedavg: { trim_ratio: 0.1 },
+  bulyan: { trim_ratio: 0.1 },
+};
 
 type FLTab = 'sessions' | 'models' | 'compare';
 
@@ -101,7 +151,30 @@ const FederatedLearningDashboard: React.FC = () => {
     fraction_fit: 1.0,
     proximal_mu: 0.01,
     server_learning_rate: 1.0,
+    // Additional algorithm-specific params
+    q_param: 0.2,
+    noise_multiplier: 1.0,
+    clipping_norm: 1.0,
+    trim_ratio: 0.1,
+    momentum: 0.9,
   });
+
+  // Update model architecture when dataset changes (ensure compatibility)
+  useEffect(() => {
+    const compatibleModels = getCompatibleModels(form.dataset);
+    if (!compatibleModels.find(m => m.id === form.model_architecture)) {
+      // Current model not compatible, switch to first compatible one
+      setForm(prev => ({ ...prev, model_architecture: compatibleModels[0]?.id || 'mlp' }));
+    }
+  }, [form.dataset]);
+
+  // Update algorithm-specific params when algorithm changes
+  useEffect(() => {
+    const defaults = ALGORITHM_DEFAULTS[form.algorithm];
+    if (defaults) {
+      setForm(prev => ({ ...prev, ...defaults }));
+    }
+  }, [form.algorithm]);
 
   useEffect(() => {
     loadSessions();
@@ -522,28 +595,47 @@ const FederatedLearningDashboard: React.FC = () => {
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-slate-300 mb-2">Model Architecture</label>
-              <select
-                value={form.model_architecture}
-                onChange={(e) => setForm({ ...form, model_architecture: e.target.value })}
-                className="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-purple-500"
-              >
-                <option value="cnn">CNN (Convolutional)</option>
-                <option value="resnet18">ResNet-18</option>
-                <option value="mlp">MLP (Fully Connected)</option>
-              </select>
-            </div>
-
-            <div>
               <label className="block text-sm font-medium text-slate-300 mb-2">Dataset</label>
               <select
                 value={form.dataset}
                 onChange={(e) => setForm({ ...form, dataset: e.target.value })}
                 className="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-purple-500"
               >
-                {DATASETS.map(ds => (
-                  <option key={ds.id} value={ds.id}>
-                    {ds.name} ({ds.num_classes} classes, {ds.samples} samples)
+                <optgroup label="RGB Images (32×32×3)">
+                  {DATASETS.filter(ds => ds.type === 'image_rgb').map(ds => (
+                    <option key={ds.id} value={ds.id}>
+                      {ds.name} ({ds.num_classes} classes, {ds.samples})
+                    </option>
+                  ))}
+                </optgroup>
+                <optgroup label="Grayscale Images (28×28×1)">
+                  {DATASETS.filter(ds => ds.type === 'image_gray').map(ds => (
+                    <option key={ds.id} value={ds.id}>
+                      {ds.name} ({ds.num_classes} classes, {ds.samples})
+                    </option>
+                  ))}
+                </optgroup>
+              </select>
+              <p className="text-xs text-slate-500 mt-1">
+                Input: {DATASETS.find(d => d.id === form.dataset)?.input_shape}
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-slate-300 mb-2">
+                Model Architecture
+                <span className="text-xs text-slate-500 ml-2">
+                  ({getCompatibleModels(form.dataset).length} compatible)
+                </span>
+              </label>
+              <select
+                value={form.model_architecture}
+                onChange={(e) => setForm({ ...form, model_architecture: e.target.value })}
+                className="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-purple-500"
+              >
+                {getCompatibleModels(form.dataset).map(model => (
+                  <option key={model.id} value={model.id}>
+                    {model.name} - {model.description}
                   </option>
                 ))}
               </select>
@@ -774,104 +866,126 @@ const FederatedLearningDashboard: React.FC = () => {
         <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
           <Layers className="w-5 h-5 text-blue-400" />
           Model Architecture
+          <span className="text-xs text-slate-400 font-normal ml-2">
+            (for {DATASETS.find(d => d.id === form.dataset)?.input_shape} input)
+          </span>
         </h3>
         <div className="bg-slate-900 rounded-lg p-4 font-mono text-sm">
-          {form.model_architecture === 'cnn' && (
-            <div className="space-y-2 text-slate-300">
-              <div className="flex items-center gap-2">
-                <span className="text-blue-400">Input:</span>
-                <span>32×32×3 (RGB image)</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="text-green-400">Conv2D:</span>
-                <span>32 filters, 3×3, ReLU → 32×32×32</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="text-yellow-400">MaxPool:</span>
-                <span>2×2 → 16×16×32</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="text-green-400">Conv2D:</span>
-                <span>64 filters, 3×3, ReLU → 16×16×64</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="text-yellow-400">MaxPool:</span>
-                <span>2×2 → 8×8×64</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="text-purple-400">Flatten:</span>
-                <span>→ 4096</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="text-orange-400">Dense:</span>
-                <span>128, ReLU</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="text-red-400">Output:</span>
-                <span>{DATASETS.find(d => d.id === form.dataset)?.num_classes || 10} classes (softmax)</span>
-              </div>
-            </div>
-          )}
-          {form.model_architecture === 'resnet18' && (
-            <div className="space-y-2 text-slate-300">
-              <div className="flex items-center gap-2">
-                <span className="text-blue-400">Input:</span>
-                <span>32×32×3 (RGB image)</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="text-green-400">Conv2D:</span>
-                <span>64 filters, 7×7, stride 2</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="text-purple-400">ResBlock×2:</span>
-                <span>64 channels</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="text-purple-400">ResBlock×2:</span>
-                <span>128 channels (stride 2)</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="text-purple-400">ResBlock×2:</span>
-                <span>256 channels (stride 2)</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="text-purple-400">ResBlock×2:</span>
-                <span>512 channels (stride 2)</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="text-yellow-400">AvgPool:</span>
-                <span>Global → 512</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="text-red-400">Output:</span>
-                <span>{DATASETS.find(d => d.id === form.dataset)?.num_classes || 10} classes (softmax)</span>
-              </div>
-            </div>
-          )}
-          {form.model_architecture === 'mlp' && (
-            <div className="space-y-2 text-slate-300">
-              <div className="flex items-center gap-2">
-                <span className="text-blue-400">Input:</span>
-                <span>32×32×3 = 3072 (flattened)</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="text-orange-400">Dense:</span>
-                <span>512, ReLU</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="text-orange-400">Dense:</span>
-                <span>256, ReLU</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="text-orange-400">Dense:</span>
-                <span>128, ReLU</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="text-red-400">Output:</span>
-                <span>{DATASETS.find(d => d.id === form.dataset)?.num_classes || 10} classes (softmax)</span>
-              </div>
-            </div>
-          )}
+          {(() => {
+            const dataset = DATASETS.find(d => d.id === form.dataset);
+            const isGray = dataset?.type === 'image_gray';
+            const inputShape = dataset?.input_shape || '32×32×3';
+            const numClasses = dataset?.num_classes || 10;
+            const flattenSize = isGray ? 784 : 3072; // 28*28 or 32*32*3
+            const cnnFlattenSize = isGray ? 1024 : 4096; // After conv layers
+            
+            if (form.model_architecture === 'cnn') {
+              return (
+                <div className="space-y-2 text-slate-300">
+                  <div className="flex items-center gap-2">
+                    <span className="text-blue-400">Input:</span>
+                    <span>{inputShape} ({isGray ? 'grayscale' : 'RGB'} image)</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-green-400">Conv2D:</span>
+                    <span>32 filters, 3×3, ReLU → {isGray ? '28×28×32' : '32×32×32'}</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-yellow-400">MaxPool:</span>
+                    <span>2×2 → {isGray ? '14×14×32' : '16×16×32'}</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-green-400">Conv2D:</span>
+                    <span>64 filters, 3×3, ReLU → {isGray ? '14×14×64' : '16×16×64'}</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-yellow-400">MaxPool:</span>
+                    <span>2×2 → {isGray ? '7×7×64' : '8×8×64'}</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-purple-400">Flatten:</span>
+                    <span>→ {isGray ? '3136' : '4096'}</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-orange-400">Dense:</span>
+                    <span>128, ReLU</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-red-400">Output:</span>
+                    <span>{numClasses} classes (softmax)</span>
+                  </div>
+                </div>
+              );
+            }
+            
+            if (form.model_architecture === 'resnet18') {
+              return (
+                <div className="space-y-2 text-slate-300">
+                  <div className="flex items-center gap-2">
+                    <span className="text-blue-400">Input:</span>
+                    <span>{inputShape} ({isGray ? 'grayscale' : 'RGB'} image)</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-green-400">Conv2D:</span>
+                    <span>64 filters, {isGray ? '3×3' : '7×7'}, stride {isGray ? '1' : '2'}</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-purple-400">ResBlock×2:</span>
+                    <span>64 channels</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-purple-400">ResBlock×2:</span>
+                    <span>128 channels (stride 2)</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-purple-400">ResBlock×2:</span>
+                    <span>256 channels (stride 2)</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-purple-400">ResBlock×2:</span>
+                    <span>512 channels (stride 2)</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-yellow-400">AvgPool:</span>
+                    <span>Global → 512</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-red-400">Output:</span>
+                    <span>{numClasses} classes (softmax)</span>
+                  </div>
+                </div>
+              );
+            }
+            
+            if (form.model_architecture === 'mlp') {
+              return (
+                <div className="space-y-2 text-slate-300">
+                  <div className="flex items-center gap-2">
+                    <span className="text-blue-400">Input:</span>
+                    <span>{inputShape} = {flattenSize} (flattened)</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-orange-400">Dense:</span>
+                    <span>512, ReLU</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-orange-400">Dense:</span>
+                    <span>256, ReLU</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-orange-400">Dense:</span>
+                    <span>128, ReLU</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-red-400">Output:</span>
+                    <span>{numClasses} classes (softmax)</span>
+                  </div>
+                </div>
+              );
+            }
+            
+            return null;
+          })()}
         </div>
       </div>
 
