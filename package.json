@@ -12,6 +12,7 @@
     "@chatscope/chat-ui-kit-react": "^2.1.1",
     "@chatscope/chat-ui-kit-styles": "^1.4.0",
     "@geist-ui/core": "^2.3.8",
+    "@supabase/supabase-js": "^2.91.1",
     "@types/react-toastify": "^4.1.0",
     "axios": "^1.6.0",
     "chart.js": "^4.4.0",
@@ -27,8 +28,7 @@
     "react-icons": "^5.5.0",
     "react-toastify": "^11.0.5",
     "socket.io-client": "^4.5.0",
-    "tailwind-merge": "^3.3.1",
-    "@supabase/supabase-js": "^2.45.0"
+    "tailwind-merge": "^3.3.1"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^2.1.4",

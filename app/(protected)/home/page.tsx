@@ -1,7 +1,8 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { useApi } from '@/hooks/useApi';
+import { useEffect, useMemo } from 'react';
+import { useCachedData, clearCache } from '@/hooks/useCachedApi';
+import { StatCardsSkeleton, ActivitySkeleton } from '@/components/LoadingSkeleton';
 import {
   Monitor,
   Database,
@@ -42,63 +43,65 @@ type ActivityItem = {
 };
 
 export default function HomePage() {
-  const [stats, setStats] = useState<Stats>({
-    totalDevices: 0,
-    onlineDevices: 0,
-    offlineDevices: 0,
-    totalDataFiles: 0,
-    trainingJobs: 0,
-    activeJobs: 0,
-    totalModels: 0,
-    bestAccuracy: null,
+  // Use cached data hooks for better performance
+  const { 
+    data: statsRes, 
+    isLoading: statsLoading,
+    isValidating: statsValidating,
+    refetch: refetchStats 
+  } = useCachedData<{ success: boolean; stats: any }>('/activity/stats', {
+    cacheTTL: 30000, // 30 seconds
+    refreshInterval: 30000, // Auto-refresh every 30s
   });
-  const [activities, setActivities] = useState<ActivityItem[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [isRefreshing, setIsRefreshing] = useState(false);
-  const { get } = useApi();
 
-  const fetchData = async (showRefresh = false) => {
-    try {
-      if (showRefresh) setIsRefreshing(true);
-      else setIsLoading(true);
-      
-      // Fetch stats from activity endpoint
-      const [statsRes, activityRes] = await Promise.all([
-        get('/activity/stats').catch(() => null),
-        get('/activity/recent?limit=10&hours=48').catch(() => null),
-      ]);
-      
-      if (statsRes?.success && statsRes.stats) {
-        const s = statsRes.stats;
-        setStats({
-          totalDevices: s.devices?.total || 0,
-          onlineDevices: s.devices?.online || 0,
-          offlineDevices: s.devices?.offline || 0,
-          totalDataFiles: s.files?.total || 0,
-          trainingJobs: s.training?.total_jobs || 0,
-          activeJobs: s.training?.active_jobs || 0,
-          totalModels: s.models?.total || 0,
-          bestAccuracy: s.models?.best_accuracy || null,
-        });
-      }
-      
-      if (activityRes?.success && activityRes.activities) {
-        setActivities(activityRes.activities);
-      }
-    } catch (error) {
-      console.error('Error fetching data:', error);
-    } finally {
-      setIsLoading(false);
-      setIsRefreshing(false);
+  const { 
+    data: activityRes, 
+    isLoading: activityLoading,
+    isValidating: activityValidating,
+    refetch: refetchActivity 
+  } = useCachedData<{ success: boolean; activities: ActivityItem[] }>('/activity/recent?limit=10&hours=48', {
+    cacheTTL: 30000,
+    refreshInterval: 30000,
+  });
+
+  // Memoize stats to prevent unnecessary re-renders
+  const stats = useMemo<Stats>(() => {
+    if (!statsRes?.success || !statsRes.stats) {
+      return {
+        totalDevices: 0,
+        onlineDevices: 0,
+        offlineDevices: 0,
+        totalDataFiles: 0,
+        trainingJobs: 0,
+        activeJobs: 0,
+        totalModels: 0,
+        bestAccuracy: null,
+      };
     }
-  };
+    const s = statsRes.stats;
+    return {
+      totalDevices: s.devices?.total || 0,
+      onlineDevices: s.devices?.online || 0,
+      offlineDevices: s.devices?.offline || 0,
+      totalDataFiles: s.files?.total || 0,
+      trainingJobs: s.training?.total_jobs || 0,
+      activeJobs: s.training?.active_jobs || 0,
+      totalModels: s.models?.total || 0,
+      bestAccuracy: s.models?.best_accuracy || null,
+    };
+  }, [statsRes]);
 
-  useEffect(() => {
-    fetchData();
-    // Refresh every 30 seconds
-    const interval = setInterval(() => fetchData(true), 30000);
-    return () => clearInterval(interval);
-  }, []);
+  const activities = useMemo(() => {
+    return activityRes?.success ? activityRes.activities || [] : [];
+  }, [activityRes]);
+
+  const isLoading = statsLoading || activityLoading;
+  const isRefreshing = statsValidating || activityValidating;
+
+  const handleRefresh = async () => {
+    clearCache('/activity');
+    await Promise.all([refetchStats(), refetchActivity()]);
+  };
 
   const getActivityIcon = (icon: string) => {
     switch (icon) {
@@ -190,8 +193,19 @@ export default function HomePage() {
 
   if (isLoading) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-indigo-500"></div>
+      <div className="p-8">
+        <div className="mb-8">
+          <h1 className="text-3xl font-bold text-white mb-2">Dashboard</h1>
+          <p className="text-slate-400">Welcome to ThothCraft Research Portal</p>
+        </div>
+        <StatCardsSkeleton count={6} />
+        <div className="mt-8 bg-slate-800/50 backdrop-blur-sm rounded-xl p-6 border border-slate-700">
+          <div className="flex items-center gap-3 mb-6">
+            <Clock className="w-5 h-5 text-indigo-400" />
+            <h2 className="text-xl font-semibold text-white">Recent Activity</h2>
+          </div>
+          <ActivitySkeleton count={5} />
+        </div>
       </div>
     );
   }
@@ -236,7 +250,7 @@ export default function HomePage() {
             <h2 className="text-xl font-semibold text-white">Recent Activity</h2>
           </div>
           <button
-            onClick={() => fetchData(true)}
+            onClick={handleRefresh}
             disabled={isRefreshing}
             className="p-2 text-slate-400 hover:text-white hover:bg-slate-700 rounded-lg transition-colors"
           >
