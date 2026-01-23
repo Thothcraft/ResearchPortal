@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import { useApi } from '@/hooks/useApi';
+import { useToast } from '@/contexts/ToastContext';
 import { 
   Monitor, Wifi, WifiOff, Battery, Clock, RefreshCw, 
   ChevronDown, ChevronUp, Laptop, Smartphone, Server, Cpu,
@@ -404,6 +405,7 @@ export default function DevicesPage() {
   const [filter, setFilter] = useState<'all' | 'online' | 'offline'>('all');
   const [isDeletingAll, setIsDeletingAll] = useState(false);
   const { get, delete: del } = useApi();
+  const toast = useToast();
 
   const fetchDevices = useCallback(async () => {
     try {
@@ -414,7 +416,7 @@ export default function DevicesPage() {
         setDevices(data.devices);
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to fetch devices');
+      toast.error('Loading Failed', err instanceof Error ? err.message : 'Failed to fetch devices');
     } finally {
       setIsLoading(false);
     }
@@ -429,8 +431,9 @@ export default function DevicesPage() {
     try {
       await del(`/device/${deviceId}`);
       setDevices(prev => prev.filter(d => d.device_id !== deviceId));
+      toast.success('Device Deleted', 'Device has been removed');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to delete device');
+      toast.error('Delete Failed', err instanceof Error ? err.message : 'Failed to delete device');
     }
   };
 
@@ -441,8 +444,9 @@ export default function DevicesPage() {
       setIsDeletingAll(true);
       await del('/device/all');
       setDevices([]);
+      toast.success('All Devices Deleted', 'All devices have been removed');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to delete all devices');
+      toast.error('Delete Failed', err instanceof Error ? err.message : 'Failed to delete all devices');
     } finally {
       setIsDeletingAll(false);
     }

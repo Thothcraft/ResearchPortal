@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { useApi } from '@/hooks/useApi';
+import { useToast, parseApiError } from '@/contexts/ToastContext';
 import {
   Database,
   FileText,
@@ -155,6 +156,7 @@ export default function DataPage() {
   const [selectedFileType, setSelectedFileType] = useState<DataFile['type']>('other');
   const [uploadDate, setUploadDate] = useState<string>(new Date().toISOString().split('T')[0]);
   const { get, post } = useApi();
+  const toast = useToast();
   
   // Folder and preview state
   const [folders, setFolders] = useState<DataFolder[]>([]);
@@ -375,7 +377,7 @@ export default function DataPage() {
   // Update file type manually
   const handleUpdateFileType = async (file: DataFile, newType: DataFile['type']) => {
     if (!file.id && !file.cloudFileId) {
-      setError('Cannot update type: File ID not found');
+      toast.error('Update Failed', 'Cannot update type: File ID not found');
       return;
     }
     
@@ -402,10 +404,10 @@ export default function DataPage() {
         ));
         setEditingFileType(null);
       } else {
-        setError('Failed to update file type');
+        toast.error('Update Failed', 'Failed to update file type');
       }
     } catch (err) {
-      setError('Failed to update file type');
+      toast.error('Update Failed', 'Failed to update file type');
     }
   };
 
@@ -429,12 +431,12 @@ export default function DataPage() {
     }
     
     if (!file.deviceOnline) {
-      setError(`Cannot upload: Device "${file.deviceName}" is offline`);
+      toast.warning('Device Offline', `Cannot upload: Device "${file.deviceName}" is offline`);
       return;
     }
 
     if (!file.id) {
-      setError('Cannot upload: File ID not found');
+      toast.error('Upload Failed', 'File ID not found');
       return;
     }
 
@@ -477,7 +479,7 @@ export default function DataPage() {
               setFiles(prev => prev.map(f => 
                 f.name === file.name ? { ...f, uploading: false } : f
               ));
-              setError('Upload is taking longer than expected. Please check device status.');
+              toast.warning('Upload Delayed', 'Upload is taking longer than expected. Please check device status.');
             }
           } catch (e) {
             // Continue polling
@@ -487,7 +489,7 @@ export default function DataPage() {
         throw new Error(response?.message || 'Failed to request upload');
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Upload to cloud failed');
+      toast.error('Upload Failed', err instanceof Error ? err.message : 'Upload to cloud failed');
       setFiles(prev => prev.map(f => 
         f.name === file.name ? { ...f, uploading: false } : f
       ));
@@ -571,7 +573,7 @@ export default function DataPage() {
         document.body.removeChild(a);
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Download failed');
+      toast.error('Download Failed', err instanceof Error ? err.message : 'An error occurred while downloading');
     } finally {
       setFiles(prev => prev.map(f => 
         f.name === file.name ? { ...f, downloading: false } : f
@@ -586,13 +588,13 @@ export default function DataPage() {
     // Use cloudFileId for cloud-uploaded files, otherwise use id for device files that were uploaded
     const fileId = file.cloudFileId || file.id;
     if (!fileId) {
-      setError('Cannot delete: File ID not found');
+      toast.error('Cannot Delete', 'File ID not found');
       return;
     }
     
     const token = localStorage.getItem('auth_token');
     if (!token) {
-      setError('Authentication required');
+      toast.error('Authentication Required', 'Please log in to delete files');
       return;
     }
 
@@ -609,17 +611,20 @@ export default function DataPage() {
       });
       
       if (!response.ok) {
-        throw new Error('Failed to delete file');
+        // Parse the error response for detailed information
+        const errorData = await response.json().catch(() => ({}));
+        const parsed = parseApiError(errorData);
+        toast.error(parsed.title, parsed.message, { hint: parsed.hint, items: parsed.items });
+        return;
       }
       
       // Remove file from state
       setFiles(prev => prev.filter(f => f !== file));
       
-      // Show success message
-      setError(`Successfully deleted "${file.name}"`);
-      setTimeout(() => setError(null), 3000);
+      // Show success toast
+      toast.success('File Deleted', `"${file.name}" has been removed from the cloud`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Delete failed');
+      toast.error('Delete Failed', err instanceof Error ? err.message : 'An unexpected error occurred');
     }
   };
 
@@ -647,7 +652,7 @@ export default function DataPage() {
 
     const token = localStorage.getItem('auth_token');
     if (!token) {
-      setError('Please log in to upload files');
+      toast.error('Authentication Required', 'Please log in to upload files');
       return;
     }
 
@@ -687,7 +692,7 @@ export default function DataPage() {
               console.log(`Uploaded ${newFileName}`);
             }
           } else {
-            setError(`Failed to upload ${newFileName}: ${xhr.statusText || 'Server error'}`);
+            toast.error('Upload Failed', `Failed to upload ${newFileName}: ${xhr.statusText || 'Server error'}`);
           }
           // Remove from uploading files
           setUploadingFiles(prev => {
@@ -699,7 +704,7 @@ export default function DataPage() {
         });
 
         xhr.addEventListener('error', () => {
-          setError(`Failed to upload ${newFileName}: Network error`);
+          toast.error('Upload Failed', `Network error while uploading ${newFileName}`);
           setUploadingFiles(prev => {
             const newMap = new Map(prev);
             newMap.delete(newFileName);

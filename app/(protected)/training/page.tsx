@@ -4,6 +4,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import jsPDF from 'jspdf';
 import { useApi } from '@/hooks/useApi';
 import { useAuth } from '@/contexts/AuthContext';
+import { useToast } from '@/contexts/ToastContext';
 import { subscribeToTrainingJobs, parseRealtimeJob, isRealtimeConfigured, RealtimeTrainingJob } from '@/lib/supabase';
 import {
   Brain, Cloud, Smartphone, Network, Play, RefreshCw, Plus, Tag, Database,
@@ -394,6 +395,7 @@ export default function TrainingPage() {
   const [compareModels, setCompareModels] = useState<number[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const toast = useToast();
   const [activeTab, setActiveTab] = useState<'datasets' | 'jobs' | 'models' | 'compare'>('datasets');
   const [renamingModel, setRenamingModel] = useState<TrainedModel | null>(null);
   const [newModelName, setNewModelName] = useState('');
@@ -463,7 +465,7 @@ export default function TrainingPage() {
         }
       });
     } catch (err) {
-      setError('Failed to load training data');
+      toast.error('Loading Failed', 'Failed to load training data');
     } finally {
       // Clear loading states
       if (opts.datasets) setLoadingStates(prev => ({ ...prev, datasets: false }));
@@ -483,7 +485,7 @@ export default function TrainingPage() {
         const res = await get('/file/files');
         if (res?.files) setCloudFiles(res.files);
       } catch {
-        setError('Failed to load cloud files');
+        toast.error('Loading Failed', 'Failed to load cloud files');
       } finally {
         setLoadingStates(prev => ({ ...prev, files: false }));
       }
@@ -714,7 +716,7 @@ export default function TrainingPage() {
       }
 
       await fetchData({ datasets: true }); // Only refresh datasets
-    } catch { setError('Failed to create dataset'); }
+    } catch { toast.error('Dataset Error', 'Failed to create dataset'); }
     finally { setOperations(prev => ({ ...prev, creatingDataset: false })); }
   };
 
@@ -743,7 +745,7 @@ export default function TrainingPage() {
           }));
         }
       }
-    } catch { setError('Failed to load dataset'); }
+    } catch { toast.error('Loading Failed', 'Failed to load dataset details'); }
     finally {
       setLoadingStates(prev => ({ ...prev, datasetDetail: false }));
     }
@@ -770,7 +772,7 @@ export default function TrainingPage() {
       await fetchData({ datasets: true });
     } catch (err) {
       console.error('Failed to add files:', err);
-      setError(`Failed to add files to dataset: ${err instanceof Error ? err.message : 'Unknown error'}`);
+      toast.error('Add Files Failed', err instanceof Error ? err.message : 'Failed to add files to dataset');
     } finally {
       setOperations(prev => ({ ...prev, addingFiles: false }));
     }
@@ -778,12 +780,12 @@ export default function TrainingPage() {
 
   const handleRemoveFile = async (fileId: number) => {
     if (!selectedDataset) return;
-    try { await del(`/datasets/${selectedDataset.id}/files/${fileId}`); handleSelectDataset(selectedDataset); } catch { setError('Failed to remove file'); }
+    try { await del(`/datasets/${selectedDataset.id}/files/${fileId}`); handleSelectDataset(selectedDataset); toast.success('File Removed', 'File removed from dataset'); } catch { toast.error('Remove Failed', 'Failed to remove file from dataset'); }
   };
 
   const handleUpdateLabel = async (fileId: number, newLbl: string) => {
     if (!selectedDataset) return;
-    try { await put(`/datasets/${selectedDataset.id}/files/${fileId}/label`, { label: newLbl }); handleSelectDataset(selectedDataset); } catch { setError('Failed to update label'); }
+    try { await put(`/datasets/${selectedDataset.id}/files/${fileId}/label`, { label: newLbl }); handleSelectDataset(selectedDataset); } catch { toast.error('Update Failed', 'Failed to update file label'); }
   };
 
   const fetchFileLineCounts = async (files: any[]) => {
@@ -931,7 +933,7 @@ export default function TrainingPage() {
       await fetchData({ jobs: true });
     } catch (err) { 
       console.error('[Training] Failed to start training:', err);
-      setError(`Failed to start training: ${err instanceof Error ? err.message : 'Unknown error'}`); 
+      toast.error('Training Failed', err instanceof Error ? err.message : 'Failed to start training'); 
     }
     finally { setOperations(prev => ({ ...prev, startingTraining: false })); }
   };
@@ -939,7 +941,7 @@ export default function TrainingPage() {
   const handleCancelJob = async (jobId: string) => {
     setOperations(prev => ({ ...prev, cancellingJob: true }));
     try { await post(`/datasets/train/jobs/${jobId}/cancel`, {}); await fetchData({ jobs: true }); } 
-    catch { setError('Failed to cancel job'); }
+    catch { toast.error('Cancel Failed', 'Failed to cancel training job'); }
     finally { setOperations(prev => ({ ...prev, cancellingJob: false })); }
   };
 
@@ -947,7 +949,8 @@ export default function TrainingPage() {
     try {
       await del(`/datasets/train/jobs/${jobId}`);
       await fetchData({ jobs: true }); // Only refresh jobs
-    } catch { setError('Failed to delete job'); }
+      toast.success('Job Deleted', 'Training job has been deleted');
+    } catch { toast.error('Delete Failed', 'Failed to delete training job'); }
   };
 
   const handleDeleteDataset = async (datasetId: number) => {
@@ -955,7 +958,8 @@ export default function TrainingPage() {
       await del(`/datasets/${datasetId}`); 
       setSelectedDataset(null);
       await fetchData({ datasets: true, jobs: true }); // Refresh datasets and jobs
-    } catch { setError('Failed to delete dataset'); }
+      toast.success('Dataset Deleted', 'Dataset has been deleted');
+    } catch { toast.error('Delete Failed', 'Failed to delete dataset'); }
   };
 
   const handleDeleteModel = async (modelId: number) => {
@@ -965,7 +969,8 @@ export default function TrainingPage() {
     try { 
       await del(`/datasets/models/${modelId}`); 
       await fetchData({ models: true }); // Only refresh models
-    } catch { setError('Failed to delete model'); }
+      toast.success('Model Deleted', 'Model has been deleted');
+    } catch { toast.error('Delete Failed', 'Failed to delete model'); }
     finally { setOperations(prev => ({ ...prev, deletingModel: null })); }
   };
 
@@ -978,7 +983,8 @@ export default function TrainingPage() {
       setRenamingModel(null);
       setNewModelName('');
       await fetchData({ models: true }); // Only refresh models
-    } catch { setError('Failed to rename model'); }
+      toast.success('Model Renamed', `Model renamed to "${newModelName.trim()}"`);
+    } catch { toast.error('Rename Failed', 'Failed to rename model'); }
     finally { setOperations(prev => ({ ...prev, renamingModel: null })); }
   };
 
@@ -1001,7 +1007,7 @@ export default function TrainingPage() {
 
       if (!response.ok) {
         if (response.status === 401) {
-          setError('Authentication failed. Please log in again.');
+          toast.error('Authentication Failed', 'Please log in again to download models');
           return;
         }
         const errorText = await response.text();
@@ -1020,7 +1026,7 @@ export default function TrainingPage() {
       document.body.removeChild(a);
     } catch (err) { 
       console.error('Download error:', err);
-      setError('Failed to download model. Please try again.'); 
+      toast.error('Download Failed', 'Failed to download model. Please try again.'); 
     } finally {
       setOperations(prev => ({ ...prev, downloadingModel: null }));
     }
@@ -1274,7 +1280,7 @@ export default function TrainingPage() {
       
     } catch (err) {
       console.error('Failed to download graph:', err);
-      setError('Failed to download graph');
+      toast.error('Export Failed', 'Failed to download graph');
     }
   };
 
