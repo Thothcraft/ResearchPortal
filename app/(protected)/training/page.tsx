@@ -1285,7 +1285,19 @@ export default function TrainingPage() {
   };
 
   const handleAddLabel = () => {
-    if (newLabel.trim() && !availableLabels.includes(newLabel.trim())) { setAvailableLabels([...availableLabels, newLabel.trim()]); setNewLabel(''); }
+    const trimmed = newLabel.trim();
+    if (trimmed && !availableLabels.includes(trimmed)) { 
+      setAvailableLabels([...availableLabels, trimmed]); 
+      setNewLabel(''); 
+      // Persist to dataset label overrides if a dataset is selected
+      if (selectedDataset) {
+        setDatasetLabelOverrides(prev => ({
+          ...prev,
+          [selectedDataset.id]: [...(prev[selectedDataset.id] || availableLabels), trimmed]
+        }));
+      }
+      toast.success('Label Added', `"${trimmed}" is now available for tagging files`);
+    }
   };
 
   const toggleFileSelection = (fileId: number, label: string) => {
@@ -1406,9 +1418,42 @@ export default function TrainingPage() {
                         <button onClick={() => handleDeleteDataset(selectedDataset.id)} className="flex items-center gap-1 px-3 py-1.5 bg-red-600/20 hover:bg-red-600/30 text-red-400 rounded-lg text-sm"><Trash2 className="w-4 h-4" /></button>
                       </div>
                     </div>
-                    {selectedDataset.label_distribution && Object.keys(selectedDataset.label_distribution).length > 0 && (
-                      <div className="mb-6"><h3 className="text-sm font-medium text-slate-300 mb-3">Label Distribution</h3><div className="flex flex-wrap gap-2">{Object.entries(selectedDataset.label_distribution).map(([label, count]) => <span key={label} className="px-3 py-1 bg-indigo-500/20 text-indigo-300 rounded-full text-sm">{label}: {count}</span>)}</div></div>
-                    )}
+                    {/* Labels Section - Always show with add capability */}
+                    <div className="mb-6">
+                      <h3 className="text-sm font-medium text-slate-300 mb-3">Labels</h3>
+                      <div className="flex flex-wrap gap-2 items-center">
+                        {(availableLabels || []).map((label) => {
+                          const count = selectedDataset.label_distribution?.[label] || 0;
+                          return (
+                            <span key={label} className={`px-3 py-1 rounded-full text-sm flex items-center gap-1 ${count > 0 ? 'bg-indigo-500/20 text-indigo-300' : 'bg-slate-700/50 text-slate-400 border border-dashed border-slate-600'}`}>
+                              {label}{count > 0 && `: ${count}`}
+                            </span>
+                          );
+                        })}
+                        {/* Add new label inline */}
+                        <div className="flex items-center gap-1">
+                          <input
+                            type="text"
+                            value={newLabel}
+                            onChange={(e) => setNewLabel(e.target.value)}
+                            onKeyDown={(e) => { if (e.key === 'Enter') handleAddLabel(); }}
+                            placeholder="New label..."
+                            className="w-24 px-2 py-1 bg-slate-800 border border-slate-600 rounded-full text-sm text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
+                          />
+                          <button
+                            onClick={handleAddLabel}
+                            disabled={!newLabel.trim() || availableLabels.includes(newLabel.trim())}
+                            className="p-1 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-700 disabled:cursor-not-allowed text-white rounded-full transition-colors"
+                            title="Add label"
+                          >
+                            <Plus className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </div>
+                      {availableLabels.length === 0 && (
+                        <p className="text-slate-500 text-xs mt-2">Add labels to categorize your data files</p>
+                      )}
+                    </div>
                     <div>
                       <h3 className="text-sm font-medium text-slate-300 mb-3">Files ({selectedDataset.files?.length || 0})</h3>
                       {!selectedDataset.files || selectedDataset.files.length === 0 ? (
