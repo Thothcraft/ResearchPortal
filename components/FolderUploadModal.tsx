@@ -134,56 +134,100 @@ export default function FolderUploadModal({
     setUploadStatus('uploading');
     setErrorMessage(null);
     setUploadProgress(0);
+    setTotalFiles(files.length);
+    setProcessedFiles(0);
+    setSuccessfulFiles(0);
+    setFailedFiles(0);
 
     try {
       const token = localStorage.getItem('auth_token');
       const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'https://web-production-d7d37.up.railway.app';
 
-      // Convert files to base64
-      const filePromises = files.map(async ({ file, relativePath }) => {
-        const arrayBuffer = await file.arrayBuffer();
-        const base64 = btoa(
-          new Uint8Array(arrayBuffer).reduce((data, byte) => data + String.fromCharCode(byte), '')
-        );
-        return {
-          filename: file.name,
-          content: base64,
-          relative_path: relativePath,
-        };
-      });
-
-      const filesData = await Promise.all(filePromises);
-
-      // Upload folder
-      const response = await fetch(`${apiUrl}/folders/upload-folder`, {
+      // First create the folder
+      const folderResponse = await fetch(`${apiUrl}/folders/`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          folder_name: folderName.trim(),
-          files: filesData,
+          name: folderName.trim(),
           parent_id: parentFolderId,
-          use_folder_name_as_label: true,
+          description: `Uploaded folder with ${files.length} files`,
         }),
       });
 
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.detail || `Upload failed: ${response.status}`);
+      if (!folderResponse.ok) {
+        const errorData = await folderResponse.json().catch(() => ({}));
+        throw new Error(errorData.detail || 'Failed to create folder');
       }
 
-      const result = await response.json();
-      
-      setUploadId(result.upload_id);
-      setTotalFiles(result.total_files);
+      const folderResult = await folderResponse.json();
+      const folderId = folderResult.id;
+
       setUploadStatus('processing');
 
-      // Start polling for status
-      pollIntervalRef.current = setInterval(() => {
-        pollUploadStatus(result.upload_id);
-      }, 1000);
+      // Upload files one by one using FormData (handles large files efficiently)
+      let successful = 0;
+      let failed = 0;
+      const errors: string[] = [];
+
+      for (let i = 0; i < files.length; i++) {
+        const { file, relativePath } = files[i];
+        
+        try {
+          const formData = new FormData();
+          formData.append('file', file);
+          formData.append('folder_id', folderId.toString());
+          
+          // Labels: filename (without ext) + folder name
+          const filenameWithoutExt = file.name.replace(/\.[^.]+$/, '');
+          const labels = [filenameWithoutExt, folderName.trim()];
+          formData.append('labels', JSON.stringify(labels));
+          formData.append('relative_path', relativePath);
+
+          const uploadResponse = await fetch(`${apiUrl}/file/upload-multipart`, {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${token}`,
+            },
+            body: formData,
+          });
+
+          if (uploadResponse.ok) {
+            successful++;
+          } else {
+            failed++;
+            const errData = await uploadResponse.json().catch(() => ({}));
+            errors.push(`${file.name}: ${errData.detail || 'Upload failed'}`);
+          }
+        } catch (fileError) {
+          failed++;
+          errors.push(`${file.name}: ${fileError instanceof Error ? fileError.message : 'Unknown error'}`);
+        }
+
+        setProcessedFiles(i + 1);
+        setSuccessfulFiles(successful);
+        setFailedFiles(failed);
+        setUploadProgress(((i + 1) / files.length) * 100);
+      }
+
+      if (failed === 0) {
+        setUploadStatus('completed');
+        setTimeout(() => {
+          onUploadComplete(folderId, folderName.trim());
+        }, 1500);
+      } else if (successful === 0) {
+        setUploadStatus('error');
+        setErrorMessage(errors.slice(0, 5).join('\n'));
+      } else {
+        // Partial success
+        setUploadStatus('completed');
+        setErrorMessage(`${failed} file(s) failed to upload`);
+        setTimeout(() => {
+          onUploadComplete(folderId, folderName.trim());
+        }, 2000);
+      }
 
     } catch (error) {
       setUploadStatus('error');

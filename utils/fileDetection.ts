@@ -104,26 +104,26 @@ export function extractDateFromFilename(filename: string): string | null {
 }
 
 /**
- * Detect file type from filename
+ * Detect file type from filename - primarily by extension
+ * No naming convention required
  */
 export function detectFileType(filename: string): DataFileType {
   const lowerName = filename.toLowerCase();
   const extension = lowerName.split('.').pop() || '';
   
-  // Check each type's prefixes and extensions
+  // First check by extension (primary detection method)
   for (const [type, config] of Object.entries(FILE_TYPE_PATTERNS) as [DataFileType, typeof FILE_TYPE_PATTERNS[DataFileType]][]) {
     if (type === 'other') continue;
-    
-    // Check if filename starts with any of the type's prefixes
-    const hasPrefix = config.prefixes.some(prefix => lowerName.startsWith(prefix));
-    const hasExtension = config.extensions.includes(extension);
-    
-    if (hasPrefix && hasExtension) {
-      return type;
+    if (config.extensions.includes(extension)) {
+      // If has prefix, use that type specifically
+      const hasPrefix = config.prefixes.some(prefix => lowerName.startsWith(prefix));
+      if (hasPrefix) {
+        return type;
+      }
     }
   }
   
-  // Fallback: detect by extension only (less reliable)
+  // Fallback: detect by extension only
   for (const [type, config] of Object.entries(FILE_TYPE_PATTERNS) as [DataFileType, typeof FILE_TYPE_PATTERNS[DataFileType]][]) {
     if (type === 'other') continue;
     if (config.extensions.includes(extension)) {
@@ -135,65 +135,23 @@ export function detectFileType(filename: string): DataFileType {
 }
 
 /**
- * Check if a file follows the valid naming convention
+ * Check if a file is a valid data file
+ * No naming convention required - just needs a recognized extension
  */
 export function isValidDataFile(filename: string): boolean {
   const type = detectFileType(filename);
-  if (type === 'other') return false;
-  
-  const config = FILE_TYPE_PATTERNS[type];
-  const lowerName = filename.toLowerCase();
-  
-  // Must have valid prefix
-  const hasValidPrefix = config.prefixes.some(prefix => lowerName.startsWith(prefix));
-  if (!hasValidPrefix) return false;
-  
-  // Must have date in filename
-  const date = extractDateFromFilename(filename);
-  if (!date) return false;
-  
-  // Must have valid extension
-  const extension = lowerName.split('.').pop() || '';
-  if (!config.extensions.includes(extension)) return false;
-  
-  return true;
+  // Any recognized file type is valid
+  return type !== 'other';
 }
 
 /**
- * Extract label from filename (if present)
- * Format: type_date_label_*.ext or type_date_*_label.ext
+ * Extract label from filename
+ * Uses the filename without extension as the label
  */
 export function extractLabelFromFilename(filename: string): string | null {
-  const type = detectFileType(filename);
-  if (type === 'other') return null;
-  
-  const config = FILE_TYPE_PATTERNS[type];
-  const lowerName = filename.toLowerCase();
-  
-  // Find which prefix matches
-  const prefix = config.prefixes.find(p => lowerName.startsWith(p));
-  if (!prefix) return null;
-  
-  // Remove prefix and extension
-  const nameWithoutPrefix = filename.slice(prefix.length);
-  const nameWithoutExt = nameWithoutPrefix.replace(/\.[^.]+$/, '');
-  
-  // Split by underscore or hyphen
-  const parts = nameWithoutExt.split(/[_-]/);
-  
-  // Date is usually first, label could be second or last
-  // Skip date parts (YYYY, MM, DD or YYYYMMDD)
-  const nonDateParts = parts.filter(part => {
-    // Skip if it looks like a date component
-    if (/^\d{4}$/.test(part)) return false; // Year
-    if (/^\d{2}$/.test(part)) return false; // Month/Day
-    if (/^\d{8}$/.test(part)) return false; // YYYYMMDD
-    if (/^\d+$/.test(part) && part.length <= 3) return false; // Index numbers
-    return true;
-  });
-  
-  // Return first non-date, non-numeric part as label
-  return nonDateParts.length > 0 ? nonDateParts[0] : null;
+  // Remove extension and use the base name as label
+  const nameWithoutExt = filename.replace(/\.[^.]+$/, '');
+  return nameWithoutExt || null;
 }
 
 /**

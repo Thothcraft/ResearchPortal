@@ -494,35 +494,10 @@ export default function DataPage() {
     
     setUploadFile(file);
     setUploadError(null);
-    
-    // Validate file type
-    const detectedType = detectFileType(file.name);
-    if (detectedType === 'other') {
-      setUploadError(
-        'Unrecognized file type. File must follow naming convention: type_YYYY-MM-DD_name.ext\n' +
-        'Valid types: csi, imu, img/image, vid/video, audio/aud, sensor/mfcw/radar, timelapse/tl'
-      );
-    }
   };
 
   const handleUpload = async () => {
     if (!uploadFile) return;
-    
-    // Validate file type
-    const detectedType = detectFileType(uploadFile.name);
-    if (detectedType === 'other') {
-      setUploadError('Cannot upload: Unrecognized file type. Please rename the file to follow the naming convention.');
-      return;
-    }
-    
-    // Validate naming convention
-    if (!isValidDataFile(uploadFile.name)) {
-      setUploadError(
-        'Invalid file name format. Expected: type_YYYY-MM-DD_name.ext\n' +
-        'Example: csi_2024-01-15_experiment1.csv'
-      );
-      return;
-    }
     
     setIsUploading(true);
     setUploadError(null);
@@ -531,36 +506,24 @@ export default function DataPage() {
       const token = localStorage.getItem('auth_token');
       const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'https://web-production-d7d37.up.railway.app';
       
-      // Read file as base64
-      const arrayBuffer = await uploadFile.arrayBuffer();
-      const base64Content = btoa(
-        new Uint8Array(arrayBuffer).reduce((data, byte) => data + String.fromCharCode(byte), '')
-      );
+      // Use FormData for efficient file upload (handles large files without memory issues)
+      const formData = new FormData();
+      formData.append('file', uploadFile);
       
-      // Build filename with optional label
-      let filename = uploadFile.name;
-      if (uploadLabel.trim()) {
-        // Insert label before extension
-        const lastDot = filename.lastIndexOf('.');
-        if (lastDot > 0) {
-          const name = filename.substring(0, lastDot);
-          const ext = filename.substring(lastDot);
-          filename = `${name}_${uploadLabel.trim()}${ext}`;
-        }
-      }
+      // Extract label from filename (without extension)
+      const filenameWithoutExt = uploadFile.name.replace(/\.[^.]+$/, '');
+      const labels = uploadLabel.trim() 
+        ? [filenameWithoutExt, uploadLabel.trim()] 
+        : [filenameWithoutExt];
       
-      const response = await fetch(`${apiUrl}/file/upload`, {
+      formData.append('labels', JSON.stringify(labels));
+      
+      const response = await fetch(`${apiUrl}/file/upload-multipart`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          filename: filename,
-          content: base64Content,
-          is_base64: true,
-          content_type: uploadFile.type || 'application/octet-stream',
-        }),
+        body: formData,
       });
       
       if (!response.ok) {
@@ -570,7 +533,7 @@ export default function DataPage() {
       
       const result = await response.json();
       
-      toast.success('Upload Complete', `"${filename}" uploaded successfully`);
+      toast.success('Upload Complete', `"${uploadFile.name}" uploaded successfully`);
       setShowUploadModal(false);
       setUploadFile(null);
       setUploadLabel('');
@@ -776,7 +739,7 @@ export default function DataPage() {
           <Database className="w-12 h-12 text-slate-500 mx-auto mb-4" />
           <p className="text-slate-400">No data files found</p>
           <p className="text-slate-500 text-sm mt-1">
-            Valid files should follow format: type_YYYY-MM-DD_name.ext
+            Upload files or folders to get started
           </p>
         </div>
       ) : (
@@ -950,16 +913,17 @@ export default function DataPage() {
             </div>
             
             <div className="p-6 space-y-6">
-              {/* File naming guide */}
+              {/* File info guide */}
               <div className="bg-slate-900/50 rounded-lg p-4 border border-slate-700">
-                <h4 className="text-sm font-medium text-slate-300 mb-2">File Naming Convention</h4>
-                <p className="text-xs text-slate-400 mb-2">
-                  Files must follow: <code className="bg-slate-800 px-1 rounded">type_YYYY-MM-DD_name.ext</code>
-                </p>
+                <h4 className="text-sm font-medium text-slate-300 mb-2">Supported File Types</h4>
                 <div className="text-xs text-slate-500 space-y-1">
-                  <p><strong className="text-slate-400">Valid prefixes:</strong> csi_, imu_, img_, vid_, audio_, sensor_, timelapse_</p>
-                  <p><strong className="text-slate-400">Example:</strong> csi_2024-01-15_experiment1.csv</p>
+                  <p><strong className="text-slate-400">CSV:</strong> .csv (CSI data, general data)</p>
+                  <p><strong className="text-slate-400">JSON:</strong> .json, .jsonl (IMU, sensor data)</p>
+                  <p><strong className="text-slate-400">Media:</strong> .jpg, .png, .mp4, .wav, etc.</p>
                 </div>
+                <p className="text-xs text-slate-400 mt-2">
+                  The filename (without extension) will be used as the file's label.
+                </p>
               </div>
 
               {/* File input */}
@@ -1009,11 +973,11 @@ export default function DataPage() {
                   type="text"
                   value={uploadLabel}
                   onChange={(e) => setUploadLabel(e.target.value)}
-                  placeholder="e.g., experiment1, session2"
+                  placeholder="e.g., walking, sitting, gesture1"
                   className="w-full px-4 py-3 bg-slate-900 border border-slate-700 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
                 />
                 <p className="text-xs text-slate-500 mt-1">
-                  Will be appended to filename before extension
+                  File will have both filename and this label (if provided)
                 </p>
               </div>
 
@@ -1034,7 +998,7 @@ export default function DataPage() {
                 </button>
                 <button
                   onClick={handleUpload}
-                  disabled={!uploadFile || isUploading || (uploadFile && detectFileType(uploadFile.name) === 'other')}
+                  disabled={!uploadFile || isUploading}
                   className="flex-1 flex items-center justify-center gap-2 px-4 py-3 bg-green-600 hover:bg-green-700 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {isUploading ? (
