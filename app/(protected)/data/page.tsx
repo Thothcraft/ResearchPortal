@@ -237,7 +237,7 @@ export default function DataPage() {
     setFoldersLoading(true);
     try {
       const token = localStorage.getItem('auth_token');
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'https://web-production-d7d37.up.railway.app';
+      const apiUrl = '/api/proxy';
       
       const parentParam = currentFolderId ? `?parent_id=${currentFolderId}` : '?parent_id=-1';
       const response = await fetch(`${apiUrl}/folders/${parentParam}`, {
@@ -269,7 +269,7 @@ export default function DataPage() {
     
     try {
       const token = localStorage.getItem('auth_token');
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'https://web-production-d7d37.up.railway.app';
+      const apiUrl = '/api/proxy';
       
       const response = await fetch(`${apiUrl}/folders/`, {
         method: 'POST',
@@ -319,7 +319,7 @@ export default function DataPage() {
     setDeletingFolderId(folder.id);
     try {
       const token = localStorage.getItem('auth_token');
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'https://web-production-d7d37.up.railway.app';
+      const apiUrl = '/api/proxy';
       
       const response = await fetch(`${apiUrl}/folders/${folder.id}?force=${force}`, {
         method: 'DELETE',
@@ -355,7 +355,7 @@ export default function DataPage() {
     
     try {
       const token = localStorage.getItem('auth_token');
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'https://web-production-d7d37.up.railway.app';
+      const apiUrl = '/api/proxy';
       
       const response = await fetch(`${apiUrl}/file/${file.cloudFileId}/metadata`, {
         headers: { 'Authorization': `Bearer ${token}` }
@@ -393,7 +393,7 @@ export default function DataPage() {
     setIsSavingLabels(true);
     try {
       const token = localStorage.getItem('auth_token');
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'https://web-production-d7d37.up.railway.app';
+      const apiUrl = '/api/proxy';
       
       const response = await fetch(`${apiUrl}/file/${labelFile.cloudFileId}/metadata`, {
         method: 'PUT',
@@ -542,7 +542,7 @@ export default function DataPage() {
     
     try {
       const token = localStorage.getItem('auth_token');
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'https://web-production-d7d37.up.railway.app';
+      const apiUrl = '/api/proxy';
       const fileUrl = `${apiUrl}/file/${file.cloudFileId}?download=false`;
       
       const response = await fetch(fileUrl, {
@@ -571,7 +571,7 @@ export default function DataPage() {
     
     try {
       const token = localStorage.getItem('auth_token');
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'https://web-production-d7d37.up.railway.app';
+      const apiUrl = '/api/proxy';
       
       const response = await fetch(`${apiUrl}/file/${file.cloudFileId}`, {
         method: 'DELETE',
@@ -596,7 +596,7 @@ export default function DataPage() {
     
     try {
       const token = localStorage.getItem('auth_token');
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'https://web-production-d7d37.up.railway.app';
+      const apiUrl = '/api/proxy';
       
       const response = await fetch(`${apiUrl}/file/${file.cloudFileId}?download=true`, {
         headers: { 'Authorization': `Bearer ${token}` }
@@ -616,7 +616,6 @@ export default function DataPage() {
     }
   };
 
-  // Upload handlers
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -633,7 +632,7 @@ export default function DataPage() {
     
     try {
       const token = localStorage.getItem('auth_token');
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'https://web-production-d7d37.up.railway.app';
+      const apiUrl = '/api/proxy';
       
       // Use FormData for efficient file upload (handles large files without memory issues)
       const formData = new FormData();

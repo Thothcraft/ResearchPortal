@@ -1013,7 +1013,7 @@ export default function TrainingPage() {
   const handleDownloadModel = async (modelId: number, modelName: string) => {
     setOperations(prev => ({ ...prev, downloadingModel: modelId }));
     try {
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'https://web-production-d7d37.up.railway.app';
+      const apiUrl = '/api/proxy';
       console.log(`Downloading model ${modelId} from ${apiUrl}/datasets/models/${modelId}/download`);
       
       const response = await fetch(`${apiUrl}/datasets/models/${modelId}/download`, {
