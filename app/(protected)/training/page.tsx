@@ -12,6 +12,7 @@ import {
   Download, Rocket, Loader2, X, XCircle, Edit2, TrendingUp,
 } from 'lucide-react';
 import FigureExport from '@/components/FigureExport';
+import PlotCustomizer from '@/components/PlotCustomizer';
 import FederatedLearningDashboard from '@/components/FederatedLearningDashboard';
 
 const PREPROCESSING_STEP_HELP: Record<string, { title: string; details: string }> = {
@@ -3654,6 +3655,19 @@ export default function TrainingPage() {
                 <FigureExport 
                   jobId={selectedJob.job_id} 
                   onError={(error) => console.error('Figure export error:', error)}
+                />
+              )}
+              
+              {/* Advanced Plot Customizer */}
+              {selectedJob.status === 'completed' && (
+                <PlotCustomizer 
+                  jobId={selectedJob.job_id}
+                  experimentData={{
+                    metrics: selectedJob.metrics,
+                    best_metrics: selectedJob.best_metrics,
+                    model_type: selectedJob.model_type,
+                    config: selectedJob.config,
+                  }}
                 />
               )}
               </div>
