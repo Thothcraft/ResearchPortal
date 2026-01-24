@@ -3,6 +3,7 @@ import { useCallback, useRef } from 'react';
 
 export const useApi = () => {
   const { user } = useAuth();
+  const apiBaseUrl = '/api/proxy';
   
   // Use ref to always have access to latest token without causing re-renders
   const tokenRef = useRef(user?.token);
@@ -42,42 +43,42 @@ export const useApi = () => {
   }, []);
 
   const get = useCallback(async (url: string) => {
-    const response = await fetch(`https://web-production-d7d37.up.railway.app${url}`, {
+    const response = await fetch(`${apiBaseUrl}${url}`, {
       method: 'GET',
       headers: getAuthHeaders(),
     });
 
     return handleResponse(response);
-  }, [getAuthHeaders, handleResponse]);
+  }, [apiBaseUrl, getAuthHeaders, handleResponse]);
 
   const post = useCallback(async (url: string, data: any) => {
-    const response = await fetch(`https://web-production-d7d37.up.railway.app${url}`, {
+    const response = await fetch(`${apiBaseUrl}${url}`, {
       method: 'POST',
       headers: getAuthHeaders(),
       body: JSON.stringify(data),
     });
 
     return handleResponse(response);
-  }, [getAuthHeaders, handleResponse]);
+  }, [apiBaseUrl, getAuthHeaders, handleResponse]);
 
   const put = useCallback(async (url: string, data: any) => {
-    const response = await fetch(`https://web-production-d7d37.up.railway.app${url}`, {
+    const response = await fetch(`${apiBaseUrl}${url}`, {
       method: 'PUT',
       headers: getAuthHeaders(),
       body: JSON.stringify(data),
     });
 
     return handleResponse(response);
-  }, [getAuthHeaders, handleResponse]);
+  }, [apiBaseUrl, getAuthHeaders, handleResponse]);
 
   const del = useCallback(async (url: string) => {
-    const response = await fetch(`https://web-production-d7d37.up.railway.app${url}`, {
+    const response = await fetch(`${apiBaseUrl}${url}`, {
       method: 'DELETE',
       headers: getAuthHeaders(),
     });
 
     return handleResponse(response);
-  }, [getAuthHeaders, handleResponse]);
+  }, [apiBaseUrl, getAuthHeaders, handleResponse]);
 
   return { get, post, put, delete: del };
 };

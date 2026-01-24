@@ -80,6 +80,7 @@ export interface CachedApiResult<T> {
 
 export function useCachedApi() {
   const { user } = useAuth();
+  const apiBaseUrl = '/api/proxy';
   const tokenRef = useRef(user?.token);
   tokenRef.current = user?.token;
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -128,7 +129,7 @@ export function useCachedApi() {
       deduplicate = true,
     } = options;
 
-    const url = `https://web-production-d7d37.up.railway.app${endpoint}`;
+    const url = `${apiBaseUrl}${endpoint}`;
     const cacheKey = getCacheKey(endpoint);
 
     // Check cache first
@@ -197,14 +198,14 @@ export function useCachedApi() {
     }
 
     return requestPromise;
-  }, [getAuthHeaders, fetchWithRetry]);
+  }, [apiBaseUrl, getAuthHeaders, fetchWithRetry]);
 
   const post = useCallback(async <T = any>(
     endpoint: string,
     data: any,
     invalidatePatterns?: string[]
   ): Promise<T | null> => {
-    const url = `https://web-production-d7d37.up.railway.app${endpoint}`;
+    const url = `${apiBaseUrl}${endpoint}`;
 
     const response = await fetch(url, {
       method: 'POST',
@@ -229,13 +230,13 @@ export function useCachedApi() {
     }
 
     return response.json();
-  }, [getAuthHeaders]);
+  }, [apiBaseUrl, getAuthHeaders]);
 
   const del = useCallback(async (
     endpoint: string,
     invalidatePatterns?: string[]
   ): Promise<boolean> => {
-    const url = `https://web-production-d7d37.up.railway.app${endpoint}`;
+    const url = `${apiBaseUrl}${endpoint}`;
 
     const response = await fetch(url, {
       method: 'DELETE',
@@ -259,7 +260,7 @@ export function useCachedApi() {
     }
 
     return true;
-  }, [getAuthHeaders]);
+  }, [apiBaseUrl, getAuthHeaders]);
 
   return { get, post, delete: del, clearCache, invalidateCache };
 }
