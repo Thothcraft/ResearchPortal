@@ -15,7 +15,7 @@ import axios from 'axios';
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'https://web-production-d7d37.up.railway.app';
 const api = axios.create({
   baseURL: API_BASE_URL,
-  withCredentials: true,
+  withCredentials: false,  // Must be false when backend uses allow_origins=["*"]
   headers: {
     'Content-Type': 'application/json',
     'Accept': 'application/json',

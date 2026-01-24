@@ -13,7 +13,7 @@ const WS_URL = process.env.NEXT_PUBLIC_WS_URL || 'wss://web-production-d7d37.up.
 // Create axios instance
 const api = axios.create({
   baseURL: API_BASE_URL,
-  withCredentials: true,
+  withCredentials: false,  // Must be false when backend uses allow_origins=["*"]
   headers: {
     'Content-Type': 'application/json',
     'Accept': 'application/json',

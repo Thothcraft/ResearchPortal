@@ -405,6 +405,7 @@ export default function ProcessingPage() {
 
   useEffect(() => {
     fetchPipelines();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const fetchPipelines = async () => {

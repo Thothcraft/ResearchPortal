@@ -184,7 +184,7 @@ export default function DataPage() {
     if (devices.length > 0) {
       fetchDeviceFiles();
     }
-  }, [devices.length]);
+  }, [devices.length, fetchDeviceFiles]);
 
   // Process cloud files
   const cloudFiles = useMemo(() => {
