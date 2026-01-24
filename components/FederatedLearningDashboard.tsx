@@ -130,7 +130,7 @@ const ALGORITHM_DEFAULTS: Record<string, Record<string, number>> = {
   fedmedian: {},
 };
 
-type FLTab = 'sessions' | 'models' | 'compare';
+type FLTab = 'sessions' | 'groups' | 'models' | 'compare';
 
 interface FLTrainedModel {
   model_id: string;
@@ -142,6 +142,33 @@ interface FLTrainedModel {
   rounds_completed: number;
   created_at: string;
   dataset: string;
+}
+
+// FL Job Group types
+interface FLJobInGroup {
+  id: string;
+  algorithm: string;
+  status: 'pending' | 'queued' | 'running' | 'completed' | 'failed';
+  progress: number;
+  session_id?: string;
+  metrics?: {
+    accuracy?: number;
+    loss?: number;
+    current_round?: number;
+    total_rounds?: number;
+  };
+}
+
+interface FLJobGroup {
+  id: string;
+  name: string;
+  execution_mode: 'parallel' | 'sequential';
+  jobs: FLJobInGroup[];
+  status: 'draft' | 'running' | 'completed' | 'paused';
+  dataset: string;
+  num_rounds: number;
+  num_partitions: number;
+  created_at: string;
 }
 
 const FederatedLearningDashboard: React.FC = () => {
@@ -157,6 +184,11 @@ const FederatedLearningDashboard: React.FC = () => {
   const [selectedModelsForCompare, setSelectedModelsForCompare] = useState<string[]>([]);
   const [userDatasets, setUserDatasets] = useState<DatasetConfig[]>([]);
   const [loadingUserDatasets, setLoadingUserDatasets] = useState(false);
+  
+  // FL Job Groups state
+  const [flJobGroups, setFlJobGroups] = useState<FLJobGroup[]>([]);
+  const [showCreateFLGroup, setShowCreateFLGroup] = useState(false);
+  const [expandedFLGroups, setExpandedFLGroups] = useState<Set<string>>(new Set());
 
   // Combined datasets (built-in + user)
   const allDatasets = [...BUILTIN_DATASETS, ...userDatasets];
@@ -1732,6 +1764,22 @@ const FederatedLearningDashboard: React.FC = () => {
           )}
         </button>
         <button
+          onClick={() => setActiveTab('groups')}
+          className={`px-4 py-2 font-medium transition-colors flex items-center gap-2 ${
+            activeTab === 'groups' 
+              ? 'text-purple-400 border-b-2 border-purple-400' 
+              : 'text-slate-400 hover:text-white'
+          }`}
+        >
+          <Layers className="w-4 h-4" />
+          Algorithm Groups
+          {flJobGroups.length > 0 && (
+            <span className="px-2 py-0.5 bg-purple-500/20 text-purple-400 text-xs rounded-full">
+              {flJobGroups.length}
+            </span>
+          )}
+        </button>
+        <button
           onClick={() => setActiveTab('models')}
           className={`px-4 py-2 font-medium transition-colors flex items-center gap-2 ${
             activeTab === 'models' 
@@ -1773,8 +1821,223 @@ const FederatedLearningDashboard: React.FC = () => {
           {view === 'monitor' && renderMonitor()}
         </>
       )}
+      
+      {/* FL Algorithm Groups Tab */}
+      {activeTab === 'groups' && (
+        <div className="space-y-6">
+          {/* Header */}
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-xl font-semibold text-white flex items-center gap-2">
+                <Layers className="w-5 h-5 text-purple-400" />
+                FL Algorithm Groups
+              </h2>
+              <p className="text-sm text-slate-400 mt-1">
+                Compare multiple FL algorithms on the same dataset in parallel or sequentially
+              </p>
+            </div>
+            <button
+              onClick={() => setShowCreateFLGroup(true)}
+              className="flex items-center gap-2 px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg transition-colors"
+            >
+              <Plus className="w-4 h-4" />
+              New Algorithm Group
+            </button>
+          </div>
+
+          {/* Groups List */}
+          {flJobGroups.length === 0 ? (
+            <div className="bg-slate-800/50 rounded-xl border border-slate-700 p-12 text-center">
+              <Layers className="w-16 h-16 text-slate-600 mx-auto mb-4" />
+              <h3 className="text-lg font-medium text-white mb-2">No FL Algorithm Groups</h3>
+              <p className="text-slate-400 mb-4">
+                Create a group to train and compare multiple FL algorithms
+              </p>
+              <button
+                onClick={() => setShowCreateFLGroup(true)}
+                className="flex items-center gap-2 px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg mx-auto"
+              >
+                <Plus className="w-4 h-4" />
+                Create Algorithm Group
+              </button>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {flJobGroups.map(group => {
+                const completedJobs = group.jobs.filter(j => j.status === 'completed').length;
+                const progress = group.jobs.length > 0 ? (completedJobs / group.jobs.length) * 100 : 0;
+                const isExpanded = expandedFLGroups.has(group.id);
+
+                return (
+                  <div key={group.id} className="bg-slate-800/50 rounded-xl border border-slate-700 overflow-hidden">
+                    {/* Group Header */}
+                    <div 
+                      className="p-4 flex items-center justify-between cursor-pointer hover:bg-slate-700/30"
+                      onClick={() => {
+                        setExpandedFLGroups(prev => {
+                          const next = new Set(prev);
+                          if (next.has(group.id)) next.delete(group.id);
+                          else next.add(group.id);
+                          return next;
+                        });
+                      }}
+                    >
+                      <div className="flex items-center gap-3">
+                        <ChevronRight className={`w-5 h-5 text-slate-400 transition-transform ${isExpanded ? 'rotate-90' : ''}`} />
+                        <div className="p-2 rounded-lg bg-purple-500/20">
+                          <Layers className="w-5 h-5 text-purple-400" />
+                        </div>
+                        <div>
+                          <h3 className="text-white font-medium">{group.name}</h3>
+                          <div className="flex items-center gap-2 text-xs text-slate-400">
+                            <span>{group.jobs.length} algorithms</span>
+                            <span>•</span>
+                            <span>{group.execution_mode === 'parallel' ? 'Parallel' : 'Sequential'}</span>
+                            <span>•</span>
+                            <span>{group.num_rounds} rounds</span>
+                          </div>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <div className="w-24 h-2 bg-slate-700 rounded-full overflow-hidden">
+                          <div 
+                            className="h-full bg-purple-500 transition-all"
+                            style={{ width: `${progress}%` }}
+                          />
+                        </div>
+                        <span className="text-xs text-slate-400">{completedJobs}/{group.jobs.length}</span>
+                        <span className={`px-2 py-1 rounded text-xs font-medium ${
+                          group.status === 'running' ? 'bg-blue-500/20 text-blue-400' :
+                          group.status === 'completed' ? 'bg-green-500/20 text-green-400' :
+                          'bg-slate-500/20 text-slate-400'
+                        }`}>
+                          {group.status}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Expanded Content */}
+                    {isExpanded && (
+                      <div className="border-t border-slate-700 p-4 space-y-3">
+                        {group.jobs.map((job, idx) => {
+                          const algo = ALGORITHMS.find(a => a.id === job.algorithm);
+                          return (
+                            <div key={job.id} className="flex items-center justify-between p-3 bg-slate-900/50 rounded-lg">
+                              <div className="flex items-center gap-3">
+                                <span className="text-xs text-slate-500 w-6">#{idx + 1}</span>
+                                {job.status === 'running' ? <Loader2 className="w-4 h-4 text-blue-400 animate-spin" /> :
+                                 job.status === 'completed' ? <CheckCircle className="w-4 h-4 text-green-400" /> :
+                                 job.status === 'failed' ? <XCircle className="w-4 h-4 text-red-400" /> :
+                                 <Clock className="w-4 h-4 text-slate-400" />}
+                                <span className="text-white font-medium">{algo?.name || job.algorithm}</span>
+                                <span className="text-xs text-slate-500">{algo?.category}</span>
+                              </div>
+                              {job.metrics?.accuracy !== undefined && (
+                                <span className="text-sm text-green-400">
+                                  {(job.metrics.accuracy * 100).toFixed(1)}% acc
+                                </span>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
       {activeTab === 'models' && renderModelsTab()}
       {activeTab === 'compare' && renderCompareTab()}
+
+      {/* Create FL Group Modal */}
+      {showCreateFLGroup && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={() => setShowCreateFLGroup(false)}>
+          <div className="bg-slate-800 rounded-xl border border-slate-700 p-6 w-full max-w-3xl max-h-[85vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-6">
+              <h2 className="text-xl font-semibold text-white flex items-center gap-2">
+                <Layers className="w-6 h-6 text-purple-400" />
+                Create FL Algorithm Group
+              </h2>
+              <button onClick={() => setShowCreateFLGroup(false)} className="text-slate-400 hover:text-white">
+                <X className="w-6 h-6" />
+              </button>
+            </div>
+
+            <div className="space-y-6">
+              <div>
+                <label className="block text-sm font-medium text-slate-300 mb-2">Group Name</label>
+                <input
+                  type="text"
+                  placeholder="My FL Algorithm Comparison"
+                  className="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white placeholder-slate-400"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-slate-300 mb-2">Select Algorithms to Compare</label>
+                <p className="text-xs text-slate-500 mb-3">Choose multiple FL algorithms to train on the same dataset</p>
+                
+                {Object.entries(
+                  ALGORITHMS.reduce((acc, algo) => {
+                    if (!acc[algo.category]) acc[algo.category] = [];
+                    acc[algo.category].push(algo);
+                    return acc;
+                  }, {} as Record<string, typeof ALGORITHMS>)
+                ).map(([category, algos]) => (
+                  <div key={category} className="mb-4">
+                    <h4 className="text-sm font-medium text-slate-400 mb-2">{category}</h4>
+                    <div className="grid grid-cols-3 gap-2">
+                      {algos.map(algo => (
+                        <button
+                          key={algo.id}
+                          className="p-3 rounded-lg border bg-slate-700/50 border-slate-600 hover:border-purple-500/40 text-left"
+                        >
+                          <span className="text-white font-medium text-sm">{algo.name}</span>
+                          <p className="text-xs text-slate-400 mt-1">{algo.description}</p>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-slate-300 mb-2">Execution Mode</label>
+                  <select className="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white">
+                    <option value="sequential">Sequential (Queue)</option>
+                    <option value="parallel">Parallel</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-300 mb-2">Rounds</label>
+                  <input type="number" defaultValue={10} className="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white" />
+                </div>
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 mt-6 pt-4 border-t border-slate-700">
+              <button
+                onClick={() => setShowCreateFLGroup(false)}
+                className="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => setShowCreateFLGroup(false)}
+                className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg flex items-center gap-2"
+              >
+                <Plus className="w-4 h-4" />
+                Create Group
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
