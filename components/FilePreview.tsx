@@ -69,7 +69,7 @@ export default function FilePreview({ file, isOpen, onClose, onDownload }: FileP
         }
 
         // Get file URL or use provided URL
-        const url = file.url || `${process.env.NEXT_PUBLIC_API_URL || 'https://web-production-d7d37.up.railway.app'}/file/${file.id}`;
+        const url = file.url || `/api/proxy/file/${file.id}`;
         
         if (previewType === 'image' || previewType === 'video') {
           // For images and videos, we can use the URL directly

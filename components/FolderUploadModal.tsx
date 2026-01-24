@@ -83,7 +83,7 @@ export default function FolderUploadModal({
   const pollUploadStatus = useCallback(async (uploadIdToCheck: string) => {
     try {
       const token = localStorage.getItem('auth_token');
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'https://web-production-d7d37.up.railway.app';
+      const apiUrl = '/api/proxy';
       
       const response = await fetch(`${apiUrl}/folders/upload-status/${uploadIdToCheck}`, {
         headers: { 'Authorization': `Bearer ${token}` }
@@ -141,7 +141,7 @@ export default function FolderUploadModal({
 
     try {
       const token = localStorage.getItem('auth_token');
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'https://web-production-d7d37.up.railway.app';
+      const apiUrl = '/api/proxy';
 
       // First create the folder
       const folderResponse = await fetch(`${apiUrl}/folders/`, {

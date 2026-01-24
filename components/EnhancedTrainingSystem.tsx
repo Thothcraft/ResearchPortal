@@ -12,7 +12,7 @@ import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 
 // API Configuration
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'https://web-production-d7d37.up.railway.app';
+const API_BASE_URL = '/api/proxy';
 const api = axios.create({
   baseURL: API_BASE_URL,
   withCredentials: false,  // Must be false when backend uses allow_origins=["*"]

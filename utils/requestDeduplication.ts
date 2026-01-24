@@ -163,7 +163,7 @@ export class ApiClient {
   private baseUrl: string;
 
   constructor(baseUrl?: string) {
-    this.baseUrl = baseUrl || process.env.NEXT_PUBLIC_API_URL || 'https://web-production-d7d37.up.railway.app';
+    this.baseUrl = baseUrl || '/api/proxy';
   }
 
   /**

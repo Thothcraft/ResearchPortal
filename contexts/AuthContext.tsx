@@ -49,7 +49,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       console.log('Attempting login with:', { username });
       
-      const response = await fetch('https://web-production-d7d37.up.railway.app/token', {
+      const response = await fetch('/api/proxy/token', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

@@ -39,7 +39,7 @@ export class ResumableUpload {
   private retryAttempts = 3;
   private baseUrl: string;
 
-  constructor(baseUrl: string = process.env.NEXT_PUBLIC_API_URL || 'https://web-production-d7d37.up.railway.app') {
+  constructor(baseUrl: string = '/api/proxy') {
     this.baseUrl = baseUrl;
   }
 

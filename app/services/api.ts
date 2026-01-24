@@ -7,8 +7,8 @@ import axios from 'axios';
 import io, { Socket } from 'socket.io-client';
 
 // API Configuration
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'https://web-production-d7d37.up.railway.app';
-const WS_URL = process.env.NEXT_PUBLIC_WS_URL || 'wss://web-production-d7d37.up.railway.app';
+const API_BASE_URL = '/api/proxy';
+const WS_URL = process.env.NEXT_PUBLIC_WS_URL || '';
 
 // Create axios instance
 const api = axios.create({
