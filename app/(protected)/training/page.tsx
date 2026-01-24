@@ -3883,6 +3883,15 @@ export default function TrainingPage() {
         onClose={() => setShowCreateGroupModal(false)}
         onCreate={handleCreateJobGroup}
         type={createGroupType}
+        datasets={datasets.map(d => ({ id: d.id, name: d.name, file_count: d.file_count, labels: d.labels }))}
+        trainingConfig={{
+          epochs: trainingConfig.epochs,
+          batch_size: trainingConfig.batch_size,
+          learning_rate: trainingConfig.learning_rate,
+          test_split: trainingConfig.test_split,
+          preprocessing_pipeline_id: trainingConfig.preprocessing_pipeline_id,
+        }}
+        selectedDatasetId={selectedDataset?.id}
       />
     </div>
   );

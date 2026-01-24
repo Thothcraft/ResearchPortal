@@ -566,12 +566,40 @@ export const JobGroupComparison: React.FC<JobGroupComparisonProps> = ({ group, m
   );
 };
 
+// Dataset type for the modal
+export interface DatasetOption {
+  id: number;
+  name: string;
+  file_count?: number;
+  labels?: string[];
+}
+
+// Training config passed from parent (mirrors the existing training config)
+export interface TrainingConfigInput {
+  epochs?: number;
+  batch_size?: number;
+  learning_rate?: number;
+  test_split?: number;
+  preprocessing_pipeline_id?: number | null;
+  // ML params
+  ml_params?: Record<string, unknown>;
+  // FL params
+  num_rounds?: number;
+  num_partitions?: number;
+}
+
 // Create Job Group Modal
 interface CreateJobGroupModalProps {
   isOpen: boolean;
   onClose: () => void;
   onCreate: (group: TrainingJobGroup) => void;
   type: 'central' | 'federated';
+  // Pass datasets from parent (from the training page)
+  datasets?: DatasetOption[];
+  // Pass current training config from parent
+  trainingConfig?: TrainingConfigInput;
+  // Pre-selected dataset (if user already selected one)
+  selectedDatasetId?: number;
 }
 
 export const CreateJobGroupModal: React.FC<CreateJobGroupModalProps> = ({
@@ -579,15 +607,45 @@ export const CreateJobGroupModal: React.FC<CreateJobGroupModalProps> = ({
   onClose,
   onCreate,
   type,
+  datasets = [],
+  trainingConfig,
+  selectedDatasetId,
 }) => {
   const [name, setName] = useState('');
   const [executionMode, setExecutionMode] = useState<'parallel' | 'sequential'>('sequential');
   const [selectedModels, setSelectedModels] = useState<string[]>([]);
+  const [datasetId, setDatasetId] = useState<number | undefined>(selectedDatasetId);
+  
+  // Local training config state (initialized from parent's trainingConfig)
+  const [epochs, setEpochs] = useState(trainingConfig?.epochs ?? 10);
+  const [batchSize, setBatchSize] = useState(trainingConfig?.batch_size ?? 32);
+  const [learningRate, setLearningRate] = useState(trainingConfig?.learning_rate ?? 0.001);
+  const [testSplit, setTestSplit] = useState(trainingConfig?.test_split ?? 0.2);
+  const [numRounds, setNumRounds] = useState(trainingConfig?.num_rounds ?? 10);
+  const [numPartitions, setNumPartitions] = useState(trainingConfig?.num_partitions ?? 5);
+
+  // Update local state when parent config changes
+  useEffect(() => {
+    if (trainingConfig) {
+      if (trainingConfig.epochs !== undefined) setEpochs(trainingConfig.epochs);
+      if (trainingConfig.batch_size !== undefined) setBatchSize(trainingConfig.batch_size);
+      if (trainingConfig.learning_rate !== undefined) setLearningRate(trainingConfig.learning_rate);
+      if (trainingConfig.test_split !== undefined) setTestSplit(trainingConfig.test_split);
+      if (trainingConfig.num_rounds !== undefined) setNumRounds(trainingConfig.num_rounds);
+      if (trainingConfig.num_partitions !== undefined) setNumPartitions(trainingConfig.num_partitions);
+    }
+  }, [trainingConfig]);
+
+  useEffect(() => {
+    if (selectedDatasetId !== undefined) {
+      setDatasetId(selectedDatasetId);
+    }
+  }, [selectedDatasetId]);
 
   const models = type === 'central' ? CENTRAL_MODELS : FL_ALGORITHMS;
 
   const handleCreate = () => {
-    if (!name.trim()) return;
+    if (!name.trim() || selectedModels.length === 0) return;
 
     const newGroup: TrainingJobGroup = {
       id: `group_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
@@ -597,8 +655,22 @@ export const CreateJobGroupModal: React.FC<CreateJobGroupModalProps> = ({
       jobs: selectedModels.map(modelId => ({
         id: `job_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
         config: type === 'central'
-          ? { id: modelId, model_type: modelId, epochs: 10, batch_size: 32, learning_rate: 0.001 }
-          : { id: modelId, algorithm: modelId, num_rounds: 10, num_partitions: 5 },
+          ? { 
+              id: modelId, 
+              model_type: modelId, 
+              epochs, 
+              batch_size: batchSize, 
+              learning_rate: learningRate,
+              dataset_id: datasetId,
+              preprocessing_pipeline_id: trainingConfig?.preprocessing_pipeline_id,
+            }
+          : { 
+              id: modelId, 
+              algorithm: modelId, 
+              num_rounds: numRounds, 
+              num_partitions: numPartitions,
+              dataset_id: datasetId,
+            },
         status: 'pending',
         progress: 0,
       })),
@@ -638,6 +710,112 @@ export const CreateJobGroupModal: React.FC<CreateJobGroupModalProps> = ({
               placeholder={`My ${type === 'central' ? 'ML/DL' : 'FL'} Experiment`}
               className="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:border-indigo-500"
             />
+          </div>
+
+          {/* Dataset Selection */}
+          <div>
+            <label className="block text-sm font-medium text-slate-300 mb-2">Dataset</label>
+            {datasets.length === 0 ? (
+              <div className="p-4 bg-slate-700/50 border border-slate-600 rounded-lg text-center">
+                <p className="text-slate-400 text-sm">No datasets available</p>
+                <p className="text-xs text-slate-500 mt-1">Create a dataset first from the Datasets tab</p>
+              </div>
+            ) : (
+              <select
+                value={datasetId ?? ''}
+                onChange={e => setDatasetId(e.target.value ? Number(e.target.value) : undefined)}
+                className="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-indigo-500"
+              >
+                <option value="">Select a dataset...</option>
+                {datasets.map(ds => (
+                  <option key={ds.id} value={ds.id}>
+                    {ds.name} {ds.file_count ? `(${ds.file_count} files)` : ''} {ds.labels?.length ? `- ${ds.labels.length} labels` : ''}
+                  </option>
+                ))}
+              </select>
+            )}
+          </div>
+
+          {/* Training Configuration */}
+          <div>
+            <label className="block text-sm font-medium text-slate-300 mb-2">Training Configuration</label>
+            <div className="grid grid-cols-2 gap-4 p-4 bg-slate-700/30 rounded-lg border border-slate-600">
+              {type === 'central' ? (
+                <>
+                  <div>
+                    <label className="block text-xs text-slate-400 mb-1">Epochs</label>
+                    <input
+                      type="number"
+                      value={epochs}
+                      onChange={e => setEpochs(Number(e.target.value))}
+                      min={1}
+                      max={1000}
+                      className="w-full px-3 py-1.5 bg-slate-700 border border-slate-600 rounded text-white text-sm"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-slate-400 mb-1">Batch Size</label>
+                    <input
+                      type="number"
+                      value={batchSize}
+                      onChange={e => setBatchSize(Number(e.target.value))}
+                      min={1}
+                      max={512}
+                      className="w-full px-3 py-1.5 bg-slate-700 border border-slate-600 rounded text-white text-sm"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-slate-400 mb-1">Learning Rate</label>
+                    <input
+                      type="number"
+                      value={learningRate}
+                      onChange={e => setLearningRate(Number(e.target.value))}
+                      step={0.0001}
+                      min={0.00001}
+                      max={1}
+                      className="w-full px-3 py-1.5 bg-slate-700 border border-slate-600 rounded text-white text-sm"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-slate-400 mb-1">Test Split</label>
+                    <input
+                      type="number"
+                      value={testSplit}
+                      onChange={e => setTestSplit(Number(e.target.value))}
+                      step={0.05}
+                      min={0.1}
+                      max={0.5}
+                      className="w-full px-3 py-1.5 bg-slate-700 border border-slate-600 rounded text-white text-sm"
+                    />
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div>
+                    <label className="block text-xs text-slate-400 mb-1">Rounds</label>
+                    <input
+                      type="number"
+                      value={numRounds}
+                      onChange={e => setNumRounds(Number(e.target.value))}
+                      min={1}
+                      max={500}
+                      className="w-full px-3 py-1.5 bg-slate-700 border border-slate-600 rounded text-white text-sm"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-slate-400 mb-1">Partitions (Clients)</label>
+                    <input
+                      type="number"
+                      value={numPartitions}
+                      onChange={e => setNumPartitions(Number(e.target.value))}
+                      min={2}
+                      max={100}
+                      className="w-full px-3 py-1.5 bg-slate-700 border border-slate-600 rounded text-white text-sm"
+                    />
+                  </div>
+                </>
+              )}
+            </div>
           </div>
 
           {/* Execution Mode */}

@@ -197,7 +197,7 @@ const FederatedLearningDashboard: React.FC = () => {
   const loadUserDatasets = async () => {
     setLoadingUserDatasets(true);
     try {
-      const res = await fetch(`${API_BASE_URL}/datasets`);
+      const res = await fetch(`${API_BASE_URL}/datasets/list`);
       if (res.ok) {
         const data = await res.json();
         const datasets = data.datasets || [];
