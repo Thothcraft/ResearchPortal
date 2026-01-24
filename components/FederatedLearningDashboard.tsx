@@ -13,6 +13,7 @@ import {
   ChevronRight, Trash2, Eye, Zap, Shield, Database, Cpu, TrendingUp,
   Activity, Layers, X, ArrowLeft
 } from 'lucide-react';
+import { useAuth } from '@/contexts/AuthContext';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'https://web-production-d7d37.up.railway.app';
 
@@ -172,6 +173,7 @@ interface FLJobGroup {
 }
 
 const FederatedLearningDashboard: React.FC = () => {
+  const { user } = useAuth();
   const [activeTab, setActiveTab] = useState<FLTab>('sessions');
   const [view, setView] = useState<'list' | 'create' | 'monitor'>('list');
   const [sessions, setSessions] = useState<FLSession[]>([]);
@@ -195,9 +197,15 @@ const FederatedLearningDashboard: React.FC = () => {
 
   // Load user datasets from API
   const loadUserDatasets = async () => {
+    if (!user?.token) return;
     setLoadingUserDatasets(true);
     try {
-      const res = await fetch(`${API_BASE_URL}/datasets/list`);
+      const res = await fetch(`${API_BASE_URL}/datasets/list`, {
+        headers: {
+          'Authorization': `Bearer ${user.token}`,
+          'Content-Type': 'application/json',
+        },
+      });
       if (res.ok) {
         const data = await res.json();
         const datasets = data.datasets || [];
@@ -280,8 +288,14 @@ const FederatedLearningDashboard: React.FC = () => {
   useEffect(() => {
     loadSessions();
     loadTrainedModels();
-    loadUserDatasets();
   }, []);
+
+  // Load user datasets when user token is available
+  useEffect(() => {
+    if (user?.token) {
+      loadUserDatasets();
+    }
+  }, [user?.token]);
 
   useEffect(() => {
     if (selectedSession && view === 'monitor') {
@@ -303,11 +317,19 @@ const FederatedLearningDashboard: React.FC = () => {
     setLoading(true);
     try {
       const res = await fetch(`${API_BASE_URL}/fl/sessions`);
+      if (!res.ok) {
+        console.error(`Failed to load sessions: ${res.status} ${res.statusText}`);
+        setError(`Failed to load sessions: ${res.status}`);
+        return;
+      }
       const data = await res.json();
-      setSessions(data.sessions || []);
+      const sessionsList = data.sessions || [];
+      console.log(`[FL] Loaded ${sessionsList.length} sessions`);
+      setSessions(sessionsList);
+      setError(null);
       
       // Extract trained models from completed sessions
-      const completedSessions = (data.sessions || []).filter((s: FLSession) => s.status === 'completed');
+      const completedSessions = sessionsList.filter((s: FLSession) => s.status === 'completed');
       const models: FLTrainedModel[] = completedSessions.map((s: FLSession) => ({
         model_id: `fl_model_${s.session_id}`,
         session_id: s.session_id,
@@ -322,6 +344,7 @@ const FederatedLearningDashboard: React.FC = () => {
       setTrainedModels(models);
     } catch (err) {
       console.error('Failed to load sessions:', err);
+      setError('Failed to connect to server');
     } finally {
       setLoading(false);
     }
@@ -414,16 +437,26 @@ const FederatedLearningDashboard: React.FC = () => {
       }
 
       const data = await res.json();
+      const sessionId = data.data?.session_id;
+      console.log(`[FL] Session created: ${sessionId}`);
       
       // Auto-start the session
-      await fetch(`${API_BASE_URL}/fl/sessions/${data.data.session_id}/start`, {
-        method: 'POST',
-      });
+      if (sessionId) {
+        const startRes = await fetch(`${API_BASE_URL}/fl/sessions/${sessionId}/start`, {
+          method: 'POST',
+        });
+        if (!startRes.ok) {
+          console.error(`[FL] Failed to start session ${sessionId}: ${startRes.status}`);
+        } else {
+          console.log(`[FL] Session ${sessionId} started`);
+        }
+      }
 
       await loadSessions();
       setForm({ ...form, session_name: '' });
       setView('list');
     } catch (err: any) {
+      console.error('[FL] Create session error:', err);
       setError(err.message || 'Failed to create session');
     } finally {
       setCreating(false);
@@ -432,12 +465,21 @@ const FederatedLearningDashboard: React.FC = () => {
 
   const startSession = async (sessionId: string) => {
     try {
-      await fetch(`${API_BASE_URL}/fl/sessions/${sessionId}/start`, {
+      console.log(`[FL] Starting session ${sessionId}`);
+      const res = await fetch(`${API_BASE_URL}/fl/sessions/${sessionId}/start`, {
         method: 'POST',
       });
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        console.error(`[FL] Failed to start session: ${res.status}`, errData);
+        setError(`Failed to start session: ${errData.detail || res.statusText}`);
+        return;
+      }
+      console.log(`[FL] Session ${sessionId} started successfully`);
       await loadSessions();
     } catch (err) {
       console.error('Failed to start session:', err);
+      setError('Failed to start session');
     }
   };
 
