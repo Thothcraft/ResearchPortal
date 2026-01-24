@@ -530,16 +530,21 @@ export default function TrainingPage() {
   useEffect(() => {
     if (!showTrainingConfig) return;
 
-    const loadPipelines = async () => {
+    const loadPipelinesAndMethods = async () => {
       setPipelinesLoading(true);
       try {
-        const res = await get('/enhanced-processing/db-pipelines').catch(() => null);
-        if (res?.pipelines) setPreprocessingPipelines(res.pipelines);
+        const [pipelinesRes, methodsRes] = await Promise.all([
+          get('/processing/db-pipelines').catch(() => null),
+          get('/processing/preprocessing-methods').catch(() => null),
+        ]);
+
+        if (pipelinesRes?.pipelines) setPreprocessingPipelines(pipelinesRes.pipelines);
+        if (methodsRes?.methods) setPreprocessingMethods(methodsRes.methods);
       } catch {}
       finally { setPipelinesLoading(false); }
     };
 
-    loadPipelines();
+    loadPipelinesAndMethods();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showTrainingConfig]);
 

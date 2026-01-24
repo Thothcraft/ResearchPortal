@@ -524,7 +524,7 @@ export default function ProcessingPage() {
 
   const fetchPipelines = async () => {
     try {
-      const res = await get('/enhanced-processing/db-pipelines');
+      const res = await get('/processing/db-pipelines');
       if (res?.pipelines) setPipelines(res.pipelines);
     } catch (err) {
       console.error('Failed to fetch pipelines:', err);
@@ -548,7 +548,7 @@ export default function ProcessingPage() {
       return;
     }
     try {
-      const res = await post('/enhanced-processing/db-pipelines', {
+      const res = await post('/processing/db-pipelines', {
         name: newPipelineName,
         description: newPipelineDesc,
         blocks,
@@ -597,7 +597,7 @@ export default function ProcessingPage() {
   const handleCreatePipeline = async () => {
     if (!newPipelineName.trim()) return;
     try {
-      const res = await post('/enhanced-processing/db-pipelines', {
+      const res = await post('/processing/db-pipelines', {
         name: newPipelineName,
         description: newPipelineDesc,
       });
@@ -1083,7 +1083,7 @@ export default function ProcessingPage() {
   const handleSavePipeline = async () => {
     if (!selectedPipeline) return;
     try {
-      await put(`/enhanced-processing/db-pipelines/${selectedPipeline.id}`, {
+      await put(`/processing/db-pipelines/${selectedPipeline.id}`, {
         blocks,
         connections,
       });
