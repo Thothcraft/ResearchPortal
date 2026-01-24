@@ -435,6 +435,7 @@ export default function TrainingPage() {
       if (opts.files) setLoadingStates(prev => ({ ...prev, files: true }));
       
       setError(null);
+      setLoading(true);
       
       // Only fetch the requested data
       const promises: { type: string; promise: Promise<any> }[] = [];
@@ -468,6 +469,7 @@ export default function TrainingPage() {
       toast.error('Loading Failed', 'Failed to load training data');
     } finally {
       // Clear loading states
+      setLoading(false);
       if (opts.datasets) setLoadingStates(prev => ({ ...prev, datasets: false }));
       if (opts.jobs) setLoadingStates(prev => ({ ...prev, jobs: false }));
       if (opts.models) setLoadingStates(prev => ({ ...prev, models: false }));
