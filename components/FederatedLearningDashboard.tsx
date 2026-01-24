@@ -50,6 +50,7 @@ const ALGORITHMS = [
   { id: 'fedmedian', name: 'FedMedian', description: 'Byzantine-robust median', category: 'robust', color: 'bg-orange-500' },
   { id: 'fedtrimmedavg', name: 'FedTrimmedAvg', description: 'Trimmed mean aggregation', category: 'robust', color: 'bg-amber-500' },
   { id: 'krum', name: 'Krum', description: 'Byzantine-robust selection', category: 'robust', color: 'bg-red-500' },
+  { id: 'multikrum', name: 'Multi-Krum', description: 'Multi-Krum selection', category: 'robust', color: 'bg-red-400' },
   { id: 'bulyan', name: 'Bulyan', description: 'Krum + trimmed mean', category: 'robust', color: 'bg-rose-500' },
   { id: 'qfedavg', name: 'QFedAvg', description: 'Fair federated learning', category: 'fair', color: 'bg-purple-500' },
   { id: 'dpfedavg_adaptive', name: 'DP-FedAvg (Adaptive)', description: 'Differential privacy', category: 'privacy', color: 'bg-pink-500' },
@@ -122,8 +123,11 @@ const ALGORITHM_DEFAULTS: Record<string, Record<string, number>> = {
   qfedavg: { q_param: 0.2 },
   dpfedavg_adaptive: { noise_multiplier: 1.0, clipping_norm: 1.0 },
   dpfedavg_fixed: { noise_multiplier: 1.0, clipping_norm: 1.0 },
-  fedtrimmedavg: { trim_ratio: 0.1 },
-  bulyan: { trim_ratio: 0.1 },
+  fedtrimmedavg: { trim_ratio: 0.1, byzantine_fraction: 0.1 },
+  krum: { byzantine_fraction: 0.1, num_closest: 2 },
+  multikrum: { byzantine_fraction: 0.1, num_closest: 3 },
+  bulyan: { byzantine_fraction: 0.1 },
+  fedmedian: {},
 };
 
 type FLTab = 'sessions' | 'models' | 'compare';
@@ -206,6 +210,9 @@ const FederatedLearningDashboard: React.FC = () => {
     clipping_norm: 1.0,
     trim_ratio: 0.1,
     momentum: 0.9,
+    // Byzantine-robust params
+    byzantine_fraction: 0.1,
+    num_closest: 2,
     // Advanced server params
     min_fit_clients: 2,
     min_evaluate_clients: 2,
@@ -347,11 +354,13 @@ const FederatedLearningDashboard: React.FC = () => {
         algorithm_params: {
           proximal_mu: form.proximal_mu,
           server_learning_rate: form.server_learning_rate,
-          momentum: form.momentum,
+          server_momentum: form.momentum,
           q_param: form.q_param,
           noise_multiplier: form.noise_multiplier,
           clipping_norm: form.clipping_norm,
-          trim_ratio: form.trim_ratio,
+          trimmed_mean_beta: form.trim_ratio,
+          byzantine_fraction: form.byzantine_fraction,
+          krum_num_closest: form.num_closest,
         },
         privacy: {
           differential_privacy: form.differential_privacy,
@@ -937,7 +946,8 @@ const FederatedLearningDashboard: React.FC = () => {
               <input
                 type="number"
                 step="0.05"
-                defaultValue={0.1}
+                value={form.trim_ratio}
+                onChange={(e) => setForm({ ...form, trim_ratio: parseFloat(e.target.value) || 0.1 })}
                 className="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-purple-500"
                 min={0}
                 max={0.45}
@@ -946,8 +956,48 @@ const FederatedLearningDashboard: React.FC = () => {
             </div>
           )}
 
+          {/* Byzantine-robust: Krum/MultiKrum/Bulyan params */}
+          {['krum', 'multikrum', 'bulyan', 'fedtrimmedavg'].includes(form.algorithm) && (
+            <div>
+              <label className="block text-sm font-medium text-slate-300 mb-2">
+                Byzantine Fraction
+                <span className="text-xs text-slate-500 ml-1">f</span>
+              </label>
+              <input
+                type="number"
+                step="0.05"
+                value={form.byzantine_fraction}
+                onChange={(e) => setForm({ ...form, byzantine_fraction: parseFloat(e.target.value) || 0.1 })}
+                className="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-purple-500"
+                min={0}
+                max={0.45}
+              />
+              <p className="text-xs text-slate-500 mt-1">Expected fraction of malicious clients</p>
+            </div>
+          )}
+
+          {/* Krum/MultiKrum: num_closest param */}
+          {['krum', 'multikrum'].includes(form.algorithm) && (
+            <div>
+              <label className="block text-sm font-medium text-slate-300 mb-2">
+                Num Closest (m)
+                <span className="text-xs text-slate-500 ml-1">clients to keep</span>
+              </label>
+              <input
+                type="number"
+                step="1"
+                value={form.num_closest}
+                onChange={(e) => setForm({ ...form, num_closest: parseInt(e.target.value) || 2 })}
+                className="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-purple-500"
+                min={1}
+                max={10}
+              />
+              <p className="text-xs text-slate-500 mt-1">{form.algorithm === 'krum' ? '1 for single Krum' : 'Number of updates to average'}</p>
+            </div>
+          )}
+
           {/* Default message for algorithms without special params */}
-          {!['fedprox', 'fedadam', 'fedyogi', 'fedadagrad', 'fedavgm', 'qfedavg', 'dpfedavg_adaptive', 'dpfedavg_fixed', 'fedtrimmedavg', 'bulyan'].includes(form.algorithm) && (
+          {!['fedprox', 'fedadam', 'fedyogi', 'fedadagrad', 'fedavgm', 'qfedavg', 'dpfedavg_adaptive', 'dpfedavg_fixed', 'fedtrimmedavg', 'bulyan', 'krum', 'multikrum'].includes(form.algorithm) && (
             <div className="col-span-3 text-center py-4 text-slate-500">
               <p>No additional parameters for {ALGORITHMS.find(a => a.id === form.algorithm)?.name || form.algorithm}</p>
             </div>

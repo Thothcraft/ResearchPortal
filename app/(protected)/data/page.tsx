@@ -97,6 +97,13 @@ export default function DataPage() {
   const [previewContent, setPreviewContent] = useState<string | null>(null);
   const [isLoadingPreview, setIsLoadingPreview] = useState(false);
   
+  // Upload state
+  const [showUploadModal, setShowUploadModal] = useState(false);
+  const [uploadFile, setUploadFile] = useState<File | null>(null);
+  const [uploadLabel, setUploadLabel] = useState('');
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  
   const { get, post } = useCachedApi();
   const toast = useToast();
 
@@ -378,6 +385,113 @@ export default function DataPage() {
     }
   };
 
+  // Upload handlers
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    
+    setUploadFile(file);
+    setUploadError(null);
+    
+    // Validate file type
+    const detectedType = detectFileType(file.name);
+    if (detectedType === 'other') {
+      setUploadError(
+        'Unrecognized file type. File must follow naming convention: type_YYYY-MM-DD_name.ext\n' +
+        'Valid types: csi, imu, img/image, vid/video, audio/aud, sensor/mfcw/radar, timelapse/tl'
+      );
+    }
+  };
+
+  const handleUpload = async () => {
+    if (!uploadFile) return;
+    
+    // Validate file type
+    const detectedType = detectFileType(uploadFile.name);
+    if (detectedType === 'other') {
+      setUploadError('Cannot upload: Unrecognized file type. Please rename the file to follow the naming convention.');
+      return;
+    }
+    
+    // Validate naming convention
+    if (!isValidDataFile(uploadFile.name)) {
+      setUploadError(
+        'Invalid file name format. Expected: type_YYYY-MM-DD_name.ext\n' +
+        'Example: csi_2024-01-15_experiment1.csv'
+      );
+      return;
+    }
+    
+    setIsUploading(true);
+    setUploadError(null);
+    
+    try {
+      const token = localStorage.getItem('auth_token');
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'https://web-production-d7d37.up.railway.app';
+      
+      // Read file as base64
+      const arrayBuffer = await uploadFile.arrayBuffer();
+      const base64Content = btoa(
+        new Uint8Array(arrayBuffer).reduce((data, byte) => data + String.fromCharCode(byte), '')
+      );
+      
+      // Build filename with optional label
+      let filename = uploadFile.name;
+      if (uploadLabel.trim()) {
+        // Insert label before extension
+        const lastDot = filename.lastIndexOf('.');
+        if (lastDot > 0) {
+          const name = filename.substring(0, lastDot);
+          const ext = filename.substring(lastDot);
+          filename = `${name}_${uploadLabel.trim()}${ext}`;
+        }
+      }
+      
+      const response = await fetch(`${apiUrl}/file/upload`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          filename: filename,
+          content: base64Content,
+          is_base64: true,
+          content_type: uploadFile.type || 'application/octet-stream',
+        }),
+      });
+      
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.detail || `Upload failed: ${response.status}`);
+      }
+      
+      const result = await response.json();
+      
+      toast.success('Upload Complete', `"${filename}" uploaded successfully`);
+      setShowUploadModal(false);
+      setUploadFile(null);
+      setUploadLabel('');
+      
+      // Refresh file list
+      clearCache('/file');
+      refetchCloudFiles();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Unknown error';
+      setUploadError(message);
+      toast.error('Upload Failed', message);
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
+  const resetUploadModal = () => {
+    setShowUploadModal(false);
+    setUploadFile(null);
+    setUploadLabel('');
+    setUploadError(null);
+  };
+
   const isLoading = devicesLoading || cloudFilesLoading || deviceFilesLoading;
 
   return (
@@ -400,6 +514,13 @@ export default function DataPage() {
             />
             Valid format only
           </label>
+          <button
+            onClick={() => setShowUploadModal(true)}
+            className="flex items-center gap-2 px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg transition-colors"
+          >
+            <Upload className="w-4 h-4" />
+            Upload Data
+          </button>
           <button
             onClick={handleRefresh}
             disabled={isLoading}
@@ -637,6 +758,129 @@ export default function DataPage() {
                   {previewContent || 'No preview available'}
                 </pre>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Upload Modal */}
+      {showUploadModal && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+          <div className="bg-slate-800 rounded-xl w-full max-w-lg overflow-hidden border border-slate-700">
+            <div className="flex items-center justify-between p-4 border-b border-slate-700">
+              <div className="flex items-center gap-3">
+                <Upload className="w-5 h-5 text-green-400" />
+                <h3 className="text-lg font-semibold text-white">Upload Data File</h3>
+              </div>
+              <button
+                onClick={resetUploadModal}
+                className="p-2 hover:bg-slate-700 rounded-lg transition-colors"
+              >
+                <X className="w-5 h-5 text-slate-400" />
+              </button>
+            </div>
+            
+            <div className="p-6 space-y-6">
+              {/* File naming guide */}
+              <div className="bg-slate-900/50 rounded-lg p-4 border border-slate-700">
+                <h4 className="text-sm font-medium text-slate-300 mb-2">File Naming Convention</h4>
+                <p className="text-xs text-slate-400 mb-2">
+                  Files must follow: <code className="bg-slate-800 px-1 rounded">type_YYYY-MM-DD_name.ext</code>
+                </p>
+                <div className="text-xs text-slate-500 space-y-1">
+                  <p><strong className="text-slate-400">Valid prefixes:</strong> csi_, imu_, img_, vid_, audio_, sensor_, timelapse_</p>
+                  <p><strong className="text-slate-400">Example:</strong> csi_2024-01-15_experiment1.csv</p>
+                </div>
+              </div>
+
+              {/* File input */}
+              <div>
+                <label className="block text-sm font-medium text-slate-300 mb-2">
+                  Select File
+                </label>
+                <input
+                  type="file"
+                  onChange={handleFileSelect}
+                  className="w-full px-4 py-3 bg-slate-900 border border-slate-700 rounded-lg text-white file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:bg-indigo-600 file:text-white file:cursor-pointer hover:file:bg-indigo-700"
+                />
+              </div>
+
+              {/* File info display */}
+              {uploadFile && (
+                <div className="bg-slate-900/50 rounded-lg p-4 border border-slate-700">
+                  <div className="flex items-center gap-3">
+                    {(() => {
+                      const type = detectFileType(uploadFile.name);
+                      const Icon = FILE_TYPE_ICONS[type];
+                      const info = getFileTypeDisplayInfo(type);
+                      return (
+                        <>
+                          <div className={`p-2 rounded-lg ${info.bgColor}`}>
+                            <Icon className={`w-5 h-5 ${info.color}`} />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-white font-medium truncate">{uploadFile.name}</p>
+                            <p className="text-sm text-slate-400">
+                              {formatFileSize(uploadFile.size)} • Detected type: <span className={info.color}>{info.label}</span>
+                            </p>
+                          </div>
+                        </>
+                      );
+                    })()}
+                  </div>
+                </div>
+              )}
+
+              {/* Optional label */}
+              <div>
+                <label className="block text-sm font-medium text-slate-300 mb-2">
+                  Additional Label (optional)
+                </label>
+                <input
+                  type="text"
+                  value={uploadLabel}
+                  onChange={(e) => setUploadLabel(e.target.value)}
+                  placeholder="e.g., experiment1, session2"
+                  className="w-full px-4 py-3 bg-slate-900 border border-slate-700 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
+                />
+                <p className="text-xs text-slate-500 mt-1">
+                  Will be appended to filename before extension
+                </p>
+              </div>
+
+              {/* Error display */}
+              {uploadError && (
+                <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-4">
+                  <p className="text-red-400 text-sm whitespace-pre-line">{uploadError}</p>
+                </div>
+              )}
+
+              {/* Actions */}
+              <div className="flex gap-3 pt-2">
+                <button
+                  onClick={resetUploadModal}
+                  className="flex-1 px-4 py-3 bg-slate-700 hover:bg-slate-600 text-white rounded-lg transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleUpload}
+                  disabled={!uploadFile || isUploading || (uploadFile && detectFileType(uploadFile.name) === 'other')}
+                  className="flex-1 flex items-center justify-center gap-2 px-4 py-3 bg-green-600 hover:bg-green-700 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {isUploading ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      Uploading...
+                    </>
+                  ) : (
+                    <>
+                      <Upload className="w-4 h-4" />
+                      Upload
+                    </>
+                  )}
+                </button>
+              </div>
             </div>
           </div>
         </div>
