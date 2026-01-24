@@ -42,7 +42,6 @@ export const useApi = () => {
     const response = await fetch(`https://web-production-d7d37.up.railway.app${url}`, {
       method: 'GET',
       headers: getAuthHeaders(),
-      credentials: 'include',
     });
 
     return handleResponse(response);
@@ -53,7 +52,6 @@ export const useApi = () => {
       method: 'POST',
       headers: getAuthHeaders(),
       body: JSON.stringify(data),
-      credentials: 'include',
     });
 
     return handleResponse(response);
@@ -64,7 +62,6 @@ export const useApi = () => {
       method: 'PUT',
       headers: getAuthHeaders(),
       body: JSON.stringify(data),
-      credentials: 'include',
     });
 
     return handleResponse(response);
@@ -74,7 +71,6 @@ export const useApi = () => {
     const response = await fetch(`https://web-production-d7d37.up.railway.app${url}`, {
       method: 'DELETE',
       headers: getAuthHeaders(),
-      credentials: 'include',
     });
 
     return handleResponse(response);
