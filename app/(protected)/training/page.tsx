@@ -521,9 +521,11 @@ export default function TrainingPage() {
   }, [showCreateDataset]);
 
   useEffect(() => {
-    fetchData({ datasets: true, jobs: false, models: false, files: false });
+    if (user?.token) {
+      fetchData({ datasets: true, jobs: false, models: false, files: false });
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [user?.token]);
 
   useEffect(() => {
     if (!showTrainingConfig) return;
@@ -598,6 +600,7 @@ export default function TrainingPage() {
   ]);
 
   useEffect(() => {
+    if (!user?.token) return;
     if (activeTab === 'jobs') {
       fetchData({ datasets: false, jobs: true, models: false, files: false });
     }
@@ -605,7 +608,7 @@ export default function TrainingPage() {
       fetchData({ datasets: false, jobs: false, models: true, files: false });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTab]);
+  }, [activeTab, user?.token]);
 
   // Check if there are any running jobs that need faster polling
   const hasRunningJobs = trainingJobs.some(j => j.status === 'running' || j.status === 'pending');
