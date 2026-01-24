@@ -146,7 +146,6 @@ export function useCachedApi() {
             const response = await fetchWithRetry(url, {
               method: 'GET',
               headers: getAuthHeaders(),
-              credentials: 'include',
             }, retryOnError ? MAX_RETRIES : 0);
             
             if (response.ok) {
@@ -172,7 +171,6 @@ export function useCachedApi() {
         const response = await fetchWithRetry(url, {
           method: 'GET',
           headers: getAuthHeaders(),
-          credentials: 'include',
         }, retryOnError ? MAX_RETRIES : 0);
 
         if (!response.ok) {
@@ -212,7 +210,6 @@ export function useCachedApi() {
       method: 'POST',
       headers: getAuthHeaders(),
       body: JSON.stringify(data),
-      credentials: 'include',
     });
 
     if (!response.ok) {
@@ -243,7 +240,6 @@ export function useCachedApi() {
     const response = await fetch(url, {
       method: 'DELETE',
       headers: getAuthHeaders(),
-      credentials: 'include',
     });
 
     if (!response.ok) {

@@ -999,8 +999,7 @@ export default function TrainingPage() {
         headers: {
           'Authorization': `Bearer ${user?.token || ''}`,
           'Accept': 'application/octet-stream'
-        },
-        credentials: 'include'
+        }
       });
 
       console.log('Download response status:', response.status);

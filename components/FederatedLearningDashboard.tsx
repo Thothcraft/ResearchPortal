@@ -161,9 +161,7 @@ const FederatedLearningDashboard: React.FC = () => {
   const loadUserDatasets = async () => {
     setLoadingUserDatasets(true);
     try {
-      const res = await fetch(`${API_BASE_URL}/datasets`, {
-        credentials: 'include',
-      });
+      const res = await fetch(`${API_BASE_URL}/datasets`);
       if (res.ok) {
         const data = await res.json();
         const datasets = data.datasets || [];
@@ -265,7 +263,7 @@ const FederatedLearningDashboard: React.FC = () => {
   const loadSessions = async () => {
     setLoading(true);
     try {
-      const res = await fetch(`${API_BASE_URL}/fl/sessions`, { credentials: 'include' });
+      const res = await fetch(`${API_BASE_URL}/fl/sessions`);
       const data = await res.json();
       setSessions(data.sessions || []);
       
@@ -297,7 +295,7 @@ const FederatedLearningDashboard: React.FC = () => {
 
   const loadSessionDetails = async (sessionId: string) => {
     try {
-      const res = await fetch(`${API_BASE_URL}/fl/sessions/${sessionId}`, { credentials: 'include' });
+      const res = await fetch(`${API_BASE_URL}/fl/sessions/${sessionId}`);
       const data = await res.json();
       setSessionDetails(data);
     } catch (err) {
@@ -366,7 +364,6 @@ const FederatedLearningDashboard: React.FC = () => {
       const res = await fetch(`${API_BASE_URL}/fl/sessions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
         body: JSON.stringify(payload),
       });
 
@@ -380,7 +377,6 @@ const FederatedLearningDashboard: React.FC = () => {
       // Auto-start the session
       await fetch(`${API_BASE_URL}/fl/sessions/${data.data.session_id}/start`, {
         method: 'POST',
-        credentials: 'include',
       });
 
       await loadSessions();
@@ -397,7 +393,6 @@ const FederatedLearningDashboard: React.FC = () => {
     try {
       await fetch(`${API_BASE_URL}/fl/sessions/${sessionId}/start`, {
         method: 'POST',
-        credentials: 'include',
       });
       await loadSessions();
     } catch (err) {
@@ -409,7 +404,6 @@ const FederatedLearningDashboard: React.FC = () => {
     try {
       await fetch(`${API_BASE_URL}/fl/sessions/${sessionId}/stop`, {
         method: 'POST',
-        credentials: 'include',
       });
       await loadSessions();
     } catch (err) {
@@ -421,7 +415,6 @@ const FederatedLearningDashboard: React.FC = () => {
     try {
       await fetch(`${API_BASE_URL}/fl/sessions/${sessionId}`, {
         method: 'DELETE',
-        credentials: 'include',
       });
       await loadSessions();
     } catch (err) {
