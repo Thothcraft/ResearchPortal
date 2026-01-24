@@ -47,6 +47,8 @@ import {
   MoreVertical,
   Plus,
   ArrowLeft,
+  Tag,
+  Tags,
 } from 'lucide-react';
 
 // Constants
@@ -131,6 +133,15 @@ export default function DataPage() {
   const [foldersLoading, setFoldersLoading] = useState(false);
   const [showCreateFolderModal, setShowCreateFolderModal] = useState(false);
   const [newFolderName, setNewFolderName] = useState('');
+  const [deletingFolderId, setDeletingFolderId] = useState<number | null>(null);
+  
+  // Label management state
+  const [showLabelModal, setShowLabelModal] = useState(false);
+  const [labelFile, setLabelFile] = useState<DataFile | null>(null);
+  const [fileLabels, setFileLabels] = useState<string[]>([]);
+  const [newLabel, setNewLabel] = useState('');
+  const [isLoadingLabels, setIsLoadingLabels] = useState(false);
+  const [isSavingLabels, setIsSavingLabels] = useState(false);
   
   const { get, post } = useCachedApi();
   const toast = useToast();
@@ -293,6 +304,124 @@ export default function DataPage() {
     fetchFolders();
     clearCache('/file');
     refetchCloudFiles();
+  };
+
+  // Delete folder handler
+  const handleDeleteFolder = async (folder: DataFolder, force: boolean = false) => {
+    if (!force && (folder.file_count > 0 || folder.subfolder_count > 0)) {
+      const confirmMsg = `Folder "${folder.name}" contains ${folder.file_count} files and ${folder.subfolder_count} subfolders. Delete anyway? (Files will be moved to root)`;
+      if (!confirm(confirmMsg)) return;
+      force = true;
+    } else if (!force) {
+      if (!confirm(`Delete folder "${folder.name}"?`)) return;
+    }
+    
+    setDeletingFolderId(folder.id);
+    try {
+      const token = localStorage.getItem('auth_token');
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'https://web-production-d7d37.up.railway.app';
+      
+      const response = await fetch(`${apiUrl}/folders/${folder.id}?force=${force}`, {
+        method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      
+      if (response.ok) {
+        toast.success('Folder Deleted', `"${folder.name}" has been deleted`);
+        fetchFolders();
+      } else {
+        const error = await response.json().catch(() => ({}));
+        toast.error('Delete Failed', error.detail || 'Failed to delete folder');
+      }
+    } catch (error) {
+      toast.error('Error', 'Failed to delete folder');
+    } finally {
+      setDeletingFolderId(null);
+    }
+  };
+
+  // Label management handlers
+  const handleOpenLabelModal = async (file: DataFile) => {
+    if (!file.cloudFileId) {
+      toast.warning('Not Available', 'File must be on cloud to manage labels');
+      return;
+    }
+    
+    setLabelFile(file);
+    setShowLabelModal(true);
+    setIsLoadingLabels(true);
+    setFileLabels([]);
+    setNewLabel('');
+    
+    try {
+      const token = localStorage.getItem('auth_token');
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'https://web-production-d7d37.up.railway.app';
+      
+      const response = await fetch(`${apiUrl}/file/${file.cloudFileId}/metadata`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        setFileLabels(data.labels || []);
+      }
+    } catch (error) {
+      console.error('Error fetching labels:', error);
+    } finally {
+      setIsLoadingLabels(false);
+    }
+  };
+
+  const handleAddLabel = () => {
+    const label = newLabel.trim();
+    if (!label) return;
+    if (fileLabels.includes(label)) {
+      toast.warning('Duplicate', 'This label already exists');
+      return;
+    }
+    setFileLabels([...fileLabels, label]);
+    setNewLabel('');
+  };
+
+  const handleRemoveLabel = (label: string) => {
+    setFileLabels(fileLabels.filter(l => l !== label));
+  };
+
+  const handleSaveLabels = async () => {
+    if (!labelFile?.cloudFileId) return;
+    
+    setIsSavingLabels(true);
+    try {
+      const token = localStorage.getItem('auth_token');
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'https://web-production-d7d37.up.railway.app';
+      
+      const response = await fetch(`${apiUrl}/file/${labelFile.cloudFileId}/metadata`, {
+        method: 'PUT',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          labels: fileLabels,
+          primary_label: fileLabels[0] || '',
+        }),
+      });
+      
+      if (response.ok) {
+        toast.success('Labels Saved', 'File labels updated successfully');
+        setShowLabelModal(false);
+        setLabelFile(null);
+        clearCache('/file');
+        refetchCloudFiles();
+      } else {
+        const error = await response.json().catch(() => ({}));
+        toast.error('Save Failed', error.detail || 'Failed to save labels');
+      }
+    } catch (error) {
+      toast.error('Error', 'Failed to save labels');
+    } finally {
+      setIsSavingLabels(false);
+    }
   };
 
   // Process cloud files
@@ -636,18 +765,34 @@ export default function DataPage() {
         ) : folders.length > 0 ? (
           <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3 mb-4">
             {folders.map(folder => (
-              <button
+              <div
                 key={folder.id}
-                onClick={() => setCurrentFolderId(folder.id)}
-                className="flex items-center gap-3 p-4 bg-slate-800/50 border border-slate-700 rounded-xl cursor-pointer hover:border-indigo-500/50 hover:bg-slate-800 transition-all group"
+                className="relative flex items-center gap-3 p-4 bg-slate-800/50 border border-slate-700 rounded-xl cursor-pointer hover:border-indigo-500/50 hover:bg-slate-800 transition-all group"
               >
-                <FolderOpen className="w-10 h-10 text-yellow-400 group-hover:text-yellow-300" />
-                <div className="text-left min-w-0">
-                  <p className="text-white font-medium text-sm truncate">{folder.name}</p>
-                  <p className="text-slate-500 text-xs">{folder.file_count} files</p>
-                  <p className="text-slate-600 text-xs">{formatFileSize(folder.size_bytes)}</p>
+                <div 
+                  className="flex items-center gap-3 flex-1 min-w-0"
+                  onClick={() => setCurrentFolderId(folder.id)}
+                >
+                  <FolderOpen className="w-10 h-10 text-yellow-400 group-hover:text-yellow-300 flex-shrink-0" />
+                  <div className="text-left min-w-0">
+                    <p className="text-white font-medium text-sm truncate">{folder.name}</p>
+                    <p className="text-slate-500 text-xs">{folder.file_count} files</p>
+                    <p className="text-slate-600 text-xs">{formatFileSize(folder.size_bytes)}</p>
+                  </div>
                 </div>
-              </button>
+                <button
+                  onClick={(e) => { e.stopPropagation(); handleDeleteFolder(folder); }}
+                  disabled={deletingFolderId === folder.id}
+                  className="absolute top-2 right-2 p-1.5 rounded-lg opacity-0 group-hover:opacity-100 hover:bg-red-500/20 text-slate-400 hover:text-red-400 transition-all disabled:opacity-50"
+                  title="Delete folder"
+                >
+                  {deletingFolderId === folder.id ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <Trash2 className="w-4 h-4" />
+                  )}
+                </button>
+              </div>
             ))}
           </div>
         ) : (
@@ -802,6 +947,13 @@ export default function DataPage() {
                           title="Preview"
                         >
                           <Eye className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={() => handleOpenLabelModal(file)}
+                          className="p-2 rounded-lg hover:bg-slate-700 text-slate-400 hover:text-indigo-400 transition-colors"
+                          title="Manage Labels"
+                        >
+                          <Tags className="w-4 h-4" />
                         </button>
                         <button
                           onClick={() => handleDownload(file)}
@@ -1074,6 +1226,144 @@ export default function DataPage() {
               >
                 <FolderPlus className="w-4 h-4" />
                 Create Folder
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Label Management Modal */}
+      {showLabelModal && labelFile && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+          <div className="bg-slate-800 rounded-xl w-full max-w-lg border border-slate-700">
+            <div className="flex items-center justify-between p-4 border-b border-slate-700">
+              <div className="flex items-center gap-3">
+                <Tags className="w-5 h-5 text-indigo-400" />
+                <div className="min-w-0">
+                  <h3 className="text-lg font-semibold text-white">Manage Labels</h3>
+                  <p className="text-sm text-slate-400 truncate">{labelFile.name}</p>
+                </div>
+              </div>
+              <button
+                onClick={() => { setShowLabelModal(false); setLabelFile(null); }}
+                className="p-2 hover:bg-slate-700 rounded-lg transition-colors"
+              >
+                <X className="w-5 h-5 text-slate-400" />
+              </button>
+            </div>
+            
+            <div className="p-6 space-y-4">
+              {isLoadingLabels ? (
+                <div className="flex items-center justify-center py-8">
+                  <Loader2 className="w-6 h-6 text-indigo-400 animate-spin" />
+                </div>
+              ) : (
+                <>
+                  {/* Current Labels */}
+                  <div>
+                    <label className="block text-sm font-medium text-slate-300 mb-2">
+                      Current Labels
+                    </label>
+                    {fileLabels.length > 0 ? (
+                      <div className="flex flex-wrap gap-2">
+                        {fileLabels.map((label, index) => (
+                          <span
+                            key={index}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-indigo-500/20 text-indigo-300 rounded-full text-sm"
+                          >
+                            <Tag className="w-3 h-3" />
+                            {label}
+                            <button
+                              onClick={() => handleRemoveLabel(label)}
+                              className="ml-1 p-0.5 hover:bg-indigo-500/30 rounded-full transition-colors"
+                              title="Remove label"
+                            >
+                              <X className="w-3 h-3" />
+                            </button>
+                          </span>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-slate-500 text-sm">No labels assigned</p>
+                    )}
+                  </div>
+
+                  {/* Add New Label */}
+                  <div>
+                    <label className="block text-sm font-medium text-slate-300 mb-2">
+                      Add New Label
+                    </label>
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={newLabel}
+                        onChange={(e) => setNewLabel(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === 'Enter') handleAddLabel(); }}
+                        placeholder="e.g., walking, sitting, gesture1"
+                        className="flex-1 px-4 py-2.5 bg-slate-900 border border-slate-700 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
+                      />
+                      <button
+                        onClick={handleAddLabel}
+                        disabled={!newLabel.trim()}
+                        className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        <Plus className="w-5 h-5" />
+                      </button>
+                    </div>
+                    <p className="text-xs text-slate-500 mt-2">
+                      Labels help organize files for training datasets. The first label is used as the primary label.
+                    </p>
+                  </div>
+
+                  {/* Quick Add Suggestions */}
+                  <div>
+                    <label className="block text-sm font-medium text-slate-300 mb-2">
+                      Quick Add
+                    </label>
+                    <div className="flex flex-wrap gap-2">
+                      {['walking', 'sitting', 'standing', 'running', 'gesture', 'empty', 'noise'].map(suggestion => (
+                        <button
+                          key={suggestion}
+                          onClick={() => {
+                            if (!fileLabels.includes(suggestion)) {
+                              setFileLabels([...fileLabels, suggestion]);
+                            }
+                          }}
+                          disabled={fileLabels.includes(suggestion)}
+                          className="px-3 py-1 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded-lg text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          + {suggestion}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+
+            <div className="flex gap-3 p-4 border-t border-slate-700">
+              <button
+                onClick={() => { setShowLabelModal(false); setLabelFile(null); }}
+                className="flex-1 px-4 py-3 bg-slate-700 hover:bg-slate-600 text-white rounded-lg transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSaveLabels}
+                disabled={isSavingLabels}
+                className="flex-1 flex items-center justify-center gap-2 px-4 py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg transition-colors disabled:opacity-50"
+              >
+                {isSavingLabels ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    Saving...
+                  </>
+                ) : (
+                  <>
+                    <Tag className="w-4 h-4" />
+                    Save Labels
+                  </>
+                )}
               </button>
             </div>
           </div>

@@ -34,6 +34,12 @@ import {
   ChevronLeft,
   ChevronRight,
   RotateCcw,
+  Info,
+  AlertCircle,
+  FileInput,
+  Image,
+  Video,
+  CheckSquare,
 } from 'lucide-react';
 
 type DataType = 'imu' | 'csi' | 'mfcw' | 'image' | 'video';
@@ -81,8 +87,9 @@ const BLOCK_TYPES = {
     color: 'cyan',
     category: 'loaders',
     dataTypes: ['csi'],
-    description: 'Load raw CSI data from CSV (128 values per row: 64 I/Q pairs)',
-    config: { file_type: 'csv' },
+    description: 'Load raw CSI data from CSV files',
+    info: 'Loads Channel State Information (CSI) data. Each row contains 128 values representing 64 complex I/Q pairs. The data captures WiFi signal characteristics affected by human presence and movement.',
+    config: { file_type: 'csv', num_rows: 1000, num_subcarriers: 64 },
     transformShape: (input: number[], config: any) => [config?.num_rows || 1000, 128],
     isSource: true,
   },
@@ -93,20 +100,61 @@ const BLOCK_TYPES = {
     color: 'cyan',
     category: 'loaders',
     dataTypes: ['imu'],
-    description: 'Load IMU sensor data (6 channels: 3-axis accel + 3-axis gyro)',
-    config: { file_type: 'json', num_rows: 1000 },
+    description: 'Load IMU sensor data (6 channels)',
+    info: 'Loads Inertial Measurement Unit data with 6 channels: 3-axis accelerometer (X, Y, Z) and 3-axis gyroscope (X, Y, Z). Used for motion and activity recognition.',
+    config: { file_type: 'json', num_rows: 1000, channels: ['accel_x', 'accel_y', 'accel_z', 'gyro_x', 'gyro_y', 'gyro_z'] },
     transformShape: (input: number[], config: any) => [config?.num_rows || 1000, 6],
     isSource: true,
   },
   mfcw_loader: {
-    name: 'MFCW Loader',
+    name: 'MFCW Radar Loader',
     icon: Radio,
     color: 'cyan',
     category: 'loaders',
     dataTypes: ['mfcw'],
-    description: 'Load MFCW radar data',
-    config: { file_type: 'bin', num_rows: 1000 },
-    transformShape: (input: number[], config: any) => [config?.num_rows || 1000, 256],
+    description: 'Load MFCW radar range-Doppler data',
+    info: 'Loads Multi-Frequency Continuous Wave radar data. Contains range-Doppler information for detecting motion and vital signs. Each row has 256 range bins.',
+    config: { file_type: 'bin', num_rows: 1000, range_bins: 256 },
+    transformShape: (input: number[], config: any) => [config?.num_rows || 1000, config?.range_bins || 256],
+    isSource: true,
+  },
+  // Image loader for visual data
+  image_loader: {
+    name: 'Image Loader',
+    icon: Image,
+    color: 'cyan',
+    category: 'loaders',
+    dataTypes: ['image'],
+    description: 'Load image data for visual recognition',
+    info: 'Loads image files (PNG, JPG, etc.) for visual recognition tasks. Supports batch loading with configurable resolution.',
+    config: { file_type: 'image', width: 224, height: 224, channels: 3 },
+    transformShape: (input: number[], config: any) => [1, config?.height || 224, config?.width || 224, config?.channels || 3],
+    isSource: true,
+  },
+  // Video loader for temporal visual data
+  video_loader: {
+    name: 'Video Loader',
+    icon: Video,
+    color: 'cyan',
+    category: 'loaders',
+    dataTypes: ['video'],
+    description: 'Load video frames for action recognition',
+    info: 'Loads video files and extracts frames for temporal analysis. Useful for action recognition and gesture detection.',
+    config: { file_type: 'video', num_frames: 30, width: 224, height: 224 },
+    transformShape: (input: number[], config: any) => [1, config?.num_frames || 30, config?.height || 224, config?.width || 224],
+    isSource: true,
+  },
+  // Generic file loader
+  generic_loader: {
+    name: 'Generic Loader',
+    icon: FileInput,
+    color: 'cyan',
+    category: 'loaders',
+    dataTypes: ['imu', 'csi', 'mfcw'],
+    description: 'Load data from CSV/JSON/NPY files',
+    info: 'Flexible loader supporting multiple file formats (CSV, JSON, NPY). Automatically detects data shape from file headers.',
+    config: { file_type: 'csv', num_rows: 1000, num_cols: 64 },
+    transformShape: (input: number[], config: any) => [config?.num_rows || 1000, config?.num_cols || 64],
     isSource: true,
   },
   // CSI-specific extractors
@@ -117,7 +165,8 @@ const BLOCK_TYPES = {
     color: 'green',
     category: 'extractors',
     dataTypes: ['csi'],
-    description: 'Extract amplitude from I/Q pairs: sqrt(I² + Q²) → 64 subcarriers',
+    description: 'Extract amplitude from I/Q pairs → 64 subcarriers',
+    info: 'Computes signal amplitude from complex I/Q pairs using sqrt(I² + Q²). Amplitude represents signal strength and is less sensitive to phase noise. Output: 64 amplitude values per row.',
     config: {},
     transformShape: (input: number[]) => [input[0], Math.floor((input[1] || 128) / 2)],
   },
@@ -128,24 +177,28 @@ const BLOCK_TYPES = {
     color: 'green',
     category: 'extractors',
     dataTypes: ['csi'],
-    description: 'Extract phase from I/Q pairs: atan2(I, Q) → 64 subcarriers',
+    description: 'Extract phase from I/Q pairs → 64 subcarriers',
+    info: 'Computes signal phase from complex I/Q pairs using atan2(I, Q). Phase is sensitive to small movements but can be noisy. Enable unwrap to remove 2π discontinuities.',
     config: { unwrap: true },
     transformShape: (input: number[]) => [input[0], Math.floor((input[1] || 128) / 2)],
   },
-  // Subcarrier filter: removes null guard subcarriers (first 4-6 and last 4-6)
-  // For 802.11n: keeps subcarriers 5-32 and 33-60 → 54 total
-  subcarrier_filter: {
-    name: 'Subcarrier Filter',
-    icon: Filter,
+  // Feature Selection: allows selecting/deselecting individual features (subcarriers for CSI)
+  feature_selection: {
+    name: 'Feature Selection',
+    icon: CheckSquare,
     color: 'purple',
     category: 'filters',
-    dataTypes: ['csi'],
-    description: 'Remove null guard subcarriers (keeps 54 of 64)',
-    config: { start1: 5, end1: 32, start2: 33, end2: 60 },
+    dataTypes: ['csi', 'imu', 'mfcw'],
+    description: 'Select which features/subcarriers to include',
+    info: 'Allows fine-grained control over which features to include in the pipeline. For CSI data, each feature represents a subcarrier. Uncheck features that are noisy or irrelevant (e.g., null guard subcarriers 0-4 and 59-63 for WiFi).',
+    config: { 
+      num_features: 64,
+      selected_features: Array.from({ length: 64 }, (_, i) => i >= 5 && i < 32 || i >= 33 && i < 60), // Default: exclude null guards
+      feature_labels: Array.from({ length: 64 }, (_, i) => `SC${i}`), // Subcarrier labels
+    },
     transformShape: (input: number[], config: any) => {
-      const range1 = (config?.end1 || 32) - (config?.start1 || 5);
-      const range2 = (config?.end2 || 60) - (config?.start2 || 33);
-      return [input[0], range1 + range2];
+      const selectedCount = config?.selected_features?.filter((v: boolean) => v).length || 54;
+      return [input[0], selectedCount];
     },
   },
   // General preprocessing
@@ -156,6 +209,7 @@ const BLOCK_TYPES = {
     category: 'transforms',
     dataTypes: ['imu', 'csi', 'mfcw'],
     description: 'Normalize data to [0, 1] or [-1, 1]',
+    info: 'Scales data to a fixed range. MinMax scales to [0,1] or [-1,1]. Essential for neural networks and distance-based algorithms.',
     config: { method: 'minmax', range: [0, 1] },
     transformShape: (input: number[]) => input,
   },
@@ -166,7 +220,8 @@ const BLOCK_TYPES = {
     category: 'filters',
     dataTypes: ['imu', 'csi'],
     description: 'Remove high-frequency noise',
-    config: { cutoff_freq: 20, order: 4 },
+    info: 'Butterworth low-pass filter removes high-frequency noise while preserving slow-changing signals. Adjust cutoff frequency based on your signal characteristics.',
+    config: { cutoff_freq: 20, order: 4, sampling_rate: 100 },
     transformShape: (input: number[]) => input,
   },
   highpass_filter: {
@@ -176,7 +231,19 @@ const BLOCK_TYPES = {
     category: 'filters',
     dataTypes: ['imu', 'csi'],
     description: 'Remove low-frequency drift',
-    config: { cutoff_freq: 0.5, order: 4 },
+    info: 'Removes DC offset and slow baseline drift. Useful for isolating dynamic movements from static background.',
+    config: { cutoff_freq: 0.5, order: 4, sampling_rate: 100 },
+    transformShape: (input: number[]) => input,
+  },
+  bandpass_filter: {
+    name: 'Band-Pass Filter',
+    icon: Filter,
+    color: 'indigo',
+    category: 'filters',
+    dataTypes: ['imu', 'csi', 'mfcw'],
+    description: 'Keep frequencies in a specific range',
+    info: 'Combines low-pass and high-pass filtering to isolate a frequency band of interest. Useful for breathing (0.1-0.5 Hz) or heartbeat (0.8-2 Hz) detection.',
+    config: { low_cutoff: 0.1, high_cutoff: 2.0, order: 4, sampling_rate: 100 },
     transformShape: (input: number[]) => input,
   },
   moving_average: {
@@ -186,7 +253,30 @@ const BLOCK_TYPES = {
     category: 'filters',
     dataTypes: ['imu', 'csi', 'mfcw'],
     description: 'Smooth data with moving average',
+    info: 'Simple smoothing filter that averages values over a sliding window. Larger windows = smoother but more lag.',
     config: { window_size: 5 },
+    transformShape: (input: number[]) => input,
+  },
+  wavelet_denoise: {
+    name: 'Wavelet Denoise',
+    icon: Zap,
+    color: 'violet',
+    category: 'filters',
+    dataTypes: ['imu', 'csi', 'mfcw'],
+    description: 'Denoise using wavelet transform',
+    info: 'Uses discrete wavelet transform for adaptive denoising. Preserves sharp transitions better than simple filters. Common wavelets: db4, sym4, coif1.',
+    config: { wavelet: 'db4', level: 3, threshold_mode: 'soft' },
+    transformShape: (input: number[]) => input,
+  },
+  outlier_removal: {
+    name: 'Outlier Removal',
+    icon: AlertCircle,
+    color: 'red',
+    category: 'filters',
+    dataTypes: ['imu', 'csi', 'mfcw'],
+    description: 'Remove statistical outliers',
+    info: 'Removes data points that deviate significantly from the mean. Z-score method flags points > N standard deviations away.',
+    config: { method: 'zscore', threshold: 3.0 },
     transformShape: (input: number[]) => input,
   },
   // Windowing: splits data into fixed-size windows
@@ -198,6 +288,7 @@ const BLOCK_TYPES = {
     category: 'transforms',
     dataTypes: ['imu', 'csi', 'mfcw'],
     description: 'Split into fixed-size windows (creates 3D output)',
+    info: 'Segments continuous data into overlapping windows for temporal analysis. Overlap of 0.5 means 50% of each window overlaps with the next. Essential for activity recognition.',
     config: { window_size: 100, overlap: 0.5 },
     transformShape: (input: number[], config: any) => {
       const windowSize = config?.window_size || 100;
@@ -216,6 +307,7 @@ const BLOCK_TYPES = {
     category: 'transforms',
     dataTypes: ['imu', 'csi', 'mfcw'],
     description: 'Flatten each window to 1D feature vector',
+    info: 'Converts multi-dimensional data to a flat 1D vector per sample. Required before feeding into fully-connected neural networks or traditional ML classifiers.',
     config: {},
     transformShape: (input: number[]) => {
       if (input.length === 3) return [input[0], input[1] * input[2]];
@@ -229,7 +321,8 @@ const BLOCK_TYPES = {
     color: 'red',
     category: 'transforms',
     dataTypes: ['imu', 'csi', 'mfcw'],
-    description: 'Convert to frequency domain (per column)',
+    description: 'Convert to frequency domain',
+    info: 'Fast Fourier Transform converts time-domain signals to frequency domain. Reveals periodic patterns and dominant frequencies in the data.',
     config: { n_fft: 256 },
     transformShape: (input: number[], config: any) => {
       const nfft = config?.n_fft || input[1] || 128;
@@ -238,18 +331,31 @@ const BLOCK_TYPES = {
   },
   // Feature extraction: computes statistical features per column
   feature_extraction: {
-    name: 'Feature Extraction',
+    name: 'Statistical Features',
     icon: BarChart3,
     color: 'indigo',
     category: 'extractors',
     dataTypes: ['imu', 'csi', 'mfcw'],
-    description: 'Extract statistical features (mean, std, min, max, rms)',
+    description: 'Extract statistical features per channel',
+    info: 'Computes statistical features (mean, std, min, max, RMS, skewness, kurtosis) for each channel. Creates a compact representation for traditional ML classifiers.',
     config: { features: ['mean', 'std', 'min', 'max', 'rms'] },
     transformShape: (input: number[], config: any) => {
       const numFeatures = config?.features?.length || 5;
       const numCols = input[1] || 1;
       return [input[0], numFeatures * numCols];
     },
+  },
+  // PCA dimensionality reduction
+  pca_reduction: {
+    name: 'PCA Reduction',
+    icon: TrendingUp,
+    color: 'emerald',
+    category: 'transforms',
+    dataTypes: ['imu', 'csi', 'mfcw'],
+    description: 'Reduce dimensions with PCA',
+    info: 'Principal Component Analysis reduces dimensionality while preserving variance. Useful for visualization and reducing overfitting.',
+    config: { n_components: 10, explained_variance: 0.95 },
+    transformShape: (input: number[], config: any) => [input[0], config?.n_components || 10],
   },
   // Combiners (multi-input)
   feature_concat: {
@@ -259,6 +365,7 @@ const BLOCK_TYPES = {
     category: 'combiners',
     dataTypes: ['imu', 'csi', 'mfcw'],
     description: 'Concatenate multiple feature streams',
+    info: 'Combines features from multiple processing branches (e.g., amplitude + phase). Connect multiple outputs to this block.',
     config: { axis: -1 },
     transformShape: (input: number[]) => input,
     acceptsMultipleInputs: true,
@@ -269,8 +376,9 @@ const BLOCK_TYPES = {
     color: 'pink',
     category: 'transforms',
     dataTypes: ['imu', 'csi', 'mfcw'],
-    description: 'Add noise, scale, rotate',
-    config: { noise_level: 0.01, scale_range: [0.9, 1.1] },
+    description: 'Add noise, scale, time-shift',
+    info: 'Artificially expands training data by applying random transformations. Helps prevent overfitting and improves model generalization.',
+    config: { noise_level: 0.01, scale_range: [0.9, 1.1], time_shift: 5 },
     transformShape: (input: number[]) => input,
   },
   downsample: {
@@ -280,17 +388,19 @@ const BLOCK_TYPES = {
     category: 'transforms',
     dataTypes: ['imu', 'csi', 'mfcw'],
     description: 'Reduce sampling rate',
+    info: 'Reduces data size by keeping every Nth sample. Apply low-pass filter first to avoid aliasing.',
     config: { factor: 2 },
-    transformShape: (input: number[]) => [input[0], Math.floor((input[1] || 128) / 2), input[2] || 1],
+    transformShape: (input: number[], config: any) => [Math.floor(input[0] / (config?.factor || 2)), input[1] || 64],
   },
   standardize: {
-    name: 'Standardize',
+    name: 'Standardize (Z-Score)',
     icon: TrendingUp,
     color: 'teal',
     category: 'transforms',
     dataTypes: ['imu', 'csi', 'mfcw'],
     description: 'Zero mean, unit variance',
-    config: { method: 'zscore' },
+    info: 'Transforms data to have zero mean and unit standard deviation. Preferred over normalization for Gaussian-distributed data.',
+    config: { per_channel: true },
     transformShape: (input: number[]) => input,
   },
 };
@@ -308,30 +418,32 @@ const DEFAULT_TEMPLATE_PIPELINES: Pipeline[] = [
       blocks: [
         { id: 'csi_loader_1', type: 'csi_loader', name: 'CSI Loader', dataType: 'csi', inputShape: [], outputShape: [1000, 128], config: {}, position: { x: 50, y: 100 } },
         { id: 'amp_ext_1', type: 'amplitude_extractor', name: 'Amplitude Extractor', dataType: 'csi', inputShape: [1000, 128], outputShape: [1000, 64], config: {}, position: { x: 320, y: 100 } },
-        { id: 'sub_filter_1', type: 'subcarrier_filter', name: 'Subcarrier Filter', dataType: 'csi', inputShape: [1000, 64], outputShape: [1000, 27], config: { start: 5, end: 32 }, position: { x: 590, y: 100 } },
+        { id: 'feature_sel_1', type: 'feature_selection', name: 'Feature Selection', dataType: 'csi', inputShape: [1000, 64], outputShape: [1000, 54], config: { num_features: 64, selected_features: Array.from({ length: 64 }, (_, i) => i >= 5 && i < 32 || i >= 33 && i < 60) }, position: { x: 590, y: 100 } },
       ],
       connections: [
         { from: 'csi_loader_1', to: 'amp_ext_1' },
-        { from: 'amp_ext_1', to: 'sub_filter_1' },
+        { from: 'amp_ext_1', to: 'feature_sel_1' },
       ]
     }
   },
   {
     id: -2,
     name: 'IMU Activity Recognition',
-    description: 'IMU preprocessing for activity recognition: windowing, feature extraction',
+    description: 'IMU preprocessing for activity recognition: smoothing, outlier removal, windowing',
     data_type: 'imu',
     output_shape: 'features',
     created_at: new Date().toISOString(),
     config: {
       blocks: [
-        { id: 'imu_loader_1', type: 'imu_loader', name: 'IMU Loader', dataType: 'imu', inputShape: [], outputShape: [1000, 6], config: {}, position: { x: 50, y: 100 } },
+        { id: 'imu_loader_1', type: 'imu_loader', name: 'IMU Loader', dataType: 'imu', inputShape: [], outputShape: [1000, 6], config: { file_type: 'json', num_rows: 1000 }, position: { x: 50, y: 100 } },
         { id: 'moving_avg_1', type: 'moving_average', name: 'Moving Average', dataType: 'imu', inputShape: [1000, 6], outputShape: [1000, 6], config: { window_size: 5 }, position: { x: 320, y: 100 } },
-        { id: 'stat_filter_1', type: 'statistical_filter', name: 'Outlier Removal', dataType: 'imu', inputShape: [1000, 6], outputShape: [1000, 6], config: { method: 'zscore', threshold: 3 }, position: { x: 590, y: 100 } },
+        { id: 'outlier_1', type: 'outlier_removal', name: 'Outlier Removal', dataType: 'imu', inputShape: [1000, 6], outputShape: [1000, 6], config: { method: 'zscore', threshold: 3.0 }, position: { x: 590, y: 100 } },
+        { id: 'window_1', type: 'window_segmentation', name: 'Windowing', dataType: 'imu', inputShape: [1000, 6], outputShape: [19, 100, 6], config: { window_size: 100, overlap: 0.5 }, position: { x: 860, y: 100 } },
       ],
       connections: [
         { from: 'imu_loader_1', to: 'moving_avg_1' },
-        { from: 'moving_avg_1', to: 'stat_filter_1' },
+        { from: 'moving_avg_1', to: 'outlier_1' },
+        { from: 'outlier_1', to: 'window_1' },
       ]
     }
   },
@@ -344,14 +456,16 @@ const DEFAULT_TEMPLATE_PIPELINES: Pipeline[] = [
     created_at: new Date().toISOString(),
     config: {
       blocks: [
-        { id: 'csi_loader_2', type: 'csi_loader', name: 'CSI Loader', dataType: 'csi', inputShape: [], outputShape: [1000, 128], config: {}, position: { x: 50, y: 100 } },
+        { id: 'csi_loader_2', type: 'csi_loader', name: 'CSI Loader', dataType: 'csi', inputShape: [], outputShape: [1000, 128], config: { file_type: 'csv', num_rows: 1000 }, position: { x: 50, y: 100 } },
         { id: 'amp_ext_2', type: 'amplitude_extractor', name: 'Amplitude Extractor', dataType: 'csi', inputShape: [1000, 128], outputShape: [1000, 64], config: {}, position: { x: 320, y: 100 } },
-        { id: 'wavelet_1', type: 'wavelet_denoise', name: 'Wavelet Denoise', dataType: 'csi', inputShape: [1000, 64], outputShape: [1000, 64], config: { wavelet: 'db4', level: 3 }, position: { x: 590, y: 100 } },
-        { id: 'pca_1', type: 'pca_reduction', name: 'PCA Reduction', dataType: 'csi', inputShape: [1000, 64], outputShape: [1000, 10], config: { n_components: 10 }, position: { x: 860, y: 100 } },
+        { id: 'feature_sel_2', type: 'feature_selection', name: 'Feature Selection', dataType: 'csi', inputShape: [1000, 64], outputShape: [1000, 54], config: { num_features: 64, selected_features: Array.from({ length: 64 }, (_, i) => i >= 5 && i < 32 || i >= 33 && i < 60) }, position: { x: 590, y: 100 } },
+        { id: 'wavelet_1', type: 'wavelet_denoise', name: 'Wavelet Denoise', dataType: 'csi', inputShape: [1000, 54], outputShape: [1000, 54], config: { wavelet: 'db4', level: 3, threshold_mode: 'soft' }, position: { x: 860, y: 100 } },
+        { id: 'pca_1', type: 'pca_reduction', name: 'PCA Reduction', dataType: 'csi', inputShape: [1000, 54], outputShape: [1000, 10], config: { n_components: 10, explained_variance: 0.95 }, position: { x: 1130, y: 100 } },
       ],
       connections: [
         { from: 'csi_loader_2', to: 'amp_ext_2' },
-        { from: 'amp_ext_2', to: 'wavelet_1' },
+        { from: 'amp_ext_2', to: 'feature_sel_2' },
+        { from: 'feature_sel_2', to: 'wavelet_1' },
         { from: 'wavelet_1', to: 'pca_1' },
       ]
     }
@@ -996,6 +1110,9 @@ export default function ProcessingPage() {
       pink: 'bg-pink-500/20 border-pink-500 text-pink-400',
       orange: 'bg-orange-500/20 border-orange-500 text-orange-400',
       teal: 'bg-teal-500/20 border-teal-500 text-teal-400',
+      cyan: 'bg-cyan-500/20 border-cyan-500 text-cyan-400',
+      emerald: 'bg-emerald-500/20 border-emerald-500 text-emerald-400',
+      violet: 'bg-violet-500/20 border-violet-500 text-violet-400',
     };
     return colorMap[blockDef?.color || 'blue'] || colorMap.blue;
   };
@@ -1567,7 +1684,22 @@ export default function ProcessingPage() {
                             
                             <div className="flex items-center gap-2 mb-2 mt-4">
                               <Icon className="w-5 h-5" />
-                              <span className="font-medium text-white text-sm">{block.name}</span>
+                              <span className="font-medium text-white text-sm flex-1">{block.name}</span>
+                              {/* Info icon with tooltip */}
+                              {(blockDef as any)?.info && (
+                                <div className="relative group">
+                                  <button
+                                    onClick={(e) => e.stopPropagation()}
+                                    className="p-1 hover:bg-slate-600/50 rounded-full transition-colors"
+                                    title={(blockDef as any).info}
+                                  >
+                                    <Info className="w-3.5 h-3.5 text-slate-400 hover:text-white" />
+                                  </button>
+                                  <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-48 p-2 bg-slate-800 border border-slate-600 rounded-lg text-xs text-slate-300 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50 shadow-xl">
+                                    {(blockDef as any).info}
+                                  </div>
+                                </div>
+                              )}
                             </div>
                             
                             {/* Data shape info */}
@@ -1721,12 +1853,27 @@ export default function ProcessingPage() {
                       >
                         <div className="flex items-center gap-2 mb-2">
                           <Icon className="w-5 h-5" />
-                          <span className="font-medium">{block.name}</span>
+                          <span className="font-medium flex-1">{block.name}</span>
                           {isSource && (
-                            <span className="ml-auto text-[10px] px-1.5 py-0.5 bg-cyan-500/20 text-cyan-400 rounded">SOURCE</span>
+                            <span className="text-[10px] px-1.5 py-0.5 bg-cyan-500/20 text-cyan-400 rounded">SOURCE</span>
+                          )}
+                          {/* Info icon */}
+                          {(block as any).info && (
+                            <div className="relative group">
+                              <Info className="w-4 h-4 text-slate-400" />
+                              <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-56 p-2 bg-slate-800 border border-slate-600 rounded-lg text-xs text-slate-300 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50 shadow-xl">
+                                {(block as any).info}
+                              </div>
+                            </div>
                           )}
                         </div>
                         <p className="text-xs opacity-80 line-clamp-2">{block.description}</p>
+                        {/* Show info tooltip on hover */}
+                        {(block as any).info && (
+                          <p className="text-[10px] text-slate-500 mt-1 line-clamp-1 italic">
+                            ℹ️ Hover info icon for details
+                          </p>
+                        )}
                       </button>
                     );
                   })}
@@ -1791,35 +1938,233 @@ export default function ProcessingPage() {
         </div>
       )}
 
-      {/* Block Configuration Modal */}
+      {/* Block Configuration Modal - Enhanced with Feature Selection support */}
       {showBlockConfig && selectedBlock && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
-          <div className="bg-slate-900 rounded-xl p-6 w-full max-w-md border border-slate-700">
-            <h3 className="text-xl font-semibold text-white mb-4">Configure {selectedBlock.name}</h3>
-            <div className="space-y-4">
-              {selectedBlock?.config && Object.entries(selectedBlock.config).map(([key, value]) => (
-                <div key={key}>
-                  <label className="block text-sm text-slate-300 mb-1 capitalize">{key.replace(/_/g, ' ')}</label>
-                  <input
-                    type={typeof value === 'number' ? 'number' : 'text'}
-                    value={Array.isArray(value) ? JSON.stringify(value) : value}
-                    onChange={(e) => {
-                      const newConfig = { ...selectedBlock.config };
-                      newConfig[key] = typeof value === 'number' ? parseFloat(e.target.value) : e.target.value;
-                      setSelectedBlock({ ...selectedBlock, config: newConfig });
-                      setBlocks(blocks.map(b => b.id === selectedBlock.id ? { ...selectedBlock, config: newConfig } : b));
-                    }}
-                    className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white"
-                  />
-                </div>
-              ))}
-            </div>
-            <div className="flex gap-3 mt-6">
+          <div className={`bg-slate-900 rounded-xl p-6 w-full border border-slate-700 ${
+            selectedBlock.type === 'feature_selection' ? 'max-w-3xl max-h-[85vh] overflow-hidden flex flex-col' : 'max-w-md'
+          }`}>
+            {/* Header with info */}
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h3 className="text-xl font-semibold text-white">Configure {selectedBlock.name}</h3>
+                {BLOCK_TYPES[selectedBlock.type as keyof typeof BLOCK_TYPES] && (
+                  <p className="text-sm text-slate-400 mt-1">
+                    {(BLOCK_TYPES[selectedBlock.type as keyof typeof BLOCK_TYPES] as any).description}
+                  </p>
+                )}
+              </div>
               <button
                 onClick={() => setShowBlockConfig(false)}
-                className="flex-1 px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg font-medium"
+                className="p-2 hover:bg-slate-700 rounded-lg transition-colors"
               >
-                Close
+                <X className="w-5 h-5 text-slate-400" />
+              </button>
+            </div>
+
+            {/* Info banner */}
+            {BLOCK_TYPES[selectedBlock.type as keyof typeof BLOCK_TYPES] && (BLOCK_TYPES[selectedBlock.type as keyof typeof BLOCK_TYPES] as any).info && (
+              <div className="mb-4 p-3 bg-indigo-500/10 border border-indigo-500/30 rounded-lg flex items-start gap-2">
+                <Info className="w-4 h-4 text-indigo-400 mt-0.5 flex-shrink-0" />
+                <p className="text-xs text-indigo-300">
+                  {(BLOCK_TYPES[selectedBlock.type as keyof typeof BLOCK_TYPES] as any).info}
+                </p>
+              </div>
+            )}
+
+            {/* Feature Selection - Special UI with checkboxes */}
+            {selectedBlock.type === 'feature_selection' ? (
+              <div className="flex-1 overflow-hidden flex flex-col">
+                {/* Quick actions */}
+                <div className="flex items-center gap-2 mb-4">
+                  <button
+                    onClick={() => {
+                      const newConfig = { 
+                        ...selectedBlock.config, 
+                        selected_features: Array(selectedBlock.config.num_features || 64).fill(true) 
+                      };
+                      setSelectedBlock({ ...selectedBlock, config: newConfig });
+                      handleUpdateBlockConfig(selectedBlock.id, newConfig);
+                    }}
+                    className="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm"
+                  >
+                    Select All
+                  </button>
+                  <button
+                    onClick={() => {
+                      const newConfig = { 
+                        ...selectedBlock.config, 
+                        selected_features: Array(selectedBlock.config.num_features || 64).fill(false) 
+                      };
+                      setSelectedBlock({ ...selectedBlock, config: newConfig });
+                      handleUpdateBlockConfig(selectedBlock.id, newConfig);
+                    }}
+                    className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm"
+                  >
+                    Deselect All
+                  </button>
+                  <button
+                    onClick={() => {
+                      // Default CSI null guard exclusion pattern
+                      const newSelected = Array.from({ length: selectedBlock.config.num_features || 64 }, (_, i) => 
+                        (i >= 5 && i < 32) || (i >= 33 && i < 60)
+                      );
+                      const newConfig = { ...selectedBlock.config, selected_features: newSelected };
+                      setSelectedBlock({ ...selectedBlock, config: newConfig });
+                      handleUpdateBlockConfig(selectedBlock.id, newConfig);
+                    }}
+                    className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm"
+                  >
+                    CSI Default (exclude null guards)
+                  </button>
+                  <span className="ml-auto text-sm text-slate-400">
+                    {selectedBlock.config.selected_features?.filter((v: boolean) => v).length || 0} / {selectedBlock.config.num_features || 64} selected
+                  </span>
+                </div>
+
+                {/* Feature checkboxes grid */}
+                <div className="flex-1 overflow-y-auto bg-slate-800/50 rounded-lg p-4 border border-slate-700">
+                  <div className="grid grid-cols-8 gap-2">
+                    {Array.from({ length: selectedBlock.config.num_features || 64 }, (_, i) => {
+                      const isSelected = selectedBlock.config.selected_features?.[i] ?? true;
+                      const label = selectedBlock.config.feature_labels?.[i] || `F${i}`;
+                      // Highlight null guard subcarriers for CSI
+                      const isNullGuard = selectedBlock.dataType === 'csi' && (i < 5 || i === 32 || i >= 60);
+                      
+                      return (
+                        <button
+                          key={i}
+                          onClick={() => {
+                            const newSelected = [...(selectedBlock.config.selected_features || [])];
+                            newSelected[i] = !isSelected;
+                            const newConfig = { ...selectedBlock.config, selected_features: newSelected };
+                            setSelectedBlock({ ...selectedBlock, config: newConfig });
+                            handleUpdateBlockConfig(selectedBlock.id, newConfig);
+                          }}
+                          className={`p-2 rounded-lg border-2 text-xs font-mono transition-all ${
+                            isSelected
+                              ? 'bg-green-500/20 border-green-500 text-green-400'
+                              : isNullGuard
+                                ? 'bg-red-500/10 border-red-500/30 text-red-400/50'
+                                : 'bg-slate-700/50 border-slate-600 text-slate-500'
+                          } hover:scale-105`}
+                          title={isNullGuard ? `${label} (Null Guard - typically excluded)` : label}
+                        >
+                          <div className="flex items-center justify-center gap-1">
+                            {isSelected ? (
+                              <CheckSquare className="w-3 h-3" />
+                            ) : (
+                              <div className="w-3 h-3 border border-current rounded-sm" />
+                            )}
+                            <span>{i}</span>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Legend */}
+                <div className="mt-4 flex items-center gap-4 text-xs text-slate-400">
+                  <div className="flex items-center gap-1">
+                    <div className="w-3 h-3 bg-green-500/20 border border-green-500 rounded" />
+                    <span>Selected</span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <div className="w-3 h-3 bg-slate-700/50 border border-slate-600 rounded" />
+                    <span>Excluded</span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <div className="w-3 h-3 bg-red-500/10 border border-red-500/30 rounded" />
+                    <span>Null Guard (CSI)</span>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              /* Standard config UI for other blocks */
+              <div className="space-y-4">
+                {selectedBlock?.config && Object.entries(selectedBlock.config)
+                  .filter(([key]) => !key.startsWith('_')) // Hide internal config
+                  .map(([key, value]) => (
+                  <div key={key}>
+                    <label className="block text-sm text-slate-300 mb-1 capitalize">{key.replace(/_/g, ' ')}</label>
+                    {typeof value === 'boolean' ? (
+                      <button
+                        onClick={() => {
+                          const newConfig = { ...selectedBlock.config, [key]: !value };
+                          setSelectedBlock({ ...selectedBlock, config: newConfig });
+                          handleUpdateBlockConfig(selectedBlock.id, newConfig);
+                        }}
+                        className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                          value 
+                            ? 'bg-green-600 hover:bg-green-700 text-white' 
+                            : 'bg-slate-700 hover:bg-slate-600 text-slate-300'
+                        }`}
+                      >
+                        {value ? 'Enabled' : 'Disabled'}
+                      </button>
+                    ) : Array.isArray(value) && typeof value[0] === 'string' ? (
+                      <div className="flex flex-wrap gap-2">
+                        {['mean', 'std', 'min', 'max', 'rms', 'skewness', 'kurtosis', 'median'].map(feat => (
+                          <button
+                            key={feat}
+                            onClick={() => {
+                              const newValue = value.includes(feat) 
+                                ? value.filter((v: string) => v !== feat)
+                                : [...value, feat];
+                              const newConfig = { ...selectedBlock.config, [key]: newValue };
+                              setSelectedBlock({ ...selectedBlock, config: newConfig });
+                              handleUpdateBlockConfig(selectedBlock.id, newConfig);
+                            }}
+                            className={`px-2 py-1 rounded text-xs font-medium transition-colors ${
+                              value.includes(feat)
+                                ? 'bg-indigo-600 text-white'
+                                : 'bg-slate-700 text-slate-400 hover:bg-slate-600'
+                            }`}
+                          >
+                            {feat}
+                          </button>
+                        ))}
+                      </div>
+                    ) : (
+                      <input
+                        type={typeof value === 'number' ? 'number' : 'text'}
+                        value={Array.isArray(value) ? JSON.stringify(value) : value}
+                        onChange={(e) => {
+                          const newConfig = { ...selectedBlock.config };
+                          if (typeof value === 'number') {
+                            newConfig[key] = parseFloat(e.target.value) || 0;
+                          } else if (Array.isArray(value)) {
+                            try {
+                              newConfig[key] = JSON.parse(e.target.value);
+                            } catch {
+                              newConfig[key] = e.target.value;
+                            }
+                          } else {
+                            newConfig[key] = e.target.value;
+                          }
+                          setSelectedBlock({ ...selectedBlock, config: newConfig });
+                          handleUpdateBlockConfig(selectedBlock.id, newConfig);
+                        }}
+                        className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white"
+                        step={typeof value === 'number' && value < 1 ? 0.1 : 1}
+                      />
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="flex gap-3 mt-6">
+              <button
+                onClick={() => {
+                  // Apply changes and recalculate shapes
+                  setBlocks(prev => recalculateShapesFromConnections(prev, connections));
+                  setShowBlockConfig(false);
+                }}
+                className="flex-1 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-medium"
+              >
+                Apply & Close
               </button>
             </div>
           </div>
