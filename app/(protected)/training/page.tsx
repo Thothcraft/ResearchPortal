@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import jsPDF from 'jspdf';
+import dynamic from 'next/dynamic';
 import { useApi } from '@/hooks/useApi';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/contexts/ToastContext';
@@ -12,9 +12,9 @@ import {
   Download, Rocket, Loader2, X, XCircle, Edit2, TrendingUp, Layers, GitCompare,
   ListOrdered, Shuffle,
 } from 'lucide-react';
-import FigureExport from '@/components/FigureExport';
-import PlotCustomizer from '@/components/PlotCustomizer';
-import FederatedLearningDashboard from '@/components/FederatedLearningDashboard';
+const FigureExport = dynamic(() => import('@/components/FigureExport'), { ssr: false });
+const PlotCustomizer = dynamic(() => import('@/components/PlotCustomizer'), { ssr: false });
+const FederatedLearningDashboard = dynamic(() => import('@/components/FederatedLearningDashboard'), { ssr: false });
 import { 
   TrainingJobGroup, 
   TrainingJobInGroup, 
@@ -23,7 +23,7 @@ import {
   CENTRAL_MODELS,
   FL_ALGORITHMS,
 } from '@/components/TrainingJobGroup';
-import JobGroupComparisonPlots from '@/components/JobGroupComparisonPlots';
+const JobGroupComparisonPlots = dynamic(() => import('@/components/JobGroupComparisonPlots'), { ssr: false });
 
 const PREPROCESSING_STEP_HELP: Record<string, { title: string; details: string }> = {
   csi_loader: {
@@ -1290,20 +1290,6 @@ export default function TrainingPage() {
       ctx.fillStyle = '#000000';
       ctx.fillText('Validation', legendX + 45, legendY + 41);
       
-      // Convert canvas to PDF using jsPDF
-      canvas.toBlob(async (blob) => {
-        if (!blob) return;
-        const imgData = await new Promise<string>((resolve) => {
-          const reader = new FileReader();
-          reader.onload = () => resolve(reader.result as string);
-          reader.readAsDataURL(blob);
-        });
-        
-        const pdf = new jsPDF({ orientation: 'landscape', unit: 'px', format: [width, height] });
-        pdf.addImage(imgData, 'PNG', 0, 0, width, height);
-        pdf.save(`${filename}.pdf`);
-      }, 'image/png', 1.0);
-      
     } catch (err) {
       console.error('Failed to download graph:', err);
       toast.error('Export Failed', 'Failed to download graph');
@@ -1715,7 +1701,7 @@ export default function TrainingPage() {
               ) : trainingJobs.map(job => {
                 const prog = job.total_epochs > 0 ? (job.current_epoch / job.total_epochs) * 100 : 0;
                 const isExpanded = expandedJobs.has(job.job_id);
-                const isML = ['knn', 'svc', 'adaboost', 'xgboost'].includes(job.model_type);
+                const isML = ['knn', 'svc', 'adaboost', 'xgboost', 'random_forest'].includes(job.model_type);
                 const config = typeof job.config === 'string' ? JSON.parse(job.config || '{}') : (job.config || {});
                 const currentStage = config.current_stage || (job.status === 'completed' ? 'completed' : job.status === 'pending' ? 'pending' : job.status === 'failed' ? 'failed' : 'running');
                 const filesLoaded = config.files_loaded || 0;
@@ -2776,7 +2762,7 @@ export default function TrainingPage() {
                 )}
 
                 {/* DL-specific hyperparameters - hidden for ML models */}
-                {!['knn', 'svc', 'adaboost', 'xgboost'].includes(trainingConfig.model_type) && (
+                {!['knn', 'svc', 'adaboost', 'xgboost', 'random_forest'].includes(trainingConfig.model_type) && (
                   <>
                     <div className="grid grid-cols-2 gap-4">
                       <div><label className="block text-sm text-slate-300 mb-1">Epochs</label><input type="number" value={trainingConfig.epochs} onChange={(e) => setTrainingConfig({ ...trainingConfig, epochs: parseInt(e.target.value) || 10 })} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white" /></div>
@@ -3230,9 +3216,9 @@ export default function TrainingPage() {
                     </div>
                     <div className="text-sm text-slate-200 space-y-1">
                       <div>Type: <span className="text-indigo-300 font-medium">{trainingConfig.model_type}</span>
-                        {!['knn', 'svc', 'adaboost', 'xgboost'].includes(trainingConfig.model_type) && <span className="text-slate-400"> ({trainingConfig.model_architecture})</span>}
+                        {!['knn', 'svc', 'adaboost', 'xgboost', 'random_forest'].includes(trainingConfig.model_type) && <span className="text-slate-400"> ({trainingConfig.model_architecture})</span>}
                       </div>
-                      {!['knn', 'svc', 'adaboost', 'xgboost'].includes(trainingConfig.model_type) && (
+                      {!['knn', 'svc', 'adaboost', 'xgboost', 'random_forest'].includes(trainingConfig.model_type) && (
                         <div>Epochs: <span className="text-slate-300">{trainingConfig.epochs}</span> · Batch: <span className="text-slate-300">{trainingConfig.batch_size}</span> · LR: <span className="text-slate-300">{trainingConfig.learning_rate}</span></div>
                       )}
                       {trainingConfig.model_type === 'knn' && (
@@ -3498,7 +3484,7 @@ export default function TrainingPage() {
               })()}
 
               {/* ML Model Summary (for KNN, SVC, AdaBoost - no epochs) */}
-              {['knn', 'svc', 'adaboost', 'xgboost'].includes(selectedJob.model_type) && selectedJob.metrics && (
+              {['knn', 'svc', 'adaboost', 'xgboost', 'random_forest'].includes(selectedJob.model_type) && selectedJob.metrics && (
                 <div className="bg-slate-800/50 rounded-lg p-4">
                   <h4 className="text-white font-medium mb-4">Model Training Summary</h4>
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -3535,7 +3521,7 @@ export default function TrainingPage() {
                 </div>
               )}
               {/* Deep Learning Training Progress Charts (only for models with multiple epochs) */}
-              {!['knn', 'svc', 'adaboost', 'xgboost'].includes(selectedJob.model_type) && selectedJob.metrics && (selectedJob.metrics.accuracy?.length > 1 || selectedJob.metrics.loss?.length > 1) && (
+              {!['knn', 'svc', 'adaboost', 'xgboost', 'random_forest'].includes(selectedJob.model_type) && selectedJob.metrics && (selectedJob.metrics.accuracy?.length > 1 || selectedJob.metrics.loss?.length > 1) && (
                 <div className="bg-slate-800/50 rounded-lg p-4">
                   <div className="flex justify-between items-center mb-4">
                     <h4 className="text-white font-medium">Training Progress Charts</h4>

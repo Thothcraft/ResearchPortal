@@ -129,6 +129,7 @@ export default function DataPage() {
   // Folder state
   const [showFolderUploadModal, setShowFolderUploadModal] = useState(false);
   const [folders, setFolders] = useState<DataFolder[]>([]);
+  const [allFolders, setAllFolders] = useState<DataFolder[]>([]);  // For folder name lookups
   const [currentFolderId, setCurrentFolderId] = useState<number | null>(null);
   const [foldersLoading, setFoldersLoading] = useState(false);
   const [showCreateFolderModal, setShowCreateFolderModal] = useState(false);
@@ -263,6 +264,30 @@ export default function DataPage() {
     fetchFolders();
   }, [fetchFolders]);
 
+  // Fetch all folders for name lookups
+  const fetchAllFolders = useCallback(async () => {
+    try {
+      const token = localStorage.getItem('auth_token');
+      const apiUrl = '/api/proxy';
+      
+      const response = await fetch(`${apiUrl}/folders/?all=true`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        setAllFolders(data || []);
+      }
+    } catch (error) {
+      console.error('Error fetching all folders:', error);
+    }
+  }, []);
+
+  // Fetch all folders on mount
+  useEffect(() => {
+    fetchAllFolders();
+  }, [fetchAllFolders]);
+
   // Create folder handler
   const handleCreateFolder = async () => {
     if (!newFolderName.trim()) return;
@@ -288,6 +313,7 @@ export default function DataPage() {
         setNewFolderName('');
         setShowCreateFolderModal(false);
         fetchFolders();
+        fetchAllFolders();
       } else {
         const error = await response.json().catch(() => ({}));
         toast.error('Error', error.detail || 'Failed to create folder');
@@ -302,6 +328,7 @@ export default function DataPage() {
     toast.success('Upload Complete', `Folder "${folderName}" uploaded successfully`);
     setShowFolderUploadModal(false);
     fetchFolders();
+    fetchAllFolders();
     clearCache('/file');
     refetchCloudFiles();
   };
@@ -329,6 +356,7 @@ export default function DataPage() {
       if (response.ok) {
         toast.success('Folder Deleted', `"${folder.name}" has been deleted`);
         fetchFolders();
+        fetchAllFolders();
       } else {
         const error = await response.json().catch(() => ({}));
         toast.error('Delete Failed', error.detail || 'Failed to delete folder');
@@ -450,6 +478,8 @@ export default function DataPage() {
           onCloud: true,
           cloudFileId: f.file_id,
           isValid,
+          folderId: f.folder_id,
+          labels: f.labels || [],
         } as DataFile;
       });
   }, [cloudFilesData, deviceFiles]);
@@ -904,9 +934,17 @@ export default function DataPage() {
                   </div>
                   
                   <div className="flex-1 min-w-0">
-                    <h3 className="text-white font-medium truncate" title={file.name}>
-                      {file.name}
-                    </h3>
+                    <div className="flex items-center gap-2">
+                      <h3 className="text-white font-medium truncate" title={file.name}>
+                        {file.name}
+                      </h3>
+                      {file.folderId && (
+                        <span className="flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-yellow-500/10 text-yellow-400">
+                          <Folder className="w-3 h-3" />
+                          {allFolders.find(f => f.id === file.folderId)?.name || 'Folder'}
+                        </span>
+                      )}
+                    </div>
                     <div className="flex items-center gap-4 text-sm text-slate-400 mt-1">
                       <span className="flex items-center gap-1">
                         <Server className="w-3 h-3" />
@@ -923,6 +961,19 @@ export default function DataPage() {
                         {formatFileSize(file.size)}
                       </span>
                     </div>
+                    {file.labels && file.labels.length > 0 && (
+                      <div className="flex items-center gap-1 mt-1.5 flex-wrap">
+                        <Tag className="w-3 h-3 text-slate-500" />
+                        {file.labels.slice(0, 3).map((label, i) => (
+                          <span key={i} className="px-1.5 py-0.5 rounded text-xs bg-indigo-500/20 text-indigo-300">
+                            {label}
+                          </span>
+                        ))}
+                        {file.labels.length > 3 && (
+                          <span className="text-xs text-slate-500">+{file.labels.length - 3} more</span>
+                        )}
+                      </div>
+                    )}
                   </div>
                   
                   <div className="flex items-center gap-2">

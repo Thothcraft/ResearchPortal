@@ -17,6 +17,166 @@ import { useAuth } from '@/contexts/AuthContext';
 
 const API_BASE_URL = '/api/proxy';
 
+// Professional Line Chart Component
+interface ChartDataPoint {
+  x: number;
+  y: number;
+  label?: string;
+}
+
+const LineChart: React.FC<{
+  data: ChartDataPoint[];
+  width?: number;
+  height?: number;
+  color?: string;
+  gradientId?: string;
+  showGrid?: boolean;
+  showDots?: boolean;
+  yAxisLabel?: string;
+  xAxisLabel?: string;
+  formatY?: (v: number) => string;
+  formatX?: (v: number) => string;
+}> = ({
+  data,
+  width = 400,
+  height = 200,
+  color = '#22c55e',
+  gradientId = 'chartGradient',
+  showGrid = true,
+  showDots = true,
+  yAxisLabel,
+  xAxisLabel,
+  formatY = (v) => v.toFixed(2),
+  formatX = (v) => v.toString(),
+}) => {
+  if (data.length === 0) return null;
+
+  const padding = { top: 20, right: 20, bottom: 30, left: 50 };
+  const chartWidth = width - padding.left - padding.right;
+  const chartHeight = height - padding.top - padding.bottom;
+
+  const xMin = Math.min(...data.map(d => d.x));
+  const xMax = Math.max(...data.map(d => d.x));
+  const yMin = Math.min(...data.map(d => d.y), 0);
+  const yMax = Math.max(...data.map(d => d.y)) * 1.1 || 1;
+
+  const scaleX = (x: number) => padding.left + ((x - xMin) / (xMax - xMin || 1)) * chartWidth;
+  const scaleY = (y: number) => padding.top + chartHeight - ((y - yMin) / (yMax - yMin || 1)) * chartHeight;
+
+  const pathD = data.map((d, i) => `${i === 0 ? 'M' : 'L'} ${scaleX(d.x)} ${scaleY(d.y)}`).join(' ');
+  const areaD = `${pathD} L ${scaleX(data[data.length - 1].x)} ${scaleY(yMin)} L ${scaleX(data[0].x)} ${scaleY(yMin)} Z`;
+
+  // Generate grid lines
+  const yTicks = 5;
+  const xTicks = Math.min(data.length, 6);
+
+  return (
+    <svg width={width} height={height} className="overflow-visible">
+      <defs>
+        <linearGradient id={gradientId} x1="0%" y1="0%" x2="0%" y2="100%">
+          <stop offset="0%" stopColor={color} stopOpacity="0.3" />
+          <stop offset="100%" stopColor={color} stopOpacity="0.05" />
+        </linearGradient>
+      </defs>
+
+      {/* Grid */}
+      {showGrid && (
+        <g className="text-slate-700">
+          {Array.from({ length: yTicks + 1 }).map((_, i) => {
+            const y = padding.top + (chartHeight / yTicks) * i;
+            const value = yMax - ((yMax - yMin) / yTicks) * i;
+            return (
+              <g key={`y-${i}`}>
+                <line x1={padding.left} y1={y} x2={width - padding.right} y2={y} stroke="currentColor" strokeOpacity="0.2" />
+                <text x={padding.left - 8} y={y + 4} textAnchor="end" className="fill-slate-500 text-[10px]">
+                  {formatY(value)}
+                </text>
+              </g>
+            );
+          })}
+          {Array.from({ length: xTicks }).map((_, i) => {
+            const idx = Math.floor((data.length - 1) * (i / (xTicks - 1)));
+            const x = scaleX(data[idx]?.x || 0);
+            return (
+              <g key={`x-${i}`}>
+                <line x1={x} y1={padding.top} x2={x} y2={height - padding.bottom} stroke="currentColor" strokeOpacity="0.1" />
+                <text x={x} y={height - padding.bottom + 16} textAnchor="middle" className="fill-slate-500 text-[10px]">
+                  {formatX(data[idx]?.x || 0)}
+                </text>
+              </g>
+            );
+          })}
+        </g>
+      )}
+
+      {/* Area fill */}
+      <path d={areaD} fill={`url(#${gradientId})`} />
+
+      {/* Line */}
+      <path d={pathD} fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+
+      {/* Dots */}
+      {showDots && data.length <= 30 && data.map((d, i) => (
+        <circle
+          key={i}
+          cx={scaleX(d.x)}
+          cy={scaleY(d.y)}
+          r="3"
+          fill={color}
+          className="hover:r-4 transition-all cursor-pointer"
+        >
+          <title>Round {d.x}: {formatY(d.y)}</title>
+        </circle>
+      ))}
+
+      {/* Axis labels */}
+      {yAxisLabel && (
+        <text
+          x={12}
+          y={height / 2}
+          textAnchor="middle"
+          transform={`rotate(-90, 12, ${height / 2})`}
+          className="fill-slate-400 text-[10px] font-medium"
+        >
+          {yAxisLabel}
+        </text>
+      )}
+      {xAxisLabel && (
+        <text x={width / 2} y={height - 4} textAnchor="middle" className="fill-slate-400 text-[10px] font-medium">
+          {xAxisLabel}
+        </text>
+      )}
+    </svg>
+  );
+};
+
+// Professional Metric Card Component
+const MetricCard: React.FC<{
+  icon: React.ReactNode;
+  label: string;
+  value: string | number;
+  subValue?: string;
+  gradient: string;
+  progress?: number;
+}> = ({ icon, label, value, subValue, gradient, progress }) => (
+  <div className={`${gradient} rounded-xl p-5 shadow-lg`}>
+    <div className="flex items-center gap-2 text-white/80 text-sm mb-2">
+      {icon}
+      <span className="font-medium">{label}</span>
+    </div>
+    <div className="text-3xl font-bold text-white tracking-tight">{value}</div>
+    {subValue && <div className="text-white/70 text-sm mt-1">{subValue}</div>}
+    {progress !== undefined && (
+      <div className="mt-3 h-1.5 bg-white/20 rounded-full overflow-hidden">
+        <div 
+          className="h-full bg-white/80 rounded-full transition-all duration-500" 
+          style={{ width: `${Math.min(progress, 100)}%` }} 
+        />
+      </div>
+    )}
+  </div>
+);
+
 interface FLSession {
   session_id: string;
   session_name: string;
@@ -25,9 +185,26 @@ interface FLSession {
   current_round: number;
   total_rounds: number;
   best_accuracy: number;
+  best_round?: number;
   created_at: string;
   started_at?: string;
+  completed_at?: string;
   error_message?: string;
+  // Configuration fields
+  model?: string;
+  dataset?: string;
+  num_clients?: number;
+  num_partitions?: number;
+  local_epochs?: number;
+  local_batch_size?: number;
+  learning_rate?: number;
+  partition_strategy?: string;
+  proximal_mu?: number;
+  server_learning_rate?: number;
+  fraction_fit?: number;
+  fraction_evaluate?: number;
+  min_fit_clients?: number;
+  min_evaluate_clients?: number;
 }
 
 interface RoundMetric {
@@ -41,22 +218,17 @@ interface RoundMetric {
   fairness_index?: number;
 }
 
+// Available FL algorithms (custom implementations, no Flower built-ins)
+// References:
+// - FedAvg: https://arxiv.org/abs/1602.05629
+// - FedProx: https://arxiv.org/abs/1812.06127
+// - FedAvgM: https://arxiv.org/abs/1909.06335
+// - FedXgbBagging: https://flower.ai/docs/framework/tutorial-quickstart-xgboost.html
 const ALGORITHMS = [
-  { id: 'fedavg', name: 'FedAvg', description: 'Standard federated averaging', category: 'standard', color: 'bg-blue-500' },
-  { id: 'fedprox', name: 'FedProx', description: 'Proximal term for non-IID data', category: 'standard', color: 'bg-indigo-500' },
-  { id: 'fedadam', name: 'FedAdam', description: 'Adaptive learning with Adam', category: 'adaptive', color: 'bg-green-500' },
-  { id: 'fedyogi', name: 'FedYogi', description: 'Controlled adaptivity', category: 'adaptive', color: 'bg-emerald-500' },
-  { id: 'fedadagrad', name: 'FedAdagrad', description: 'Adagrad optimizer', category: 'adaptive', color: 'bg-teal-500' },
-  { id: 'fedavgm', name: 'FedAvgM', description: 'Server-side momentum', category: 'standard', color: 'bg-cyan-500' },
-  { id: 'fedmedian', name: 'FedMedian', description: 'Byzantine-robust median', category: 'robust', color: 'bg-orange-500' },
-  { id: 'fedtrimmedavg', name: 'FedTrimmedAvg', description: 'Trimmed mean aggregation', category: 'robust', color: 'bg-amber-500' },
-  { id: 'krum', name: 'Krum', description: 'Byzantine-robust selection', category: 'robust', color: 'bg-red-500' },
-  { id: 'multikrum', name: 'Multi-Krum', description: 'Multi-Krum selection', category: 'robust', color: 'bg-red-400' },
-  { id: 'bulyan', name: 'Bulyan', description: 'Krum + trimmed mean', category: 'robust', color: 'bg-rose-500' },
-  { id: 'qfedavg', name: 'QFedAvg', description: 'Fair federated learning', category: 'fair', color: 'bg-purple-500' },
-  { id: 'dpfedavg_adaptive', name: 'DP-FedAvg (Adaptive)', description: 'Differential privacy', category: 'privacy', color: 'bg-pink-500' },
-  { id: 'dpfedavg_fixed', name: 'DP-FedAvg (Fixed)', description: 'Fixed clipping DP', category: 'privacy', color: 'bg-fuchsia-500' },
-  { id: 'fedxgb_bagging', name: 'FedXgbBagging', description: 'XGBoost bagging for trees', category: 'tree', color: 'bg-lime-500' },
+  { id: 'fedavg', name: 'FedAvg', description: 'Federated Averaging - weighted average of client updates', category: 'standard', color: 'bg-blue-500' },
+  { id: 'fedprox', name: 'FedProx', description: 'FedAvg with proximal term for non-IID data', category: 'standard', color: 'bg-indigo-500' },
+  { id: 'fedavgm', name: 'FedAvgM', description: 'FedAvg with server-side momentum', category: 'standard', color: 'bg-cyan-500' },
+  { id: 'fedxgb_bagging', name: 'FedXgbBagging', description: 'Federated XGBoost with bagging aggregation', category: 'xgboost', color: 'bg-lime-500' },
 ];
 
 // Dataset types for model filtering
@@ -114,21 +286,10 @@ const getCompatibleModelsFromList = (datasetId: string, datasets: DatasetConfig[
   return MODEL_ARCHITECTURES.filter(m => m.compatible_types.includes(dataset.type));
 };
 
-// Algorithm-specific default parameters
+// Algorithm-specific default parameters (only for supported algorithms)
 const ALGORITHM_DEFAULTS: Record<string, Record<string, number>> = {
   fedprox: { proximal_mu: 0.01 },
-  fedadam: { server_learning_rate: 0.1, beta_1: 0.9, beta_2: 0.99 },
-  fedyogi: { server_learning_rate: 0.1, beta_1: 0.9, beta_2: 0.99 },
-  fedadagrad: { server_learning_rate: 0.1 },
   fedavgm: { server_learning_rate: 1.0, momentum: 0.9 },
-  qfedavg: { q_param: 0.2 },
-  dpfedavg_adaptive: { noise_multiplier: 1.0, clipping_norm: 1.0 },
-  dpfedavg_fixed: { noise_multiplier: 1.0, clipping_norm: 1.0 },
-  fedtrimmedavg: { trim_ratio: 0.1, byzantine_fraction: 0.1 },
-  krum: { byzantine_fraction: 0.1, num_closest: 2 },
-  multikrum: { byzantine_fraction: 0.1, num_closest: 3 },
-  bulyan: { byzantine_fraction: 0.1 },
-  fedmedian: {},
 };
 
 type FLTab = 'sessions' | 'groups' | 'models' | 'compare';
@@ -181,11 +342,19 @@ const FederatedLearningDashboard: React.FC = () => {
   const [sessionDetails, setSessionDetails] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [flUnavailable, setFlUnavailable] = useState(false);
   const [creating, setCreating] = useState(false);
   const [trainedModels, setTrainedModels] = useState<FLTrainedModel[]>([]);
   const [selectedModelsForCompare, setSelectedModelsForCompare] = useState<string[]>([]);
   const [userDatasets, setUserDatasets] = useState<DatasetConfig[]>([]);
   const [loadingUserDatasets, setLoadingUserDatasets] = useState(false);
+  
+  // Debug and connection state
+  const [showDebugPanel, setShowDebugPanel] = useState(false);
+  const [expandedSessions, setExpandedSessions] = useState<Set<string>>(new Set());
+  const [connectionStatus, setConnectionStatus] = useState<'connected' | 'disconnected' | 'checking'>('checking');
+  const [lastApiCall, setLastApiCall] = useState<{ endpoint: string; status: number; time: string; error?: string } | null>(null);
+  const [apiLogs, setApiLogs] = useState<Array<{ endpoint: string; status: number; time: string; error?: string }>>([])
   
   // FL Job Groups state
   const [flJobGroups, setFlJobGroups] = useState<FLJobGroup[]>([]);
@@ -232,7 +401,7 @@ const FederatedLearningDashboard: React.FC = () => {
 
   const [form, setForm] = useState({
     session_name: '',
-    algorithm: 'fedavg',
+    algorithms: ['fedavg'] as string[], // Multi-select: creates one job per algorithm
     model_architecture: 'cnn',
     dataset: 'cifar10',
     num_rounds: 10,
@@ -244,15 +413,7 @@ const FederatedLearningDashboard: React.FC = () => {
     fraction_fit: 1.0,
     proximal_mu: 0.01,
     server_learning_rate: 1.0,
-    // Additional algorithm-specific params
-    q_param: 0.2,
-    noise_multiplier: 1.0,
-    clipping_norm: 1.0,
-    trim_ratio: 0.1,
     momentum: 0.9,
-    // Byzantine-robust params
-    byzantine_fraction: 0.1,
-    num_closest: 2,
     // Advanced server params
     min_fit_clients: 2,
     min_evaluate_clients: 2,
@@ -263,9 +424,6 @@ const FederatedLearningDashboard: React.FC = () => {
     optimizer: 'sgd',
     // Dirichlet alpha for non-IID
     dirichlet_alpha: 0.5,
-    // Privacy params
-    differential_privacy: false,
-    delta: 1e-5,
   });
 
   // Update model architecture when dataset changes (ensure compatibility)
@@ -277,18 +435,37 @@ const FederatedLearningDashboard: React.FC = () => {
     }
   }, [form.dataset, allDatasets]);
 
-  // Update algorithm-specific params when algorithm changes
+  // Update algorithm-specific params when algorithms change
   useEffect(() => {
-    const defaults = ALGORITHM_DEFAULTS[form.algorithm];
-    if (defaults) {
-      setForm(prev => ({ ...prev, ...defaults }));
+    // Apply defaults for the first selected algorithm
+    if (form.algorithms.length > 0) {
+      const defaults = ALGORITHM_DEFAULTS[form.algorithms[0]];
+      if (defaults) {
+        setForm(prev => ({ ...prev, ...defaults }));
+      }
     }
-  }, [form.algorithm]);
+  }, [form.algorithms]);
+
+  // Toggle algorithm selection (checkbox behavior)
+  const toggleAlgorithm = (algoId: string) => {
+    setForm(prev => {
+      const current = prev.algorithms;
+      if (current.includes(algoId)) {
+        // Don't allow deselecting if it's the only one
+        if (current.length === 1) return prev;
+        return { ...prev, algorithms: current.filter(a => a !== algoId) };
+      } else {
+        return { ...prev, algorithms: [...current, algoId] };
+      }
+    });
+  };
 
   useEffect(() => {
-    loadSessions();
+    if (!flUnavailable) {
+      loadSessions();
+    }
     loadTrainedModels();
-  }, []);
+  }, [flUnavailable]);
 
   // Load user datasets when user token is available
   useEffect(() => {
@@ -306,27 +483,72 @@ const FederatedLearningDashboard: React.FC = () => {
   }, [selectedSession, view]);
 
   // Real-time polling for sessions list
+  // Use faster polling (3s) when there are running sessions, slower (10s) otherwise
   useEffect(() => {
-    if (activeTab === 'sessions' && view === 'list') {
-      const interval = setInterval(loadSessions, 5000);
+    if (activeTab === 'sessions' && view === 'list' && !flUnavailable) {
+      const hasRunningSessions = sessions.some(s => s.status === 'running');
+      const pollInterval = hasRunningSessions ? 3000 : 10000;
+      
+      const interval = setInterval(() => {
+        loadSessions();
+      }, pollInterval);
       return () => clearInterval(interval);
     }
-  }, [activeTab, view]);
+  }, [activeTab, view, flUnavailable, sessions]);
+
+  // Log API call for debugging
+  const logApiCall = (endpoint: string, status: number, error?: string) => {
+    const logEntry = { endpoint, status, time: new Date().toLocaleTimeString(), error };
+    setLastApiCall(logEntry);
+    setApiLogs(prev => [logEntry, ...prev.slice(0, 49)]); // Keep last 50 logs
+  };
 
   const loadSessions = async () => {
     setLoading(true);
+    setConnectionStatus('checking');
+    const startTime = Date.now();
     try {
-      const res = await fetch(`${API_BASE_URL}/fl/sessions`);
+      const res = await fetch(`${API_BASE_URL}/fl/sessions`, {
+        headers: user?.token
+          ? {
+              Authorization: `Bearer ${user.token}`,
+              'Content-Type': 'application/json',
+            }
+          : undefined,
+      });
+      
+      const duration = Date.now() - startTime;
+      logApiCall(`GET /fl/sessions (${duration}ms)`, res.status);
+      
       if (!res.ok) {
-        console.error(`Failed to load sessions: ${res.status} ${res.statusText}`);
-        setError(`Failed to load sessions: ${res.status}`);
+        const errorText = await res.text().catch(() => res.statusText);
+        console.error(`[FL] Failed to load sessions: ${res.status} ${errorText}`);
+        setError(`Failed to load sessions: ${res.status} - ${errorText}`);
+        setSessions([]);
+        setConnectionStatus('disconnected');
+        if (res.status === 404 || res.status >= 500 || res.status === 503) {
+          setFlUnavailable(true);
+        }
+        logApiCall(`GET /fl/sessions`, res.status, errorText);
         return;
       }
-      const data = await res.json();
+      
+      setConnectionStatus('connected');
+      let data: any = null;
+      try {
+        data = await res.json();
+      } catch (parseErr) {
+        console.error('[FL] Failed to parse sessions response:', parseErr);
+        setError('Failed to load sessions: invalid JSON response from server');
+        setSessions([]);
+        logApiCall(`GET /fl/sessions`, res.status, 'JSON parse error');
+        return;
+      }
       const sessionsList = data.sessions || [];
-      console.log(`[FL] Loaded ${sessionsList.length} sessions`);
+      console.log(`[FL] Loaded ${sessionsList.length} sessions in ${duration}ms`);
       setSessions(sessionsList);
       setError(null);
+      setFlUnavailable(false);
       
       // Extract trained models from completed sessions
       const completedSessions = sessionsList.filter((s: FLSession) => s.status === 'completed');
@@ -342,9 +564,14 @@ const FederatedLearningDashboard: React.FC = () => {
         dataset: 'cifar10', // Default, would come from session config
       }));
       setTrainedModels(models);
-    } catch (err) {
-      console.error('Failed to load sessions:', err);
-      setError('Failed to connect to server');
+    } catch (err: any) {
+      console.error('[FL] Failed to load sessions:', err);
+      setConnectionStatus('disconnected');
+      const errorMsg = err.message?.includes('fetch failed') 
+        ? 'Cannot connect to backend server. Is it running?'
+        : err.message || 'Failed to connect to server';
+      setError(errorMsg);
+      logApiCall(`GET /fl/sessions`, 0, errorMsg);
     } finally {
       setLoading(false);
     }
@@ -357,9 +584,37 @@ const FederatedLearningDashboard: React.FC = () => {
 
   const loadSessionDetails = async (sessionId: string) => {
     try {
-      const res = await fetch(`${API_BASE_URL}/fl/sessions/${sessionId}`);
-      const data = await res.json();
+      const res = await fetch(`${API_BASE_URL}/fl/sessions/${sessionId}`, {
+        headers: user?.token
+          ? {
+              Authorization: `Bearer ${user.token}`,
+              'Content-Type': 'application/json',
+            }
+          : undefined,
+      });
+
+      if (!res.ok) {
+        console.error(`Failed to load session details: ${res.status} ${res.statusText}`);
+        setError(`Failed to load session details: ${res.status}`);
+        setSessionDetails(null);
+        if (res.status === 404 || res.status >= 500) {
+          setFlUnavailable(true);
+        }
+        return;
+      }
+
+      let data: any = null;
+      try {
+        data = await res.json();
+      } catch (parseErr) {
+        console.error('Failed to parse session details response:', parseErr);
+        setError('Failed to load session details: invalid response');
+        setSessionDetails(null);
+        return;
+      }
+
       setSessionDetails(data);
+      setFlUnavailable(false);
     } catch (err) {
       console.error('Failed to load session details:', err);
     }
@@ -372,15 +627,17 @@ const FederatedLearningDashboard: React.FC = () => {
     }
     setCreating(true);
     setError(null);
+    console.log('[FL] Creating session with config:', form);
     try {
       // Check if using a user dataset
       const isUserDataset = form.dataset.startsWith('user_');
       const userDatasetId = isUserDataset ? parseInt(form.dataset.replace('user_', '')) : null;
       const selectedDataset = allDatasets.find((d: DatasetConfig) => d.id === form.dataset);
       
-      const payload = {
-        session_name: form.session_name,
-        algorithm: form.algorithm,
+      // Use multi-algorithm endpoint if multiple algorithms selected
+      const useMultiEndpoint = form.algorithms.length > 1;
+      
+      const basePayload = {
         model_architecture: form.model_architecture,
         server: {
           num_rounds: form.num_rounds,
@@ -410,26 +667,35 @@ const FederatedLearningDashboard: React.FC = () => {
           proximal_mu: form.proximal_mu,
           server_learning_rate: form.server_learning_rate,
           server_momentum: form.momentum,
-          q_param: form.q_param,
-          noise_multiplier: form.noise_multiplier,
-          clipping_norm: form.clipping_norm,
-          trimmed_mean_beta: form.trim_ratio,
-          byzantine_fraction: form.byzantine_fraction,
-          krum_num_closest: form.num_closest,
-        },
-        privacy: {
-          differential_privacy: form.differential_privacy,
-          delta: form.delta,
-          noise_multiplier: form.noise_multiplier,
-          max_grad_norm: form.clipping_norm,
         },
       };
 
-      const res = await fetch(`${API_BASE_URL}/fl/sessions`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
+      let res;
+      if (useMultiEndpoint) {
+        // Multi-algorithm: creates one session per algorithm
+        const multiPayload = {
+          session_name_prefix: form.session_name,
+          algorithms: form.algorithms,
+          ...basePayload,
+        };
+        res = await fetch(`${API_BASE_URL}/fl/sessions/multi`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(multiPayload),
+        });
+      } else {
+        // Single algorithm
+        const singlePayload = {
+          session_name: form.session_name,
+          algorithm: form.algorithms[0],
+          ...basePayload,
+        };
+        res = await fetch(`${API_BASE_URL}/fl/sessions`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(singlePayload),
+        });
+      }
 
       if (!res.ok) {
         const errData = await res.json();
@@ -437,18 +703,34 @@ const FederatedLearningDashboard: React.FC = () => {
       }
 
       const data = await res.json();
-      const sessionId = data.data?.session_id;
-      console.log(`[FL] Session created: ${sessionId}`);
       
-      // Auto-start the session
-      if (sessionId) {
-        const startRes = await fetch(`${API_BASE_URL}/fl/sessions/${sessionId}/start`, {
-          method: 'POST',
-        });
-        if (!startRes.ok) {
-          console.error(`[FL] Failed to start session ${sessionId}: ${startRes.status}`);
-        } else {
-          console.log(`[FL] Session ${sessionId} started`);
+      if (useMultiEndpoint) {
+        // Multi-algorithm: start all created sessions
+        const sessions = data.data?.sessions || [];
+        console.log(`[FL] Created ${sessions.length} sessions for algorithms: ${form.algorithms.join(', ')}`);
+        for (const sess of sessions) {
+          const startRes = await fetch(`${API_BASE_URL}/fl/sessions/${sess.session_id}/start`, {
+            method: 'POST',
+          });
+          if (!startRes.ok) {
+            console.error(`[FL] Failed to start session ${sess.session_id}: ${startRes.status}`);
+          } else {
+            console.log(`[FL] Session ${sess.session_id} (${sess.algorithm}) started`);
+          }
+        }
+      } else {
+        // Single algorithm
+        const sessionId = data.data?.session_id;
+        console.log(`[FL] Session created: ${sessionId}`);
+        if (sessionId) {
+          const startRes = await fetch(`${API_BASE_URL}/fl/sessions/${sessionId}/start`, {
+            method: 'POST',
+          });
+          if (!startRes.ok) {
+            console.error(`[FL] Failed to start session ${sessionId}: ${startRes.status}`);
+          } else {
+            console.log(`[FL] Session ${sessionId} started`);
+          }
         }
       }
 
@@ -457,7 +739,11 @@ const FederatedLearningDashboard: React.FC = () => {
       setView('list');
     } catch (err: any) {
       console.error('[FL] Create session error:', err);
-      setError(err.message || 'Failed to create session');
+      const errorMsg = err.message?.includes('fetch failed')
+        ? 'Cannot connect to backend server. Please ensure the Python server is running.'
+        : err.message || 'Failed to create session';
+      setError(errorMsg);
+      logApiCall('POST /fl/sessions', 0, errorMsg);
     } finally {
       setCreating(false);
     }
@@ -533,19 +819,53 @@ const FederatedLearningDashboard: React.FC = () => {
   // Sessions List View
   const renderSessionsList = () => (
     <div className="space-y-6">
+      {/* Connection Status Banner */}
+      {connectionStatus === 'disconnected' && (
+        <div className="p-4 bg-red-500/10 border border-red-500/30 rounded-lg flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <AlertCircle className="w-5 h-5 text-red-400" />
+            <div>
+              <p className="text-red-400 font-medium">Backend Connection Failed</p>
+              <p className="text-red-300/70 text-sm">Cannot connect to the FL server. Please ensure the Python backend is running.</p>
+            </div>
+          </div>
+          <button
+            onClick={() => { setFlUnavailable(false); loadSessions(); }}
+            className="px-3 py-1.5 bg-red-500/20 hover:bg-red-500/30 text-red-400 rounded-lg text-sm flex items-center gap-2"
+          >
+            <RefreshCw className="w-4 h-4" />
+            Retry
+          </button>
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-xl font-semibold text-white flex items-center gap-2">
             <Network className="w-5 h-5 text-purple-400" />
             FL Sessions
+            {/* Connection Status Indicator */}
+            <span className={`ml-2 w-2 h-2 rounded-full ${
+              connectionStatus === 'connected' ? 'bg-green-400' :
+              connectionStatus === 'checking' ? 'bg-yellow-400 animate-pulse' :
+              'bg-red-400'
+            }`} title={`Status: ${connectionStatus}`} />
           </h2>
           <p className="text-sm text-slate-400 mt-1">Manage your federated learning experiments</p>
         </div>
         <div className="flex gap-2">
           <button
+            onClick={() => setShowDebugPanel(!showDebugPanel)}
+            className={`p-2 rounded-lg transition-colors ${showDebugPanel ? 'bg-purple-600 text-white' : 'bg-slate-700 hover:bg-slate-600 text-slate-300'}`}
+            title="Toggle Debug Panel"
+          >
+            <Settings className="w-4 h-4" />
+          </button>
+          <button
             onClick={loadSessions}
-            className="p-2 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded-lg transition-colors"
+            disabled={loading}
+            className="p-2 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded-lg transition-colors disabled:opacity-50"
           >
             <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
           </button>
@@ -559,125 +879,338 @@ const FederatedLearningDashboard: React.FC = () => {
         </div>
       </div>
 
-      {/* Sessions Grid */}
-      {sessions.length === 0 ? (
-        <div className="bg-slate-800/50 rounded-xl border border-slate-700 p-12 text-center">
-          <Network className="w-16 h-16 text-slate-600 mx-auto mb-4" />
-          <h3 className="text-lg font-medium text-white mb-2">No FL Sessions</h3>
-          <p className="text-slate-400 mb-4">Create your first federated learning experiment</p>
-          <button
-            onClick={() => setView('create')}
-            className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg transition-colors"
-          >
-            Create Session
+      {/* Debug Panel */}
+      {showDebugPanel && (
+        <div className="bg-slate-900 rounded-xl border border-slate-700 p-4">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-sm font-medium text-white flex items-center gap-2">
+              <Activity className="w-4 h-4 text-purple-400" />
+              Debug Panel
+            </h3>
+            <div className="flex items-center gap-2 text-xs">
+              <span className={`px-2 py-1 rounded ${
+                connectionStatus === 'connected' ? 'bg-green-500/20 text-green-400' :
+                connectionStatus === 'checking' ? 'bg-yellow-500/20 text-yellow-400' :
+                'bg-red-500/20 text-red-400'
+              }`}>
+                {connectionStatus.toUpperCase()}
+              </span>
+              <span className="text-slate-500">Backend: {API_BASE_URL}</span>
+            </div>
+          </div>
+          
+          {/* API Logs */}
+          <div className="bg-slate-800 rounded-lg p-3 max-h-32 overflow-y-auto font-mono text-xs space-y-1">
+            {apiLogs.length === 0 ? (
+              <p className="text-slate-500">No API calls logged yet</p>
+            ) : (
+              apiLogs.slice(0, 10).map((log, i) => (
+                <div key={i} className={`flex items-center gap-2 ${log.error ? 'text-red-400' : log.status >= 200 && log.status < 300 ? 'text-green-400' : 'text-yellow-400'}`}>
+                  <span className="text-slate-500">[{log.time}]</span>
+                  <span className={`px-1 rounded ${log.status >= 200 && log.status < 300 ? 'bg-green-500/20' : log.status === 0 ? 'bg-red-500/20' : 'bg-yellow-500/20'}`}>
+                    {log.status || 'ERR'}
+                  </span>
+                  <span>{log.endpoint}</span>
+                  {log.error && <span className="text-red-300">- {log.error.slice(0, 50)}</span>}
+                </div>
+              ))
+            )}
+          </div>
+          
+          {/* Quick Actions */}
+          <div className="flex gap-2 mt-3">
+            <button
+              onClick={() => setApiLogs([])}
+              className="px-2 py-1 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded text-xs"
+            >
+              Clear Logs
+            </button>
+            <button
+              onClick={() => { setFlUnavailable(false); setError(null); loadSessions(); }}
+              className="px-2 py-1 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded text-xs"
+            >
+              Reset & Retry
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Error Display */}
+      {error && !showDebugPanel && (
+        <div className="p-4 bg-red-500/10 border border-red-500/30 rounded-lg flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <AlertCircle className="w-5 h-5 text-red-400 flex-shrink-0" />
+            <p className="text-red-400 text-sm">{error}</p>
+          </div>
+          <button onClick={() => setError(null)} className="text-red-400 hover:text-red-300 flex-shrink-0">
+            <X className="w-4 h-4" />
           </button>
+        </div>
+      )}
+
+      {/* Loading State */}
+      {loading && sessions.length === 0 && (
+        <div className="bg-slate-800/50 rounded-xl border border-slate-700 p-12 text-center">
+          <Loader2 className="w-12 h-12 text-purple-400 mx-auto mb-4 animate-spin" />
+          <h3 className="text-lg font-medium text-white mb-2">Loading Sessions...</h3>
+          <p className="text-slate-400">Connecting to FL server</p>
+        </div>
+      )}
+
+      {/* Sessions Grid */}
+      {!loading && sessions.length === 0 ? (
+        <div className="bg-slate-800/50 rounded-xl border border-slate-700 p-12 text-center">
+          {connectionStatus === 'disconnected' ? (
+            <>
+              <XCircle className="w-16 h-16 text-red-400/50 mx-auto mb-4" />
+              <h3 className="text-lg font-medium text-white mb-2">Cannot Connect to FL Server</h3>
+              <p className="text-slate-400 mb-4">
+                The backend server is not responding. Please ensure the Python server is running on port 8000.
+              </p>
+              <div className="flex gap-2 justify-center">
+                <button
+                  onClick={() => { setFlUnavailable(false); loadSessions(); }}
+                  className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg transition-colors flex items-center gap-2"
+                >
+                  <RefreshCw className="w-4 h-4" />
+                  Retry Connection
+                </button>
+                <button
+                  onClick={() => setShowDebugPanel(true)}
+                  className="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg transition-colors"
+                >
+                  View Debug Info
+                </button>
+              </div>
+            </>
+          ) : (
+            <>
+              <Network className="w-16 h-16 text-slate-600 mx-auto mb-4" />
+              <h3 className="text-lg font-medium text-white mb-2">No FL Sessions</h3>
+              <p className="text-slate-400 mb-4">Create your first federated learning experiment</p>
+              <button
+                onClick={() => setView('create')}
+                className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg transition-colors"
+              >
+                Create Session
+              </button>
+            </>
+          )}
         </div>
       ) : (
         <div className="grid gap-4">
-          {sessions.map((session) => (
-            <div
-              key={session.session_id}
-              className="bg-slate-800/50 rounded-xl border border-slate-700 p-5 hover:border-slate-600 transition-all"
-            >
-              <div className="flex items-start justify-between">
-                <div className="flex-1">
-                  <div className="flex items-center gap-3 mb-3">
-                    <h3 className="text-lg font-semibold text-white">{session.session_name}</h3>
-                    <span className={`px-2 py-0.5 rounded text-xs font-medium text-white ${getAlgoColor(session.algorithm)}`}>
-                      {session.algorithm.toUpperCase()}
-                    </span>
-                    <span className={`px-2 py-0.5 rounded text-xs font-medium border ${getStatusColor(session.status)}`}>
-                      <span className="flex items-center gap-1">
-                        {getStatusIcon(session.status)}
-                        {session.status}
-                      </span>
-                    </span>
-                  </div>
-
-                  <div className="grid grid-cols-4 gap-6 text-sm">
-                    <div>
-                      <span className="text-slate-500">Progress</span>
-                      <div className="flex items-center gap-2 mt-1">
-                        <div className="flex-1 h-2 bg-slate-700 rounded-full overflow-hidden">
-                          <div
-                            className="h-full bg-purple-500 transition-all"
-                            style={{ width: `${session.total_rounds > 0 ? (session.current_round / session.total_rounds) * 100 : 0}%` }}
-                          />
-                        </div>
-                        <span className="text-white font-medium">
-                          {session.current_round}/{session.total_rounds}
+          {sessions.map((session) => {
+            const isExpanded = expandedSessions.has(session.session_id);
+            const toggleExpand = () => {
+              setExpandedSessions(prev => {
+                const next = new Set(prev);
+                if (next.has(session.session_id)) {
+                  next.delete(session.session_id);
+                } else {
+                  next.add(session.session_id);
+                }
+                return next;
+              });
+            };
+            
+            return (
+              <div
+                key={session.session_id}
+                className={`bg-slate-800/50 rounded-xl border transition-all ${
+                  session.status === 'running' 
+                    ? 'border-blue-500/50 shadow-lg shadow-blue-500/10' 
+                    : 'border-slate-700 hover:border-slate-600'
+                }`}
+              >
+                {/* Main Card Content */}
+                <div className="p-5">
+                  <div className="flex items-start justify-between">
+                    <div className="flex-1">
+                      <div className="flex items-center gap-3 mb-3">
+                        <button
+                          onClick={toggleExpand}
+                          className="p-1 hover:bg-slate-700 rounded transition-colors"
+                        >
+                          <ChevronRight className={`w-4 h-4 text-slate-400 transition-transform ${isExpanded ? 'rotate-90' : ''}`} />
+                        </button>
+                        <h3 className="text-lg font-semibold text-white">{session.session_name}</h3>
+                        <span className={`px-2 py-0.5 rounded text-xs font-medium text-white ${getAlgoColor(session.algorithm)}`}>
+                          {session.algorithm.toUpperCase()}
                         </span>
+                        <span className={`px-2 py-0.5 rounded text-xs font-medium border ${getStatusColor(session.status)}`}>
+                          <span className="flex items-center gap-1">
+                            {getStatusIcon(session.status)}
+                            {session.status}
+                          </span>
+                        </span>
+                        {session.status === 'running' && (
+                          <span className="text-xs text-blue-400 animate-pulse">● Live</span>
+                        )}
+                      </div>
+
+                      <div className="grid grid-cols-4 gap-6 text-sm">
+                        <div>
+                          <span className="text-slate-500">Progress</span>
+                          <div className="flex items-center gap-2 mt-1">
+                            <div className="flex-1 h-2 bg-slate-700 rounded-full overflow-hidden">
+                              <div
+                                className={`h-full transition-all duration-500 ${
+                                  session.status === 'running' ? 'bg-blue-500' : 'bg-purple-500'
+                                }`}
+                                style={{ width: `${session.total_rounds > 0 ? (session.current_round / session.total_rounds) * 100 : 0}%` }}
+                              />
+                            </div>
+                            <span className="text-white font-medium min-w-[50px] text-right">
+                              {session.current_round}/{session.total_rounds}
+                            </span>
+                          </div>
+                        </div>
+                        <div>
+                          <span className="text-slate-500">Best Accuracy</span>
+                          <p className={`font-medium mt-1 ${session.best_accuracy > 0 ? 'text-green-400' : 'text-white'}`}>
+                            {session.best_accuracy > 0 ? `${(session.best_accuracy * 100).toFixed(2)}%` : '-'}
+                          </p>
+                        </div>
+                        <div>
+                          <span className="text-slate-500">Model</span>
+                          <p className="text-white font-medium mt-1">
+                            {session.model?.toUpperCase() || 'CNN'}
+                          </p>
+                        </div>
+                        <div>
+                          <span className="text-slate-500">Duration</span>
+                          <p className="text-white font-medium mt-1">
+                            {session.started_at ? 
+                              `${Math.round((Date.now() - new Date(session.started_at).getTime()) / 60000)}m` : 
+                              '-'}
+                          </p>
+                        </div>
                       </div>
                     </div>
-                    <div>
-                      <span className="text-slate-500">Best Accuracy</span>
-                      <p className="text-white font-medium mt-1">
-                        {session.best_accuracy > 0 ? `${(session.best_accuracy * 100).toFixed(1)}%` : '-'}
-                      </p>
-                    </div>
-                    <div>
-                      <span className="text-slate-500">Created</span>
-                      <p className="text-white font-medium mt-1">
-                        {new Date(session.created_at).toLocaleDateString()}
-                      </p>
-                    </div>
-                    <div>
-                      <span className="text-slate-500">Duration</span>
-                      <p className="text-white font-medium mt-1">
-                        {session.started_at ? 
-                          `${Math.round((Date.now() - new Date(session.started_at).getTime()) / 60000)}m` : 
-                          '-'}
-                      </p>
+
+                    <div className="flex gap-2 ml-4">
+                      {session.status === 'pending' && (
+                        <button
+                          onClick={() => startSession(session.session_id)}
+                          className="p-2 bg-green-600 hover:bg-green-700 text-white rounded-lg transition-colors"
+                          title="Start"
+                        >
+                          <Play className="w-4 h-4" />
+                        </button>
+                      )}
+                      {session.status === 'running' && (
+                        <button
+                          onClick={() => stopSession(session.session_id)}
+                          className="p-2 bg-red-600 hover:bg-red-700 text-white rounded-lg transition-colors"
+                          title="Stop"
+                        >
+                          <Square className="w-4 h-4" />
+                        </button>
+                      )}
+                      <button
+                        onClick={() => {
+                          setSelectedSession(session.session_id);
+                          setView('monitor');
+                        }}
+                        className="p-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg transition-colors"
+                        title="Monitor"
+                      >
+                        <Eye className="w-4 h-4" />
+                      </button>
+                      <button
+                        onClick={() => deleteSession(session.session_id)}
+                        className="p-2 bg-slate-700 hover:bg-red-600 text-white rounded-lg transition-colors"
+                        title="Delete"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
                     </div>
                   </div>
+
+                  {session.error_message && (
+                    <div className="mt-3 p-3 bg-red-500/10 border border-red-500/30 rounded-lg">
+                      <p className="text-red-400 text-sm">{session.error_message}</p>
+                    </div>
+                  )}
                 </div>
 
-                <div className="flex gap-2 ml-4">
-                  {session.status === 'pending' && (
-                    <button
-                      onClick={() => startSession(session.session_id)}
-                      className="p-2 bg-green-600 hover:bg-green-700 text-white rounded-lg transition-colors"
-                      title="Start"
-                    >
-                      <Play className="w-4 h-4" />
-                    </button>
-                  )}
-                  {session.status === 'running' && (
-                    <button
-                      onClick={() => stopSession(session.session_id)}
-                      className="p-2 bg-red-600 hover:bg-red-700 text-white rounded-lg transition-colors"
-                      title="Stop"
-                    >
-                      <Square className="w-4 h-4" />
-                    </button>
-                  )}
-                  <button
-                    onClick={() => {
-                      setSelectedSession(session.session_id);
-                      setView('monitor');
-                    }}
-                    className="p-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg transition-colors"
-                    title="Monitor"
-                  >
-                    <Eye className="w-4 h-4" />
-                  </button>
-                  <button
-                    onClick={() => deleteSession(session.session_id)}
-                    className="p-2 bg-slate-700 hover:bg-red-600 text-white rounded-lg transition-colors"
-                    title="Delete"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
-                </div>
+                {/* Expanded Configuration Details */}
+                {isExpanded && (
+                  <div className="border-t border-slate-700 p-5 bg-slate-900/50">
+                    <h4 className="text-sm font-medium text-slate-300 mb-4 flex items-center gap-2">
+                      <Settings className="w-4 h-4 text-purple-400" />
+                      Session Configuration
+                    </h4>
+                    <div className="grid grid-cols-4 gap-4 text-sm">
+                      <div className="bg-slate-800/50 rounded-lg p-3">
+                        <span className="text-slate-500 text-xs">Algorithm</span>
+                        <p className="text-white font-medium">{session.algorithm.toUpperCase()}</p>
+                      </div>
+                      <div className="bg-slate-800/50 rounded-lg p-3">
+                        <span className="text-slate-500 text-xs">Dataset</span>
+                        <p className="text-white font-medium">{session.dataset?.toUpperCase() || 'CIFAR-10'}</p>
+                      </div>
+                      <div className="bg-slate-800/50 rounded-lg p-3">
+                        <span className="text-slate-500 text-xs">Model</span>
+                        <p className="text-white font-medium">{session.model?.toUpperCase() || 'CNN'}</p>
+                      </div>
+                      <div className="bg-slate-800/50 rounded-lg p-3">
+                        <span className="text-slate-500 text-xs">Total Rounds</span>
+                        <p className="text-white font-medium">{session.total_rounds}</p>
+                      </div>
+                      <div className="bg-slate-800/50 rounded-lg p-3">
+                        <span className="text-slate-500 text-xs">Clients</span>
+                        <p className="text-white font-medium">{session.num_clients || session.num_partitions || 5}</p>
+                      </div>
+                      <div className="bg-slate-800/50 rounded-lg p-3">
+                        <span className="text-slate-500 text-xs">Local Epochs</span>
+                        <p className="text-white font-medium">{session.local_epochs || 2}</p>
+                      </div>
+                      <div className="bg-slate-800/50 rounded-lg p-3">
+                        <span className="text-slate-500 text-xs">Batch Size</span>
+                        <p className="text-white font-medium">{session.local_batch_size || 32}</p>
+                      </div>
+                      <div className="bg-slate-800/50 rounded-lg p-3">
+                        <span className="text-slate-500 text-xs">Learning Rate</span>
+                        <p className="text-white font-medium">{session.learning_rate || 0.01}</p>
+                      </div>
+                      <div className="bg-slate-800/50 rounded-lg p-3">
+                        <span className="text-slate-500 text-xs">Partition Strategy</span>
+                        <p className="text-white font-medium">{session.partition_strategy?.toUpperCase() || 'IID'}</p>
+                      </div>
+                      <div className="bg-slate-800/50 rounded-lg p-3">
+                        <span className="text-slate-500 text-xs">Fraction Fit</span>
+                        <p className="text-white font-medium">{session.fraction_fit || 1.0}</p>
+                      </div>
+                      <div className="bg-slate-800/50 rounded-lg p-3">
+                        <span className="text-slate-500 text-xs">Created</span>
+                        <p className="text-white font-medium text-xs">{new Date(session.created_at).toLocaleString()}</p>
+                      </div>
+                      {session.started_at && (
+                        <div className="bg-slate-800/50 rounded-lg p-3">
+                          <span className="text-slate-500 text-xs">Started</span>
+                          <p className="text-white font-medium text-xs">{new Date(session.started_at).toLocaleString()}</p>
+                        </div>
+                      )}
+                    </div>
+                    
+                    {/* Additional algorithm-specific params */}
+                    {session.algorithm === 'fedprox' && session.proximal_mu && (
+                      <div className="mt-4 pt-4 border-t border-slate-700">
+                        <h5 className="text-xs font-medium text-slate-400 mb-2">FedProx Parameters</h5>
+                        <div className="grid grid-cols-4 gap-4 text-sm">
+                          <div className="bg-slate-800/50 rounded-lg p-3">
+                            <span className="text-slate-500 text-xs">Proximal μ</span>
+                            <p className="text-white font-medium">{session.proximal_mu}</p>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
-
-              {session.error_message && (
-                <div className="mt-3 p-3 bg-red-500/10 border border-red-500/30 rounded-lg">
-                  <p className="text-red-400 text-sm">{session.error_message}</p>
-                </div>
-              )}
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>
@@ -730,33 +1263,39 @@ const FederatedLearningDashboard: React.FC = () => {
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-slate-300 mb-2">Algorithm</label>
-              <select
-                value={form.algorithm}
-                onChange={(e) => setForm({ ...form, algorithm: e.target.value })}
-                className="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-purple-500"
-              >
-                <optgroup label="Standard">
-                  {ALGORITHMS.filter(a => a.category === 'standard').map(a => (
-                    <option key={a.id} value={a.id}>{a.name} - {a.description}</option>
-                  ))}
-                </optgroup>
-                <optgroup label="Adaptive">
-                  {ALGORITHMS.filter(a => a.category === 'adaptive').map(a => (
-                    <option key={a.id} value={a.id}>{a.name} - {a.description}</option>
-                  ))}
-                </optgroup>
-                <optgroup label="Byzantine-Robust">
-                  {ALGORITHMS.filter(a => a.category === 'robust').map(a => (
-                    <option key={a.id} value={a.id}>{a.name} - {a.description}</option>
-                  ))}
-                </optgroup>
-                <optgroup label="Privacy">
-                  {ALGORITHMS.filter(a => a.category === 'privacy').map(a => (
-                    <option key={a.id} value={a.id}>{a.name} - {a.description}</option>
-                  ))}
-                </optgroup>
-              </select>
+              <label className="block text-sm font-medium text-slate-300 mb-2">
+                Algorithms <span className="text-xs text-slate-400">(select multiple to create one job per algorithm)</span>
+              </label>
+              <div className="grid grid-cols-2 gap-2 p-3 bg-slate-700 border border-slate-600 rounded-lg">
+                {ALGORITHMS.map(a => (
+                  <label
+                    key={a.id}
+                    className={`flex items-center gap-2 p-2 rounded cursor-pointer transition-colors ${
+                      form.algorithms.includes(a.id)
+                        ? 'bg-purple-600/30 border border-purple-500'
+                        : 'hover:bg-slate-600 border border-transparent'
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={form.algorithms.includes(a.id)}
+                      onChange={() => toggleAlgorithm(a.id)}
+                      className="w-4 h-4 rounded border-slate-500 text-purple-500 focus:ring-purple-500 focus:ring-offset-0 bg-slate-600"
+                    />
+                    <div className="flex-1 min-w-0">
+                      <span className={`text-sm font-medium ${a.color.replace('bg-', 'text-').replace('-500', '-400')}`}>
+                        {a.name}
+                      </span>
+                      <p className="text-xs text-slate-400 truncate">{a.description}</p>
+                    </div>
+                  </label>
+                ))}
+              </div>
+              {form.algorithms.length > 1 && (
+                <p className="mt-1 text-xs text-purple-400">
+                  {form.algorithms.length} algorithms selected → {form.algorithms.length} training jobs will be created
+                </p>
+              )}
             </div>
 
             <div>
@@ -912,13 +1451,13 @@ const FederatedLearningDashboard: React.FC = () => {
           <Layers className="w-5 h-5 text-orange-400" />
           Algorithm-Specific Parameters
           <span className="text-xs text-slate-400 font-normal ml-2">
-            ({ALGORITHMS.find(a => a.id === form.algorithm)?.name || form.algorithm})
+            ({form.algorithms.map(a => ALGORITHMS.find(al => al.id === a)?.name || a).join(', ')})
           </span>
         </h3>
 
         <div className="grid grid-cols-3 gap-4">
           {/* FedProx: mu parameter */}
-          {form.algorithm === 'fedprox' && (
+          {form.algorithms.includes('fedprox') && (
             <div>
               <label className="block text-sm font-medium text-slate-300 mb-2">
                 Proximal μ (mu)
@@ -937,143 +1476,48 @@ const FederatedLearningDashboard: React.FC = () => {
             </div>
           )}
 
-          {/* Adaptive algorithms: server learning rate */}
-          {['fedadam', 'fedyogi', 'fedadagrad', 'fedavgm'].includes(form.algorithm) && (
-            <div>
-              <label className="block text-sm font-medium text-slate-300 mb-2">
-                Server Learning Rate
-                <span className="text-xs text-slate-500 ml-1">η (eta)</span>
-              </label>
-              <input
-                type="number"
-                step="0.01"
-                value={form.server_learning_rate}
-                onChange={(e) => setForm({ ...form, server_learning_rate: parseFloat(e.target.value) || 1.0 })}
-                className="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-purple-500"
-                min={0.001}
-                max={10}
-              />
-              <p className="text-xs text-slate-500 mt-1">Server-side optimizer step size</p>
-            </div>
-          )}
-
-          {/* QFedAvg: q parameter */}
-          {form.algorithm === 'qfedavg' && (
-            <div>
-              <label className="block text-sm font-medium text-slate-300 mb-2">
-                Fairness q
-                <span className="text-xs text-slate-500 ml-1">reweighting factor</span>
-              </label>
-              <input
-                type="number"
-                step="0.1"
-                defaultValue={0.2}
-                className="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-purple-500"
-                min={0}
-                max={5}
-              />
-              <p className="text-xs text-slate-500 mt-1">Higher q = more weight to worse-performing clients</p>
-            </div>
-          )}
-
-          {/* DP algorithms: noise/clipping */}
-          {form.algorithm.startsWith('dpfedavg') && (
+          {/* FedAvgM: server learning rate and momentum */}
+          {form.algorithms.includes('fedavgm') && (
             <>
               <div>
                 <label className="block text-sm font-medium text-slate-300 mb-2">
-                  Noise Multiplier
-                  <span className="text-xs text-slate-500 ml-1">σ</span>
+                  Server Learning Rate
+                  <span className="text-xs text-slate-500 ml-1">η (eta)</span>
                 </label>
                 <input
                   type="number"
                   step="0.01"
-                  defaultValue={1.0}
+                  value={form.server_learning_rate}
+                  onChange={(e) => setForm({ ...form, server_learning_rate: parseFloat(e.target.value) || 1.0 })}
                   className="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-purple-500"
-                  min={0}
+                  min={0.001}
+                  max={10}
                 />
-                <p className="text-xs text-slate-500 mt-1">Gaussian noise scale for privacy</p>
+                <p className="text-xs text-slate-500 mt-1">Server-side optimizer step size</p>
               </div>
               <div>
                 <label className="block text-sm font-medium text-slate-300 mb-2">
-                  Clipping Norm
-                  <span className="text-xs text-slate-500 ml-1">C</span>
+                  Server Momentum
+                  <span className="text-xs text-slate-500 ml-1">β</span>
                 </label>
                 <input
                   type="number"
-                  step="0.1"
-                  defaultValue={1.0}
+                  step="0.01"
+                  value={form.momentum}
+                  onChange={(e) => setForm({ ...form, momentum: parseFloat(e.target.value) || 0.9 })}
                   className="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-purple-500"
-                  min={0.1}
+                  min={0}
+                  max={0.99}
                 />
-                <p className="text-xs text-slate-500 mt-1">Max gradient norm before clipping</p>
+                <p className="text-xs text-slate-500 mt-1">Momentum coefficient (0.9 recommended)</p>
               </div>
             </>
           )}
 
-          {/* Byzantine-robust: trimming/selection params */}
-          {['fedtrimmedavg', 'bulyan'].includes(form.algorithm) && (
-            <div>
-              <label className="block text-sm font-medium text-slate-300 mb-2">
-                Trim Ratio
-                <span className="text-xs text-slate-500 ml-1">β</span>
-              </label>
-              <input
-                type="number"
-                step="0.05"
-                value={form.trim_ratio}
-                onChange={(e) => setForm({ ...form, trim_ratio: parseFloat(e.target.value) || 0.1 })}
-                className="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-purple-500"
-                min={0}
-                max={0.45}
-              />
-              <p className="text-xs text-slate-500 mt-1">Fraction of extreme updates to trim</p>
-            </div>
-          )}
-
-          {/* Byzantine-robust: Krum/MultiKrum/Bulyan params */}
-          {['krum', 'multikrum', 'bulyan', 'fedtrimmedavg'].includes(form.algorithm) && (
-            <div>
-              <label className="block text-sm font-medium text-slate-300 mb-2">
-                Byzantine Fraction
-                <span className="text-xs text-slate-500 ml-1">f</span>
-              </label>
-              <input
-                type="number"
-                step="0.05"
-                value={form.byzantine_fraction}
-                onChange={(e) => setForm({ ...form, byzantine_fraction: parseFloat(e.target.value) || 0.1 })}
-                className="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-purple-500"
-                min={0}
-                max={0.45}
-              />
-              <p className="text-xs text-slate-500 mt-1">Expected fraction of malicious clients</p>
-            </div>
-          )}
-
-          {/* Krum/MultiKrum: num_closest param */}
-          {['krum', 'multikrum'].includes(form.algorithm) && (
-            <div>
-              <label className="block text-sm font-medium text-slate-300 mb-2">
-                Num Closest (m)
-                <span className="text-xs text-slate-500 ml-1">clients to keep</span>
-              </label>
-              <input
-                type="number"
-                step="1"
-                value={form.num_closest}
-                onChange={(e) => setForm({ ...form, num_closest: parseInt(e.target.value) || 2 })}
-                className="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-purple-500"
-                min={1}
-                max={10}
-              />
-              <p className="text-xs text-slate-500 mt-1">{form.algorithm === 'krum' ? '1 for single Krum' : 'Number of updates to average'}</p>
-            </div>
-          )}
-
           {/* Default message for algorithms without special params */}
-          {!['fedprox', 'fedadam', 'fedyogi', 'fedadagrad', 'fedavgm', 'qfedavg', 'dpfedavg_adaptive', 'dpfedavg_fixed', 'fedtrimmedavg', 'bulyan', 'krum', 'multikrum'].includes(form.algorithm) && (
+          {!form.algorithms.some(a => ['fedprox', 'fedavgm'].includes(a)) && (
             <div className="col-span-3 text-center py-4 text-slate-500">
-              <p>No additional parameters for {ALGORITHMS.find(a => a.id === form.algorithm)?.name || form.algorithm}</p>
+              <p>No additional parameters needed for selected algorithms</p>
             </div>
           )}
         </div>
@@ -1377,8 +1821,28 @@ const FederatedLearningDashboard: React.FC = () => {
       );
     }
 
-    const { session, round_metrics = [], clients = [] } = sessionDetails;
-    const progress = session.total_rounds > 0 ? (session.current_round / session.total_rounds) * 100 : 0;
+    const session: FLSession | undefined = sessionDetails?.session;
+    const round_metrics: RoundMetric[] = Array.isArray(sessionDetails?.round_metrics)
+      ? sessionDetails.round_metrics
+      : [];
+    const clients: any[] = Array.isArray(sessionDetails?.clients) ? sessionDetails.clients : [];
+
+    if (!session) {
+      return (
+        <div className="space-y-4">
+          <div className="p-4 bg-red-500/10 border border-red-500/30 rounded-lg flex items-center justify-between">
+            <span className="text-red-400">Failed to load session details</span>
+            <button onClick={() => setView('list')} className="text-red-400 hover:text-red-300">
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    const totalRounds = Number(session.total_rounds) || 0;
+    const currentRound = Number(session.current_round) || 0;
+    const progress = totalRounds > 0 ? (currentRound / totalRounds) * 100 : 0;
 
     return (
       <div className="space-y-6">
@@ -1460,64 +1924,74 @@ const FederatedLearningDashboard: React.FC = () => {
           </div>
         </div>
 
-        {/* Charts */}
+        {/* Professional Charts */}
         <div className="grid grid-cols-2 gap-6">
           <div className="bg-slate-800/50 rounded-xl border border-slate-700 p-6">
             <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
               <TrendingUp className="w-5 h-5 text-green-400" />
               Accuracy Over Rounds
+              {round_metrics.length > 0 && (
+                <span className="ml-auto text-sm font-normal text-green-400">
+                  Latest: {((round_metrics[round_metrics.length - 1]?.avg_accuracy || 0) * 100).toFixed(2)}%
+                </span>
+              )}
             </h3>
-            <div className="h-48 flex items-end gap-1">
+            <div className="h-52">
               {round_metrics.length === 0 ? (
-                <div className="flex-1 flex items-center justify-center text-slate-500">
-                  Waiting for training data...
+                <div className="h-full flex items-center justify-center text-slate-500">
+                  <div className="text-center">
+                    <Loader2 className="w-8 h-8 animate-spin mx-auto mb-2 text-purple-400" />
+                    <p>Waiting for training data...</p>
+                  </div>
                 </div>
               ) : (
-                round_metrics.slice(-30).map((m: RoundMetric, i: number) => (
-                  <div
-                    key={i}
-                    className="flex-1 bg-gradient-to-t from-green-600 to-green-400 rounded-t transition-all hover:from-green-500 hover:to-green-300"
-                    style={{ height: `${Math.max(m.avg_accuracy * 100, 2)}%` }}
-                    title={`Round ${m.round}: ${(m.avg_accuracy * 100).toFixed(2)}%`}
-                  />
-                ))
+                <LineChart
+                  data={round_metrics.map((m: RoundMetric) => ({ x: m.round, y: m.avg_accuracy * 100 }))}
+                  width={380}
+                  height={200}
+                  color="#22c55e"
+                  gradientId="accuracyGradient"
+                  yAxisLabel="Accuracy (%)"
+                  xAxisLabel="Round"
+                  formatY={(v) => `${v.toFixed(1)}%`}
+                  formatX={(v) => `R${v}`}
+                />
               )}
             </div>
-            {round_metrics.length > 0 && (
-              <div className="flex justify-between text-xs text-slate-500 mt-2">
-                <span>Round {round_metrics[Math.max(0, round_metrics.length - 30)]?.round || 1}</span>
-                <span>Round {round_metrics[round_metrics.length - 1]?.round || 1}</span>
-              </div>
-            )}
           </div>
 
           <div className="bg-slate-800/50 rounded-xl border border-slate-700 p-6">
             <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
               <BarChart3 className="w-5 h-5 text-red-400" />
               Loss Over Rounds
+              {round_metrics.length > 0 && (
+                <span className="ml-auto text-sm font-normal text-red-400">
+                  Latest: {(round_metrics[round_metrics.length - 1]?.avg_loss || 0).toFixed(4)}
+                </span>
+              )}
             </h3>
-            <div className="h-48 flex items-end gap-1">
+            <div className="h-52">
               {round_metrics.length === 0 ? (
-                <div className="flex-1 flex items-center justify-center text-slate-500">
-                  Waiting for training data...
+                <div className="h-full flex items-center justify-center text-slate-500">
+                  <div className="text-center">
+                    <Loader2 className="w-8 h-8 animate-spin mx-auto mb-2 text-purple-400" />
+                    <p>Waiting for training data...</p>
+                  </div>
                 </div>
               ) : (
-                round_metrics.slice(-30).map((m: RoundMetric, i: number) => (
-                  <div
-                    key={i}
-                    className="flex-1 bg-gradient-to-t from-red-600 to-red-400 rounded-t transition-all hover:from-red-500 hover:to-red-300"
-                    style={{ height: `${Math.min(m.avg_loss * 50, 100)}%` }}
-                    title={`Round ${m.round}: ${m.avg_loss.toFixed(4)}`}
-                  />
-                ))
+                <LineChart
+                  data={round_metrics.map((m: RoundMetric) => ({ x: m.round, y: m.avg_loss }))}
+                  width={380}
+                  height={200}
+                  color="#ef4444"
+                  gradientId="lossGradient"
+                  yAxisLabel="Loss"
+                  xAxisLabel="Round"
+                  formatY={(v) => v.toFixed(3)}
+                  formatX={(v) => `R${v}`}
+                />
               )}
             </div>
-            {round_metrics.length > 0 && (
-              <div className="flex justify-between text-xs text-slate-500 mt-2">
-                <span>Round {round_metrics[Math.max(0, round_metrics.length - 30)]?.round || 1}</span>
-                <span>Round {round_metrics[round_metrics.length - 1]?.round || 1}</span>
-              </div>
-            )}
           </div>
         </div>
 
