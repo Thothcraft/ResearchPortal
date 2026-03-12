@@ -15,12 +15,14 @@ import {
   ChevronLeft,
   ChevronRight,
   Workflow,
+  Camera,
 } from 'lucide-react';
 import { useState } from 'react';
 
 const navItems = [
   { name: 'Home', href: '/home', icon: Home, description: 'Statistics & Overview' },
   { name: 'Devices', href: '/devices', icon: Monitor, description: 'Online/Offline Devices' },
+  { name: 'Media', href: '/media', icon: Camera, description: 'Photos & Videos' },
   { name: 'Data', href: '/data', icon: Database, description: 'Data Files' },
   { name: 'Processing', href: '/processing', icon: Workflow, description: 'Data Pipelines' },
   { name: 'Training', href: '/training', icon: Brain, description: 'Model Training' },
