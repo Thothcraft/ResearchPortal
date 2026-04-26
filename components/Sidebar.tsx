@@ -17,7 +17,7 @@ import {
   Workflow,
 } from 'lucide-react';
 import { useState } from 'react';
-import ThemeCat from './ThemeCat';
+import ThemeSlider from './ThemeSlider';
 
 const navItems = [
   { name: 'Home', href: '/home', icon: Home, description: 'Statistics & Overview' },
@@ -61,7 +61,7 @@ export default function Sidebar() {
           </div>
         )}
         <div className="flex items-center gap-2">
-          {!collapsed && <ThemeCat />}
+          {!collapsed && <ThemeSlider />}
           <button
             onClick={() => setCollapsed(!collapsed)}
             className="p-1.5 rounded-lg transition-colors"
