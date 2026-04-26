@@ -36,28 +36,35 @@ export default function Sidebar() {
   return (
     <aside
       className={cn(
-        'fixed left-0 top-0 z-40 h-screen bg-gradient-to-b from-slate-900 to-slate-800 border-r border-slate-700 transition-all duration-300 flex flex-col',
+        'fixed left-0 top-0 z-40 h-screen transition-all duration-300 flex flex-col',
         collapsed ? 'w-20' : 'w-64'
       )}
+      style={{
+        background: 'var(--bg-secondary)',
+        borderRight: '1px solid var(--border-color)'
+      }}
     >
       {/* Logo */}
-      <div className="flex items-center justify-between h-16 px-4 border-b border-slate-700">
+      <div className="flex items-center justify-between h-16 px-4" style={{ borderBottom: '1px solid var(--border-color)' }}>
         {!collapsed && (
           <Link href="/home" className="flex items-center gap-2">
-            <div className="w-8 h-8 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-lg flex items-center justify-center">
+            <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: 'var(--accent)' }}>
               <span className="text-white font-bold text-sm">T</span>
             </div>
-            <span className="text-white font-semibold text-lg">ThothCraft</span>
+            <span className="font-semibold text-lg" style={{ color: 'var(--text-primary)' }}>ThothCraft</span>
           </Link>
         )}
         {collapsed && (
-          <div className="w-8 h-8 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-lg flex items-center justify-center mx-auto">
+          <div className="w-8 h-8 rounded-lg flex items-center justify-center mx-auto" style={{ background: 'var(--accent)' }}>
             <span className="text-white font-bold text-sm">T</span>
           </div>
         )}
         <button
           onClick={() => setCollapsed(!collapsed)}
-          className="p-1.5 rounded-lg hover:bg-slate-700 text-slate-400 hover:text-white transition-colors"
+          className="p-1.5 rounded-lg transition-colors"
+          style={{ color: 'var(--text-muted)' }}
+          onMouseEnter={(e) => e.currentTarget.style.background = 'var(--bg-accent-dim)'}
+          onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
         >
           {collapsed ? <ChevronRight className="w-5 h-5" /> : <ChevronLeft className="w-5 h-5" />}
         </button>
@@ -75,19 +82,36 @@ export default function Sidebar() {
               href={item.href}
               className={cn(
                 'flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-200 group',
-                isActive
-                  ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-500/25'
-                  : 'text-slate-400 hover:bg-slate-700/50 hover:text-white'
+                isActive ? 'text-white shadow-lg' : ''
               )}
+              style={{
+                background: isActive ? 'var(--accent)' : 'transparent',
+                color: isActive ? 'white' : 'var(--text-muted)',
+                boxShadow: isActive ? '0 4px 12px rgba(0,0,0,0.15)' : 'none'
+              }}
+              onMouseEnter={(e) => {
+                if (!isActive) {
+                  e.currentTarget.style.background = 'var(--bg-accent-dim)';
+                  e.currentTarget.style.color = 'var(--text-primary)';
+                }
+              }}
+              onMouseLeave={(e) => {
+                if (!isActive) {
+                  e.currentTarget.style.background = 'transparent';
+                  e.currentTarget.style.color = 'var(--text-muted)';
+                }
+              }}
             >
-              <Icon className={cn('w-5 h-5 flex-shrink-0', isActive && 'text-white')} />
+              <Icon className={cn('w-5 h-5 flex-shrink-0')} />
               {!collapsed && (
                 <div className="flex flex-col">
                   <span className="text-sm font-medium">{item.name}</span>
-                  <span className={cn(
-                    'text-xs',
-                    isActive ? 'text-indigo-200' : 'text-slate-500 group-hover:text-slate-400'
-                  )}>
+                  <span
+                    className="text-xs"
+                    style={{
+                      color: isActive ? 'rgba(255,255,255,0.8)' : 'var(--text-secondary)'
+                    }}
+                  >
                     {item.description}
                   </span>
                 </div>
@@ -98,19 +122,28 @@ export default function Sidebar() {
       </nav>
 
       {/* User Section */}
-      <div className="border-t border-slate-700 p-4">
+      <div className="p-4" style={{ borderTop: '1px solid var(--border-color)' }}>
         {!collapsed && user && (
           <div className="mb-3 px-2">
-            <p className="text-white text-sm font-medium truncate">{user.username}</p>
-            <p className="text-slate-500 text-xs">Researcher</p>
+            <p className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>{user.username}</p>
+            <p className="text-xs" style={{ color: 'var(--text-secondary)' }}>Researcher</p>
           </div>
         )}
         <button
           onClick={logout}
           className={cn(
-            'flex items-center gap-3 w-full px-3 py-2.5 rounded-lg text-red-400 hover:bg-red-500/10 hover:text-red-300 transition-colors',
+            'flex items-center gap-3 w-full px-3 py-2.5 rounded-lg transition-colors',
             collapsed && 'justify-center'
           )}
+          style={{ color: '#ef4444' }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.background = 'rgba(239, 68, 68, 0.1)';
+            e.currentTarget.style.color = '#f87171';
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.background = 'transparent';
+            e.currentTarget.style.color = '#ef4444';
+          }}
         >
           <LogOut className="w-5 h-5 flex-shrink-0" />
           {!collapsed && <span className="text-sm font-medium">Sign Out</span>}
