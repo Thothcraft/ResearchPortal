@@ -101,36 +101,34 @@ export default function ThemeCat() {
         </button>
       </div>
 
-      {/* Chat Modal */}
+      {/* Chat Side Panel */}
       {showChat && (
-        <div className="chat-modal-overlay" onClick={toggleChat}>
-          <div className="chat-modal" onClick={(e) => e.stopPropagation()}>
-            <div className="chat-header">
-              <h3>🐱 ThothCraft AI Assistant</h3>
-              <button className="close-button" onClick={toggleChat}>×</button>
-            </div>
-            <div className="chat-messages">
-              {chatMessages.map((msg, index) => (
-                <div key={index} className={`message ${msg.role}`}>
-                  <div className="message-content">{msg.content}</div>
-                </div>
-              ))}
-            </div>
-            <div className="chat-input">
-              <textarea
-                value={chatInput}
-                onChange={(e) => setChatInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !e.shiftKey) {
-                    e.preventDefault();
-                    sendMessage();
-                  }
-                }}
-                placeholder="Type your message..."
-                rows={2}
-              />
-              <button onClick={sendMessage} disabled={!chatInput.trim()}>Send</button>
-            </div>
+        <div className="chat-side-panel">
+          <div className="chat-side-header">
+            <h3>🐱 ThothCraft AI Assistant</h3>
+            <button className="close-button" onClick={toggleChat}>×</button>
+          </div>
+          <div className="chat-messages">
+            {chatMessages.map((msg, index) => (
+              <div key={index} className={`message ${msg.role}`}>
+                <div className="message-content">{msg.content}</div>
+              </div>
+            ))}
+          </div>
+          <div className="chat-input">
+            <textarea
+              value={chatInput}
+              onChange={(e) => setChatInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  sendMessage();
+                }
+              }}
+              placeholder="Type your message..."
+              rows={2}
+            />
+            <button onClick={sendMessage} disabled={!chatInput.trim()}>Send</button>
           </div>
         </div>
       )}
@@ -227,51 +225,33 @@ export default function ThemeCat() {
           cursor: pointer;
         }
 
-        .chat-modal-overlay {
+        .chat-side-panel {
           position: fixed;
           top: 0;
-          left: 0;
           right: 0;
-          bottom: 0;
-          background: rgba(0, 0, 0, 0.5);
-          backdrop-filter: blur(4px);
-          z-index: 10000;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          animation: fadeIn 0.2s ease;
-        }
-
-        @keyframes fadeIn {
-          from { opacity: 0; }
-          to { opacity: 1; }
-        }
-
-        .chat-modal {
+          width: 400px;
+          height: 100vh;
           background: var(--bg-card, #ffffff);
-          border: 1px solid var(--border-color, rgba(0,0,0,0.06));
-          border-radius: 20px;
-          width: 90%;
-          max-width: 500px;
-          max-height: 80vh;
+          border-left: 1px solid var(--border-color, rgba(0,0,0,0.06));
+          box-shadow: -4px 0 24px var(--shadow-medium, rgba(0,0,0,0.08));
           display: flex;
           flex-direction: column;
-          box-shadow: 0 8px 32px var(--shadow-medium, rgba(0,0,0,0.08));
-          animation: slideUp 0.3s ease;
+          z-index: 10000;
+          animation: slideInRight 0.3s ease;
         }
 
-        @keyframes slideUp {
+        @keyframes slideInRight {
           from {
-            transform: translateY(20px);
+            transform: translateX(100%);
             opacity: 0;
           }
           to {
-            transform: translateY(0);
+            transform: translateX(0);
             opacity: 1;
           }
         }
 
-        .chat-header {
+        .chat-side-header {
           display: flex;
           align-items: center;
           justify-content: space-between;
@@ -279,7 +259,7 @@ export default function ThemeCat() {
           border-bottom: 1px solid var(--border-color, rgba(0,0,0,0.06));
         }
 
-        .chat-header h3 {
+        .chat-side-header h3 {
           margin: 0;
           font-size: 18px;
           font-weight: 600;
