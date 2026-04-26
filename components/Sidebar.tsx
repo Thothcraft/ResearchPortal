@@ -17,6 +17,7 @@ import {
   Workflow,
 } from 'lucide-react';
 import { useState } from 'react';
+import ThemeCat from './ThemeCat';
 
 const navItems = [
   { name: 'Home', href: '/home', icon: Home, description: 'Statistics & Overview' },
@@ -59,15 +60,18 @@ export default function Sidebar() {
             <span className="text-white font-bold text-sm">T</span>
           </div>
         )}
-        <button
-          onClick={() => setCollapsed(!collapsed)}
-          className="p-1.5 rounded-lg transition-colors"
-          style={{ color: 'var(--text-muted)' }}
-          onMouseEnter={(e) => e.currentTarget.style.background = 'var(--bg-accent-dim)'}
-          onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
-        >
-          {collapsed ? <ChevronRight className="w-5 h-5" /> : <ChevronLeft className="w-5 h-5" />}
-        </button>
+        <div className="flex items-center gap-2">
+          {!collapsed && <ThemeCat />}
+          <button
+            onClick={() => setCollapsed(!collapsed)}
+            className="p-1.5 rounded-lg transition-colors"
+            style={{ color: 'var(--text-muted)' }}
+            onMouseEnter={(e) => e.currentTarget.style.background = 'var(--bg-accent-dim)'}
+            onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+          >
+            {collapsed ? <ChevronRight className="w-5 h-5" /> : <ChevronLeft className="w-5 h-5" />}
+          </button>
+        </div>
       </div>
 
       {/* Navigation */}

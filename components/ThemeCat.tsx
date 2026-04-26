@@ -5,7 +5,6 @@ import React, { useState, useEffect } from 'react';
 export default function ThemeCat() {
   const [showChat, setShowChat] = useState(false);
   const [themePos, setThemePos] = useState(15);
-  const [showSlider, setShowSlider] = useState(false);
   const [chatInput, setChatInput] = useState('');
   const [chatMessages, setChatMessages] = useState([
     { role: 'assistant', content: 'Hello! I\'m your ThothCraft AI assistant. How can I help you today?' }
@@ -77,27 +76,23 @@ export default function ThemeCat() {
 
   return (
     <>
-      {/* Theme Cat Button */}
-      <div className="theme-cat-container">
+      {/* Theme Slider in Top Bar - this component will be placed in the layout header */}
+      <div className="theme-slider-top">
+        <span className="theme-label">Theme</span>
+        <input
+          type="range"
+          min="0"
+          max="100"
+          value={themePos}
+          className="theme-knob-input"
+          onChange={handleThemeChange}
+        />
         <button
-          className="theme-cat-button"
           onClick={toggleChat}
-          onMouseEnter={() => setShowSlider(true)}
-          onMouseLeave={() => setShowSlider(false)}
-          title="Click to chat, hover for theme"
+          className="chat-btn"
+          title="Open AI Assistant"
         >
-          <span className="cat-icon">🐱</span>
-          <div className={`theme-slider-wrapper ${showSlider ? 'visible' : ''}`}>
-            <input
-              type="range"
-              min="0"
-              max="100"
-              value={themePos}
-              className="theme-knob-input"
-              onChange={handleThemeChange}
-              onClick={(e) => e.stopPropagation()}
-            />
-          </div>
+          💬
         </button>
       </div>
 
@@ -119,12 +114,7 @@ export default function ThemeCat() {
             <textarea
               value={chatInput}
               onChange={(e) => setChatInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && !e.shiftKey) {
-                  e.preventDefault();
-                  sendMessage();
-                }
-              }}
+              onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && (e.preventDefault(), sendMessage())}
               placeholder="Type your message..."
               rows={2}
             />
@@ -134,61 +124,32 @@ export default function ThemeCat() {
       )}
 
       <style jsx global>{`
-        .theme-cat-container {
-          position: fixed;
-          bottom: 24px;
-          right: 24px;
-          z-index: 9999;
-        }
-
-        .theme-cat-button {
-          position: relative;
+        .theme-slider-top {
           display: flex;
           align-items: center;
-          justify-content: center;
-          width: 56px;
-          height: 56px;
-          border-radius: 50%;
-          background: var(--bg-card, #ffffff);
-          border: 2px solid var(--border-color, rgba(0,0,0,0.06));
-          box-shadow: 0 4px 20px var(--shadow-medium, rgba(0,0,0,0.08));
+          gap: 8px;
+          margin-left: 16px;
+        }
+
+        .theme-label {
+          font-size: 12px;
+          color: var(--text-muted, #8a8a84);
+          font-weight: 500;
+        }
+
+        .chat-btn {
+          margin-left: 8px;
+          padding: 8px 12px;
+          background: var(--accent, #6b7f4a);
+          color: white;
+          border: none;
+          border-radius: 8px;
           cursor: pointer;
-          transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-          overflow: hidden;
+          font-size: 16px;
         }
 
-        .theme-cat-button:hover {
-          transform: scale(1.1);
-          box-shadow: 0 6px 24px var(--shadow-medium, rgba(0,0,0,0.08));
-        }
-
-        .cat-icon {
-          font-size: 28px;
-          transition: transform 0.3s ease;
-        }
-
-        .theme-cat-button:hover .cat-icon {
-          transform: scale(1.2);
-        }
-
-        .theme-slider-wrapper {
-          position: absolute;
-          right: 60px;
-          opacity: 0;
-          visibility: hidden;
-          transform: translateX(0);
-          transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-          background: var(--bg-card, #ffffff);
-          border: 1px solid var(--border-color, rgba(0,0,0,0.06));
-          border-radius: 24px;
-          padding: 8px 16px;
-          box-shadow: 0 4px 20px var(--shadow-medium, rgba(0,0,0,0.08));
-        }
-
-        .theme-slider-wrapper.visible {
-          opacity: 1;
-          visibility: visible;
-          transform: translateX(-120px);
+        .chat-btn:hover {
+          background: var(--accent-hover, #7d9456);
         }
 
         .theme-knob-input {

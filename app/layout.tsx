@@ -2,7 +2,6 @@ import type { Metadata, Viewport } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
 import { Providers } from "../providers";
-import ThemeCat from "../components/ThemeCat";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -30,7 +29,6 @@ export default function RootLayout({
       <body className={`${inter.variable} font-sans antialiased`} suppressHydrationWarning>
         <Providers>
           {children}
-          <ThemeCat />
         </Providers>
       </body>
     </html>
