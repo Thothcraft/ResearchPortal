@@ -15,6 +15,7 @@ import {
 const FigureExport = dynamic(() => import('@/components/FigureExport'), { ssr: false });
 const PlotCustomizer = dynamic(() => import('@/components/PlotCustomizer'), { ssr: false });
 const FederatedLearningDashboard = dynamic(() => import('@/components/FederatedLearningDashboard'), { ssr: false });
+import { DatasetStats } from '@/components/DatasetStats';
 import { 
   TrainingJobGroup, 
   TrainingJobInGroup, 
@@ -73,10 +74,12 @@ const PREPROCESSING_STEP_HELP: Record<string, { title: string; details: string }
 };
 
 type TrainingMode = 'cloud' | 'on-device' | 'federated';
+type DatasetType = 'image' | 'csi' | 'imu' | 'audio' | 'mixed' | 'other';
 type Dataset = {
   id: number;
   name: string;
   description: string | null;
+  dataset_type?: DatasetType;
   file_count: number;
   labels: string[];
   label_distribution?: Record<string, number>;
@@ -265,6 +268,19 @@ function detectDataType(filename: string): string {
   return 'other';
 };
 
+function getEffectiveDatasetType(dataset: Dataset | null): DatasetType {
+  if (dataset?.dataset_type && dataset.dataset_type !== 'other') return dataset.dataset_type;
+  if (!dataset?.files || dataset.files.length === 0) return dataset?.dataset_type || 'other';
+  const types = new Set(dataset.files.map(f => detectDataType(f.filename)));
+  if (types.has('img') || types.has('vid')) return 'image';
+  if (types.has('csi') || types.has('mfcw')) return 'csi';
+  if (types.has('imu')) return 'imu';
+  if (types.size > 1) return 'mixed';
+  return dataset?.dataset_type || 'other';
+}
+
+const isLineBasedDataset = (type: DatasetType) => ['csi', 'imu', 'other', 'mixed'].includes(type);
+
 const TRAINING_STATUS_CONFIG: Record<string, { color: string; bg: string; icon: React.ElementType }> = {
   completed: { color: 'text-green-400', bg: 'bg-green-500/20', icon: CheckCircle },
   failed: { color: 'text-red-400', bg: 'bg-red-500/20', icon: AlertCircle },
@@ -280,6 +296,7 @@ export default function TrainingPage() {
   const [showCreateDataset, setShowCreateDataset] = useState(false);
   const [newDatasetName, setNewDatasetName] = useState('');
   const [newDatasetDesc, setNewDatasetDesc] = useState('');
+  const [newDatasetType, setNewDatasetType] = useState<DatasetType>('csi');
   const [newDatasetLabel, setNewDatasetLabel] = useState('');
   const [newDatasetLabels, setNewDatasetLabels] = useState<string[]>([]);
   const [datasetLabelOverrides, setDatasetLabelOverrides] = useState<Record<number, string[]>>({});
@@ -438,8 +455,14 @@ export default function TrainingPage() {
     cancellingJob: false,
     deletingModel: null as number | null,
     downloadingModel: null as number | null,
-    renamingModel: null as number | null
+    renamingModel: null as number | null,
+    deployingModel: null as number | null,
   });
+  const [showDeployModal, setShowDeployModal] = useState<{modelId: number; modelName: string} | null>(null);
+  const [devices, setDevices] = useState<{device_id: string; device_name: string; online: boolean; device_type: string; last_seen?: string}[]>([]);
+  const [selectedDeviceId, setSelectedDeviceId] = useState<string>('');
+  const [devicesLoading, setDevicesLoading] = useState(false);
+  const [showStatsModal, setShowStatsModal] = useState<{datasetName: string; files: any[]} | null>(null);
 
   const fetchData = async (options?: { datasets?: boolean; jobs?: boolean; models?: boolean; files?: boolean }) => {
     const opts = { datasets: true, jobs: true, models: true, files: true, ...options };
@@ -729,9 +752,10 @@ export default function TrainingPage() {
         new Set(newDatasetLabels.map(l => l.trim()).filter(Boolean))
       );
 
-      const created = await post('/datasets/create', { name: newDatasetName.trim(), description: newDatasetDesc.trim() });
+      const created = await post('/datasets/create', { name: newDatasetName.trim(), description: newDatasetDesc.trim(), dataset_type: newDatasetType });
       setNewDatasetName('');
       setNewDatasetDesc('');
+      setNewDatasetType('csi');
       setNewDatasetLabel('');
       setNewDatasetLabels([]);
       setShowCreateDataset(false);
@@ -1013,6 +1037,37 @@ export default function TrainingPage() {
       toast.success('Model Renamed', `Model renamed to "${newModelName.trim()}"`);
     } catch { toast.error('Rename Failed', 'Failed to rename model'); }
     finally { setOperations(prev => ({ ...prev, renamingModel: null })); }
+  };
+
+  const handleDeployModel = async () => {
+    if (!showDeployModal || !selectedDeviceId) return;
+    setOperations(prev => ({ ...prev, deployingModel: showDeployModal.modelId }));
+    try {
+      const result = await post(`/datasets/models/${showDeployModal.modelId}/deploy`, {
+        model_id: showDeployModal.modelId,
+        device_id: selectedDeviceId,
+        config: {},
+      });
+      if (result?.success) {
+        toast.success('Deploying', `${result.model_name} → ${result.device_name}`);
+        setShowDeployModal(null);
+        setSelectedDeviceId('');
+      } else {
+        toast.error('Deploy Failed', result?.detail || 'Unknown error');
+      }
+    } catch (err: any) {
+      toast.error('Deploy Failed', err?.message || 'Network error');
+    } finally {
+      setOperations(prev => ({ ...prev, deployingModel: null }));
+    }
+  };
+
+  const loadDevices = async () => {
+    setDevicesLoading(true);
+    try {
+      const result = await get('/device/list?include_offline=true');
+      if (result?.devices) setDevices(result.devices);
+    } catch {} finally { setDevicesLoading(false); }
   };
 
   const handleDownloadModel = async (modelId: number, modelName: string) => {
@@ -1490,10 +1545,18 @@ export default function TrainingPage() {
                       <button onClick={() => setShowCreateDataset(true)} className="mt-3 text-indigo-400 hover:text-indigo-300 text-sm">Create your first dataset</button>
                     </div>
                   ) : datasets.map(dataset => (
-                    <button key={dataset.id} onClick={() => handleSelectDataset(dataset)} className={`w-full p-4 rounded-xl border text-left transition-all ${selectedDataset?.id === dataset.id ? 'border-indigo-500 bg-indigo-500/10' : 'border-slate-700 bg-slate-800/50 hover:border-slate-600'}`}>
-                      <div className="flex items-center justify-between mb-2"><h3 className="font-medium text-white">{dataset.name}</h3><ChevronRight className="w-4 h-4 text-slate-400" /></div>
+                    <div key={dataset.id} className={`w-full p-4 rounded-xl border text-left transition-all ${selectedDataset?.id === dataset.id ? 'border-indigo-500 bg-indigo-500/10' : 'border-slate-700 bg-slate-800/50 hover:border-slate-600'}`}>
+                      <div className="flex items-center justify-between mb-2">
+                        <button onClick={() => handleSelectDataset(dataset)} className="flex-1 text-left"><h3 className="font-medium text-white">{dataset.name}</h3></button>
+                        <div className="flex items-center gap-1">
+                          <button onClick={() => setShowStatsModal({ datasetName: dataset.name, files: dataset.files || [] })} className="p-1.5 text-slate-400 hover:text-indigo-400 hover:bg-indigo-500/10 rounded-lg transition-colors" title="View Statistics">
+                            <BarChart3 className="w-4 h-4" />
+                          </button>
+                          <ChevronRight className="w-4 h-4 text-slate-400" />
+                        </div>
+                      </div>
                       <div className="flex items-center gap-3 text-sm text-slate-400"><span className="flex items-center gap-1"><FileText className="w-3 h-3" />{dataset.file_count} files</span><span className="flex items-center gap-1"><Tag className="w-3 h-3" />{dataset.labels?.length || 0} labels</span></div>
-                    </button>
+                    </div>
                   ))}
                 </div>
               </div>
@@ -2070,6 +2133,17 @@ export default function TrainingPage() {
                               )}
                             </button>
                             <button 
+                              onClick={() => { setShowDeployModal({ modelId: m.id, modelName: m.name }); loadDevices(); }} 
+                              disabled={operations.deployingModel === m.id}
+                              className="flex items-center gap-1 px-2 py-1 text-green-400 hover:bg-green-500/10 disabled:text-green-600 disabled:hover:bg-green-500/5 rounded text-sm"
+                            >
+                              {operations.deployingModel === m.id ? (
+                                <><Loader2 className="w-4 h-4 animate-spin" /> Deploying...</>
+                              ) : (
+                                <><Rocket className="w-4 h-4" /> Deploy</>
+                              )}
+                            </button>
+                            <button 
                               onClick={() => { setRenamingModel(m); setNewModelName(m.name); }} 
                               disabled={operations.renamingModel === m.id}
                               className="flex items-center gap-1 px-2 py-1 text-blue-400 hover:bg-blue-500/10 disabled:text-blue-600 disabled:hover:bg-blue-500/5 rounded text-sm"
@@ -2175,6 +2249,34 @@ export default function TrainingPage() {
             <div className="space-y-4">
               <div><label className="block text-sm text-slate-300 mb-1">Dataset Name</label><input type="text" value={newDatasetName} onChange={(e) => setNewDatasetName(e.target.value)} placeholder="e.g., Activity Recognition" className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white placeholder-slate-500" /></div>
               <div><label className="block text-sm text-slate-300 mb-1">Description</label><textarea value={newDatasetDesc} onChange={(e) => setNewDatasetDesc(e.target.value)} placeholder="Describe your dataset..." rows={3} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white placeholder-slate-500" /></div>
+              <div>
+                <label className="block text-sm text-slate-300 mb-1">Dataset Type</label>
+                <div className="grid grid-cols-3 gap-2">
+                  {([
+                    { value: 'csi' as DatasetType, label: 'CSI', icon: '📡', desc: 'WiFi Channel State Information' },
+                    { value: 'image' as DatasetType, label: 'Image', icon: '🖼️', desc: 'Photos, frames, timelapse' },
+                    { value: 'imu' as DatasetType, label: 'IMU', icon: '📱', desc: 'Accelerometer & gyroscope' },
+                    { value: 'audio' as DatasetType, label: 'Audio', icon: '🎤', desc: 'Sound recordings' },
+                    { value: 'mixed' as DatasetType, label: 'Mixed', icon: '🔀', desc: 'Multiple sensor types' },
+                    { value: 'other' as DatasetType, label: 'Other', icon: '📁', desc: 'Custom data format' },
+                  ]).map(opt => (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      onClick={() => setNewDatasetType(opt.value)}
+                      className={`p-2 rounded-lg border text-left transition-colors ${newDatasetType === opt.value ? 'bg-indigo-600/20 border-indigo-500/50 ring-1 ring-indigo-500/30' : 'bg-slate-800/50 border-slate-700 hover:border-slate-500'}`}
+                    >
+                      <div className="flex items-center gap-2">
+                        <span className="text-lg">{opt.icon}</span>
+                        <div>
+                          <div className={`text-sm font-medium ${newDatasetType === opt.value ? 'text-indigo-300' : 'text-white'}`}>{opt.label}</div>
+                          <div className="text-[10px] text-slate-500">{opt.desc}</div>
+                        </div>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </div>
               <div>
                 <label className="block text-sm text-slate-300 mb-1">Labels</label>
                 <div className="flex gap-2">
@@ -2297,7 +2399,7 @@ export default function TrainingPage() {
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
           <div className="bg-slate-900 rounded-xl p-6 w-full max-w-2xl border border-slate-700 max-h-[90vh] overflow-y-auto">
             <h3 className="text-xl font-semibold text-white mb-4">Configure Training</h3>
-            <p className="text-slate-400 text-sm mb-4">Dataset: <span className="text-white">{selectedDataset.name}</span> ({selectedDataset.files?.length} files)</p>
+            <p className="text-slate-400 text-sm mb-4">Dataset: <span className="text-white">{selectedDataset.name}</span> ({selectedDataset.files?.length} files) <span className="ml-2 px-2 py-0.5 rounded-full text-xs font-medium bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">{getEffectiveDatasetType(selectedDataset).toUpperCase()}</span></p>
             <div className="flex items-center justify-between mb-6">
               <div className="flex gap-2">
                 {(['Preprocessing', 'Model', 'Optimization', 'Review'] as const).map((label, idx) => (
@@ -2331,8 +2433,14 @@ export default function TrainingPage() {
                       <span className="text-yellow-400 font-medium">Default (Auto-detect)</span>: Uses built-in preprocessing based on detected data type:
                     </p>
                     <ul className="text-xs text-slate-500 mt-1 ml-4 list-disc">
-                      <li><span className="text-cyan-400">CSI</span>: Extract amplitude+phase → Filter subcarriers (5-32) → Window (1000 rows) → Flatten</li>
-                      <li><span className="text-green-400">IMU</span>: Window (128 rows) → Flatten to feature vector</li>
+                      {getEffectiveDatasetType(selectedDataset) === 'image' ? (
+                        <li><span className="text-pink-400">Image</span>: Resize → Normalize → Augment (optional) → Batch</li>
+                      ) : (
+                        <>
+                          <li><span className="text-cyan-400">CSI</span>: Extract amplitude+phase → Filter subcarriers (5-32) → Window (1000 rows) → Flatten</li>
+                          <li><span className="text-green-400">IMU</span>: Window (128 rows) → Flatten to feature vector</li>
+                        </>
+                      )}
                     </ul>
                     <p className="text-xs text-slate-500 mt-1">
                       For custom preprocessing, create a pipeline in the <span className="text-indigo-400">Processing</span> page.
@@ -2353,16 +2461,19 @@ export default function TrainingPage() {
                                 <div className="text-sm text-white font-medium">{file.filename}</div>
                                 <div className="text-xs text-slate-500">
                                   Label: <span className="text-indigo-300">{file.label}</span>
-                                  {lineCount?.loading ? (
-                                    <span className="ml-2 text-slate-400">· Loading lines...</span>
-                                  ) : totalLines > 0 ? (
-                                    <span className="ml-2 text-slate-400">· <span className="text-green-400">{selectedLines}</span>/{totalLines} lines</span>
-                                  ) : null}
+                                  {isLineBasedDataset(getEffectiveDatasetType(selectedDataset)) && (
+                                    lineCount?.loading ? (
+                                      <span className="ml-2 text-slate-400">· Loading lines...</span>
+                                    ) : totalLines > 0 ? (
+                                      <span className="ml-2 text-slate-400">· <span className="text-green-400">{selectedLines}</span>/{totalLines} lines</span>
+                                    ) : null
+                                  )}
                                 </div>
                               </div>
                             </div>
-                            <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-                              {/* Lines Selection */}
+                            <div className={`grid grid-cols-1 ${isLineBasedDataset(getEffectiveDatasetType(selectedDataset)) ? 'md:grid-cols-4' : 'md:grid-cols-3'} gap-3`}>
+                              {/* Lines Selection - only for line-based datasets (CSI, IMU, etc.) */}
+                              {isLineBasedDataset(getEffectiveDatasetType(selectedDataset)) && (
                               <div>
                                 <label className="block text-xs text-slate-400 mb-1">Lines to Use</label>
                                 <div className="flex items-center gap-1">
@@ -2383,6 +2494,7 @@ export default function TrainingPage() {
                                   <span className="text-xs text-slate-500 whitespace-nowrap">/ {totalLines}</span>
                                 </div>
                               </div>
+                              )}
                               <div>
                                 <label className="block text-xs text-slate-400 mb-1">Pipeline</label>
                                 <select
@@ -2526,14 +2638,19 @@ export default function TrainingPage() {
                     };
                     
                     const formatLines = (n: number) => n.toLocaleString();
+                    const dsType = getEffectiveDatasetType(selectedDataset);
+                    const isImageDs = dsType === 'image';
+                    const totalTrainItems = isImageDs ? trainOnlyFiles.length + splitFiles.length : totalTrainLines;
+                    const totalTestItems = isImageDs ? testOnlyFiles.length + Math.ceil(splitFiles.length * 0.2) : totalTestLines;
+                    const totalItems = isImageDs ? files.length : totalLines;
                     
                     return (
                       <div className="space-y-4">
                         {/* Overall Stats */}
                         <div className="flex items-center gap-4 text-xs text-slate-400 pb-3 border-b border-slate-700">
                           <span>Total files: <span className="text-white font-medium">{files.length}</span></span>
-                          <span>Total lines: <span className="text-white font-medium">{formatLines(totalLines)}</span></span>
-                          <span>Train/Test ratio: <span className="text-white font-medium">{totalLines > 0 ? `${((totalTrainLines / totalLines) * 100).toFixed(0)}%` : '0%'} / {totalLines > 0 ? `${((totalTestLines / totalLines) * 100).toFixed(0)}%` : '0%'}</span></span>
+                          {!isImageDs && <span>Total lines: <span className="text-white font-medium">{formatLines(totalLines)}</span></span>}
+                          <span>Train/Test ratio: <span className="text-white font-medium">{totalItems > 0 ? `${((totalTrainItems / totalItems) * 100).toFixed(0)}%` : '0%'} / {totalItems > 0 ? `${((totalTestItems / totalItems) * 100).toFixed(0)}%` : '0%'}</span></span>
                         </div>
                         
                         <div className="grid grid-cols-2 gap-4">
@@ -3346,6 +3463,72 @@ export default function TrainingPage() {
         </div>
       )}
 
+      {/* Deploy Model Modal */}
+      {showDeployModal && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
+          <div className="bg-slate-900 rounded-xl p-6 w-full max-w-md border border-slate-700">
+            <h3 className="text-xl font-semibold text-white mb-2">Deploy Model</h3>
+            <p className="text-sm text-slate-400 mb-4">
+              Deploy <span className="text-indigo-300 font-medium">{showDeployModal.modelName}</span> to a device
+            </p>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm text-slate-300 mb-1">Target Device</label>
+                {devicesLoading ? (
+                  <div className="flex items-center gap-2 text-slate-400 text-sm py-2">
+                    <Loader2 className="w-4 h-4 animate-spin" /> Loading devices...
+                  </div>
+                ) : devices.length === 0 ? (
+                  <div className="p-3 bg-slate-800/50 rounded-lg border border-slate-700 text-sm text-slate-400">
+                    No devices registered. Connect a Thoth device first.
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {devices.map(d => (
+                      <button
+                        key={d.device_id}
+                        type="button"
+                        onClick={() => setSelectedDeviceId(d.device_id)}
+                        className={`w-full p-3 rounded-lg border text-left transition-colors ${
+                          selectedDeviceId === d.device_id
+                            ? 'bg-green-600/20 border-green-500/50 ring-1 ring-green-500/30'
+                            : 'bg-slate-800/50 border-slate-700 hover:border-slate-500'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <div className="text-sm font-medium text-white">{d.device_name}</div>
+                            <div className="text-xs text-slate-500">{d.device_type} · {d.device_id.slice(0, 8)}...</div>
+                          </div>
+                          <span className={`w-2 h-2 rounded-full ${d.online ? 'bg-green-400' : 'bg-slate-500'}`} />
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+            <div className="flex gap-3 mt-6">
+              <button
+                onClick={handleDeployModel}
+                disabled={!selectedDeviceId || operations.deployingModel === showDeployModal.modelId}
+                className="flex-1 px-4 py-2 bg-green-600 hover:bg-green-700 disabled:bg-slate-600 text-white rounded-lg font-medium flex items-center justify-center gap-2"
+              >
+                {operations.deployingModel === showDeployModal.modelId ? (
+                  <><Loader2 className="w-4 h-4 animate-spin" /> Deploying...</>
+                ) : (
+                  <><Rocket className="w-4 h-4" /> Deploy</>
+                )}
+              </button>
+              <button
+                onClick={() => { setShowDeployModal(null); setSelectedDeviceId(''); }}
+                className="flex-1 px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg font-medium"
+              >Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Job Details Modal */}
       {selectedJob && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
@@ -3894,6 +4077,15 @@ export default function TrainingPage() {
         }}
         selectedDatasetId={selectedDataset?.id}
       />
+
+      {/* Dataset Stats Modal */}
+      {showStatsModal && (
+        <DatasetStats
+          datasetName={showStatsModal.datasetName}
+          files={showStatsModal.files}
+          onClose={() => setShowStatsModal(null)}
+        />
+      )}
     </div>
   );
 }

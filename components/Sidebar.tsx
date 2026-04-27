@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import { useState } from 'react';
 import ThemeSlider from './ThemeSlider';
+import { LanguageSelector } from './LanguageSelector';
 
 const navItems = [
   { name: 'Home', href: '/home', icon: Home, description: 'Statistics & Overview' },
@@ -62,6 +63,7 @@ export default function Sidebar() {
         )}
         <div className="flex items-center gap-2">
           {!collapsed && <ThemeSlider />}
+          {!collapsed && <LanguageSelector />}
           <button
             onClick={() => setCollapsed(!collapsed)}
             className="p-1.5 rounded-lg transition-colors"

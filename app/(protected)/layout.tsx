@@ -4,6 +4,7 @@ import { ReactNode, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import Sidebar from '@/components/Sidebar';
+import { KeyboardShortcuts } from '@/components/KeyboardShortcuts';
 
 export default function ProtectedLayout({
   children,
@@ -13,9 +14,27 @@ export default function ProtectedLayout({
   const router = useRouter();
   const { isAuthenticated, isLoading } = useAuth();
   const [isClient, setIsClient] = useState(false);
+  const [showShortcuts, setShowShortcuts] = useState(false);
 
   useEffect(() => {
     setIsClient(true);
+  }, []);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Show shortcuts on "?" key
+      if (e.key === '?' && !e.ctrlKey && !e.metaKey) {
+        e.preventDefault();
+        setShowShortcuts(prev => !prev);
+      }
+      // Close on Escape
+      if (e.key === 'Escape') {
+        setShowShortcuts(false);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
   useEffect(() => {
@@ -42,6 +61,7 @@ export default function ProtectedLayout({
       <main className="ml-64 min-h-screen transition-all duration-300">
         {children}
       </main>
+      <KeyboardShortcuts isOpen={showShortcuts} onClose={() => setShowShortcuts(false)} />
     </div>
   );
 }
