@@ -761,19 +761,34 @@ export default function TrainingPage() {
       setLoadingStates(prev => ({ ...prev, datasetDetail: true }));
       const res = await get(`/datasets/${dataset.id}`);
       if (res?.dataset) {
-        setSelectedDataset(res.dataset);
+        // Auto-detect dataset type based on file extensions
+        const ds = res.dataset;
+        if (ds.files && ds.files.length > 0) {
+          const hasImageFiles = ds.files.some((f: any) => 
+            /\.(jpg|jpeg|png|gif|bmp|webp)$/i.test(f.filename)
+          );
+          
+          // If dataset is CSI but has image files, update it to image type
+          if (ds.dataset_type === 'csi' && hasImageFiles) {
+            console.log(`Auto-correcting dataset ${ds.name} from csi to image type`);
+            await put(`/datasets/${ds.id}`, { dataset_type: 'image' });
+            ds.dataset_type = 'image'; // Update local copy
+          }
+        }
+        
+        setSelectedDataset(ds);
         // Update available labels based on dataset
-        const datasetLabels = res.dataset.labels || [];
-        const overrideLabels = datasetLabelOverrides[res.dataset.id] || [];
+        const datasetLabels = ds.labels || [];
+        const overrideLabels = datasetLabelOverrides[ds.id] || [];
         if (datasetLabels.length > 0) {
           const merged = Array.from(new Set([...overrideLabels, ...datasetLabels].map(l => l.trim()).filter(Boolean)));
           setAvailableLabels(merged);
-          if (merged.length > 0) setDatasetLabelOverrides(prev => ({ ...prev, [res.dataset.id]: merged }));
+          if (merged.length > 0) setDatasetLabelOverrides(prev => ({ ...prev, [ds.id]: merged }));
         } else if (overrideLabels.length > 0) {
           setAvailableLabels(overrideLabels);
         }
         // Update training config with first available model
-        const availableModels = getAvailableModels(res.dataset);
+        const availableModels = getAvailableModels(ds);
         if (availableModels.length > 0) {
           setTrainingConfig(prev => ({ 
             ...prev, 
@@ -2287,7 +2302,8 @@ export default function TrainingPage() {
                   {selectedDataset?.files && selectedDataset.files.length > 0 ? (
                     <div className="space-y-3">
                       {selectedDataset.files.map((file: any) => {
-                        const assignment = trainingConfig.file_assignments[file.file_id] || { pipeline_id: null, split: 'split' as const, split_ratio: 0.8 };
+                        const isLineBased = isLineBasedDataset(getEffectiveDatasetType(selectedDataset));
+                        const assignment = trainingConfig.file_assignments[file.file_id] || { pipeline_id: null, split: isLineBased ? 'split' : 'train', split_ratio: 0.8 };
                         const lineCount = fileLineCounts[file.file_id];
                         const totalLines = lineCount?.data_lines || assignment.total_lines || 0;
                         const selectedLines = assignment.selected_lines ?? totalLines;
@@ -2365,10 +2381,12 @@ export default function TrainingPage() {
                                 >
                                   <option value="train">Train Only</option>
                                   <option value="test">Test Only</option>
-                                  <option value="split">Train/Test Split</option>
+                                  {isLineBasedDataset(getEffectiveDatasetType(selectedDataset)) && (
+                                    <option value="split">Train/Test Split</option>
+                                  )}
                                 </select>
                               </div>
-                              {assignment.split === 'split' && (
+                              {assignment.split === 'split' && isLineBasedDataset(getEffectiveDatasetType(selectedDataset)) && (
                                 <div>
                                   <label className="block text-xs text-slate-400 mb-1">Train Ratio</label>
                                   <input
