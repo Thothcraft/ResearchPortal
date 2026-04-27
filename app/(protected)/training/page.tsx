@@ -16,15 +16,6 @@ const FigureExport = dynamic(() => import('@/components/FigureExport'), { ssr: f
 const PlotCustomizer = dynamic(() => import('@/components/PlotCustomizer'), { ssr: false });
 const FederatedLearningDashboard = dynamic(() => import('@/components/FederatedLearningDashboard'), { ssr: false });
 import { DatasetStats } from '@/components/DatasetStats';
-import { 
-  TrainingJobGroup, 
-  TrainingJobInGroup, 
-  TrainingJobGroupCard, 
-  CreateJobGroupModal,
-  CENTRAL_MODELS,
-  FL_ALGORITHMS,
-} from '@/components/TrainingJobGroup';
-const JobGroupComparisonPlots = dynamic(() => import('@/components/JobGroupComparisonPlots'), { ssr: false });
 
 const PREPROCESSING_STEP_HELP: Record<string, { title: string; details: string }> = {
   csi_loader: {
@@ -424,17 +415,11 @@ export default function TrainingPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const toast = useToast();
-  const [activeTab, setActiveTab] = useState<'datasets' | 'jobs' | 'models' | 'compare' | 'groups'>('datasets');
+  const [activeTab, setActiveTab] = useState<'datasets' | 'jobs' | 'models' | 'compare'>('datasets');
   const [renamingModel, setRenamingModel] = useState<TrainedModel | null>(null);
   const [newModelName, setNewModelName] = useState('');
   const [selectedJob, setSelectedJob] = useState<TrainingJob | null>(null);
   const [expandedJobs, setExpandedJobs] = useState<Set<string>>(new Set());
-  
-  // Training Job Groups state
-  const [jobGroups, setJobGroups] = useState<TrainingJobGroup[]>([]);
-  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
-  const [showCreateGroupModal, setShowCreateGroupModal] = useState(false);
-  const [createGroupType, setCreateGroupType] = useState<'central' | 'federated'>('central');
   
   // Granular loading states
   const [loadingStates, setLoadingStates] = useState({
@@ -811,6 +796,22 @@ export default function TrainingPage() {
     try {
       const files = Array.from(selectedFiles.entries()).map(([fileId, label]) => ({ file_id: fileId, label }));
       console.log(`Adding ${files.length} files to dataset ${selectedDataset.id}`);
+      
+      // Auto-detect dataset type based on file extensions
+      const fileData = files.map(f => {
+        const fileObj = cloudFiles.find((cf: CloudFile) => cf.file_id === f.file_id);
+        return fileObj?.filename || '';
+      });
+      
+      const hasImageFiles = fileData.some(fname => 
+        /\.(jpg|jpeg|png|gif|bmp|webp)$/i.test(fname)
+      );
+      
+      // If dataset is currently CSI but has image files, update to image type
+      if (selectedDataset.dataset_type === 'csi' && hasImageFiles) {
+        console.log('Detected image files, updating dataset type from csi to image');
+        await put(`/datasets/${selectedDataset.id}`, { dataset_type: 'image' });
+      }
       
       const result = await post(`/datasets/${selectedDataset.id}/files`, { files });
       console.log('Add files result:', result);
@@ -1373,96 +1374,7 @@ export default function TrainingPage() {
     setSelectedFiles(newSelected);
   };
 
-  // Training Job Group handlers
-  const handleCreateJobGroup = (group: TrainingJobGroup) => {
-    setJobGroups(prev => [...prev, group]);
-    toast.success('Group Created', `Training group "${group.name}" created with ${group.jobs.length} jobs`);
-  };
-
-  const handleUpdateJobGroup = (updatedGroup: TrainingJobGroup) => {
-    setJobGroups(prev => prev.map(g => g.id === updatedGroup.id ? updatedGroup : g));
-  };
-
-  const handleDeleteJobGroup = (groupId: string) => {
-    const group = jobGroups.find(g => g.id === groupId);
-    if (group?.status === 'running') {
-      toast.error('Cannot Delete', 'Stop the running group before deleting');
-      return;
-    }
-    setJobGroups(prev => prev.filter(g => g.id !== groupId));
-    setExpandedGroups(prev => {
-      const next = new Set(prev);
-      next.delete(groupId);
-      return next;
-    });
-    toast.success('Group Deleted', 'Training group deleted');
-  };
-
-  const handleStartJobGroup = async (groupId: string) => {
-    const group = jobGroups.find(g => g.id === groupId);
-    if (!group || group.jobs.length === 0) {
-      toast.error('Cannot Start', 'Add jobs to the group first');
-      return;
-    }
-
-    // Update group status to running
-    setJobGroups(prev => prev.map(g => 
-      g.id === groupId ? { ...g, status: 'running', started_at: new Date().toISOString() } : g
-    ));
-
-    toast.success('Group Started', `Starting ${group.jobs.length} training jobs in ${group.execution_mode} mode`);
-
-    // Start jobs based on execution mode
-    if (group.execution_mode === 'parallel') {
-      // Start all jobs simultaneously
-      const updatedJobs = group.jobs.map(job => ({ ...job, status: 'running' as const, progress: 0 }));
-      setJobGroups(prev => prev.map(g => 
-        g.id === groupId ? { ...g, jobs: updatedJobs } : g
-      ));
-      // TODO: Actually trigger backend training for each job
-    } else {
-      // Sequential: start first job, queue others
-      const updatedJobs = group.jobs.map((job, idx) => ({
-        ...job,
-        status: idx === 0 ? 'running' as const : 'queued' as const,
-        progress: 0,
-      }));
-      setJobGroups(prev => prev.map(g => 
-        g.id === groupId ? { ...g, jobs: updatedJobs } : g
-      ));
-      // TODO: Actually trigger backend training for first job
-    }
-  };
-
-  const handlePauseJobGroup = (groupId: string) => {
-    setJobGroups(prev => prev.map(g => 
-      g.id === groupId ? { ...g, status: 'paused' } : g
-    ));
-    toast.info('Group Paused', 'Training group paused');
-  };
-
-  const handleCancelJobGroup = (groupId: string) => {
-    setJobGroups(prev => prev.map(g => 
-      g.id === groupId ? { 
-        ...g, 
-        status: 'draft',
-        jobs: g.jobs.map(j => ({ ...j, status: 'pending' as const, progress: 0 }))
-      } : g
-    ));
-    toast.info('Group Cancelled', 'Training group cancelled');
-  };
-
-  const toggleGroupExpand = (groupId: string) => {
-    setExpandedGroups(prev => {
-      const next = new Set(prev);
-      if (next.has(groupId)) next.delete(groupId);
-      else next.add(groupId);
-      return next;
-    });
-  };
-
   const activeJobsCount = trainingJobs.filter(j => ['pending', 'running'].includes(j.status)).length;
-  const activeGroupsCount = jobGroups.filter(g => g.status === 'running').length;
 
   if (loading && datasets.length === 0) return <div className="min-h-screen flex items-center justify-center"><Loader2 className="w-8 h-8 text-indigo-500 animate-spin" /></div>;
 
@@ -1518,7 +1430,6 @@ export default function TrainingPage() {
           {/* Tabs */}
           <div className="flex gap-2 mb-6 border-b border-slate-700">
             <button onClick={() => setActiveTab('datasets')} className={`px-4 py-2 font-medium transition-colors ${activeTab === 'datasets' ? 'text-indigo-400 border-b-2 border-indigo-400' : 'text-slate-400 hover:text-white'}`}><Database className="w-4 h-4 inline mr-2" />Datasets</button>
-            <button onClick={() => setActiveTab('groups')} className={`px-4 py-2 font-medium transition-colors ${activeTab === 'groups' ? 'text-indigo-400 border-b-2 border-indigo-400' : 'text-slate-400 hover:text-white'}`}><Layers className="w-4 h-4 inline mr-2" />Job Groups{jobGroups.length > 0 && <span className="ml-2 px-2 py-0.5 bg-indigo-500/20 text-indigo-400 text-xs rounded-full">{jobGroups.length}</span>}</button>
             <button onClick={() => setActiveTab('jobs')} className={`px-4 py-2 font-medium transition-colors ${activeTab === 'jobs' ? 'text-indigo-400 border-b-2 border-indigo-400' : 'text-slate-400 hover:text-white'}`}><BarChart3 className="w-4 h-4 inline mr-2" />Training Jobs{activeJobsCount > 0 && <span className="ml-2 px-2 py-0.5 bg-blue-500/20 text-blue-400 text-xs rounded-full">{activeJobsCount}</span>}</button>
             <button onClick={() => setActiveTab('models')} className={`px-4 py-2 font-medium transition-colors ${activeTab === 'models' ? 'text-indigo-400 border-b-2 border-indigo-400' : 'text-slate-400 hover:text-white'}`}><Brain className="w-4 h-4 inline mr-2" />Trained Models</button>
             <button onClick={() => setActiveTab('compare')} className={`px-4 py-2 font-medium transition-colors ${activeTab === 'compare' ? 'text-indigo-400 border-b-2 border-indigo-400' : 'text-slate-400 hover:text-white'}`}><GitCompare className="w-4 h-4 inline mr-2" />Compare{compareModels.length > 0 && <span className="ml-2 px-2 py-0.5 bg-purple-500/20 text-purple-400 text-xs rounded-full">{compareModels.length}</span>}</button>
@@ -1673,80 +1584,6 @@ export default function TrainingPage() {
                   <div className="bg-slate-800/50 rounded-xl border border-slate-700 p-12 text-center"><Database className="w-16 h-16 text-slate-500 mx-auto mb-4" /><h3 className="text-xl font-medium text-white mb-2">Select a Dataset</h3><p className="text-slate-400">Choose a dataset from the list to view and manage its files</p></div>
                 )}
               </div>
-            </div>
-          )}
-
-          {/* Job Groups Tab */}
-          {activeTab === 'groups' && (
-            <div className="space-y-6">
-              {/* Header */}
-              <div className="flex items-center justify-between">
-                <div>
-                  <h2 className="text-xl font-semibold text-white flex items-center gap-2">
-                    <Layers className="w-5 h-5 text-indigo-400" />
-                    Training Job Groups
-                  </h2>
-                  <p className="text-sm text-slate-400 mt-1">
-                    Create groups of ML/DL models to train and compare in parallel or sequentially
-                  </p>
-                </div>
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => { setCreateGroupType('central'); setShowCreateGroupModal(true); }}
-                    className="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg transition-colors"
-                  >
-                    <Plus className="w-4 h-4" />
-                    New ML/DL Group
-                  </button>
-                </div>
-              </div>
-
-              {/* Groups List */}
-              {jobGroups.length === 0 ? (
-                <div className="bg-slate-800/50 rounded-xl border border-slate-700 p-12 text-center">
-                  <Layers className="w-16 h-16 text-slate-600 mx-auto mb-4" />
-                  <h3 className="text-lg font-medium text-white mb-2">No Training Groups</h3>
-                  <p className="text-slate-400 mb-4">
-                    Create a job group to train multiple models and compare their performance
-                  </p>
-                  <div className="flex justify-center gap-3">
-                    <button
-                      onClick={() => { setCreateGroupType('central'); setShowCreateGroupModal(true); }}
-                      className="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg"
-                    >
-                      <Plus className="w-4 h-4" />
-                      Create ML/DL Group
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <div className="space-y-4">
-                  {jobGroups.map(group => (
-                    <TrainingJobGroupCard
-                      key={group.id}
-                      group={group}
-                      onUpdate={handleUpdateJobGroup}
-                      onDelete={handleDeleteJobGroup}
-                      onStartGroup={handleStartJobGroup}
-                      onPauseGroup={handlePauseJobGroup}
-                      onCancelGroup={handleCancelJobGroup}
-                      isExpanded={expandedGroups.has(group.id)}
-                      onToggleExpand={() => toggleGroupExpand(group.id)}
-                    />
-                  ))}
-                </div>
-              )}
-
-              {/* Comparison Section */}
-              {jobGroups.some(g => g.jobs.some(j => j.status === 'completed')) && (
-                <div className="mt-8">
-                  <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
-                    <GitCompare className="w-5 h-5 text-purple-400" />
-                    Group Comparison
-                  </h3>
-                  <JobGroupComparisonPlots groups={jobGroups} />
-                </div>
-              )}
             </div>
           )}
 
@@ -4060,23 +3897,6 @@ export default function TrainingPage() {
           </div>
         </div>
       )}
-
-      {/* Create Job Group Modal */}
-      <CreateJobGroupModal
-        isOpen={showCreateGroupModal}
-        onClose={() => setShowCreateGroupModal(false)}
-        onCreate={handleCreateJobGroup}
-        type={createGroupType}
-        datasets={datasets.map(d => ({ id: d.id, name: d.name, file_count: d.file_count, labels: d.labels }))}
-        trainingConfig={{
-          epochs: trainingConfig.epochs,
-          batch_size: trainingConfig.batch_size,
-          learning_rate: trainingConfig.learning_rate,
-          test_split: trainingConfig.test_split,
-          preprocessing_pipeline_id: trainingConfig.preprocessing_pipeline_id,
-        }}
-        selectedDatasetId={selectedDataset?.id}
-      />
 
       {/* Dataset Stats Modal */}
       {showStatsModal && (
