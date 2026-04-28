@@ -555,6 +555,28 @@ export default function TrainingPage() {
     setPreviewError(null);
   }, [showTrainingConfig]);
 
+  // Auto-detect data type from dataset files and update config
+  useEffect(() => {
+    if (!selectedDataset || !selectedDataset.files) return;
+    
+    // Detect actual data types from files
+    const dataTypes = new Set<string>();
+    selectedDataset.files.forEach((file: any) => {
+      const dataType = detectDataType(file.filename);
+      dataTypes.add(dataType);
+    });
+    
+    // If we have image files but data_type is set to 'csi', fix it
+    if (dataTypes.has('img') && trainingConfig.data_type === 'csi') {
+      setTrainingConfig(prev => ({ ...prev, data_type: 'auto' }));
+    }
+    
+    // If we have mixed types, use auto
+    if (dataTypes.size > 1) {
+      setTrainingConfig(prev => ({ ...prev, data_type: 'auto' }));
+    }
+  }, [selectedDataset]);
+
   // Update window_size based on data_type (1000 for CSI, 128 for IMU)
   useEffect(() => {
     const defaultWindowSize = trainingConfig.data_type === 'csi' ? 1000 : trainingConfig.data_type === 'imu' ? 128 : 1000;
@@ -2727,6 +2749,22 @@ export default function TrainingPage() {
                     <span className="text-slate-400 text-sm">Loading preprocessing preview...</span>
                   </div>
                 )}
+
+                <div>
+                  <label className="block text-sm text-slate-300 mb-1">Data Type</label>
+                  <select 
+                    value={trainingConfig.data_type} 
+                    onChange={(e) => setTrainingConfig({ ...trainingConfig, data_type: e.target.value as 'auto' | 'csi' | 'imu' })} 
+                    className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white"
+                  >
+                    <option value="auto">Auto-detect (Recommended)</option>
+                    <option value="csi">CSI (WiFi Channel State)</option>
+                    <option value="imu">IMU (Motion Sensors)</option>
+                  </select>
+                  <p className="text-xs text-slate-500 mt-1">
+                    {trainingConfig.data_type === 'auto' ? 'Automatically detect data type from files' : `Force ${trainingConfig.data_type.toUpperCase()} processing`}
+                  </p>
+                </div>
 
                 <div>
                   <label className="block text-sm text-slate-300 mb-1">Model Type</label>
