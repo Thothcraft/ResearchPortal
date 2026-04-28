@@ -2,6 +2,46 @@
 @import "tailwindcss/components";
 @import "tailwindcss/utilities";
 
+/* ==========================================================================
+   Thoth Cat-Color Spectrum Theme
+   
+   Light end: light grey (#e8e6e3) + light olive (#b8c4a0)
+   Dark end:  dark grey (#1e1e1e) + dark olive (#3d4a2a)
+   
+   --theme-pos: 0 (lightest) to 100 (darkest), set by JS knob
+   All colors interpolate continuously based on this single variable.
+   ========================================================================== */
+
+:root {
+  /* Default: light (pos=15) */
+  --theme-pos: 15;
+  
+  /* Computed by JS — these are the fallback light values */
+  --bg-primary:    #f2f0ed;
+  --bg-secondary:  #e8e6e3;
+  --bg-card:       #ffffff;
+  --bg-accent:     #b8c4a0;
+  --bg-accent-dim: #d4dcc4;
+  --text-primary:  #1e1e1e;
+  --text-secondary:#5a5a56;
+  --text-muted:    #8a8a84;
+  --border-color:  rgba(0,0,0,0.06);
+  --accent:        #6b7f4a;
+  --accent-hover:  #7d9456;
+  --shadow-light:  rgba(0,0,0,0.04);
+  --shadow-medium: rgba(0,0,0,0.08);
+}
+
+/* Global */
+body {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Helvetica Neue', Arial, sans-serif;
+  transition: background 0.4s ease, color 0.4s ease;
+}
+
 /* Custom animations for training progress */
 @keyframes shimmer {
   0% {
@@ -26,12 +66,12 @@
 }
 
 .scrollbar-thin::-webkit-scrollbar-thumb {
-  background: #334155;
+  background: var(--accent);
   border-radius: 3px;
 }
 
 .scrollbar-thin::-webkit-scrollbar-thumb:hover {
-  background: #475569;
+  background: var(--accent-hover);
 }
 
 /* Toast slide-in animation */
@@ -48,4 +88,26 @@
 
 .animate-slide-in-right {
   animation: slide-in-right 0.3s ease-out forwards;
+}
+
+/* Selection */
+::selection {
+  background: color-mix(in srgb, var(--accent) 20%, transparent);
+  color: var(--text-primary);
+}
+
+/* Scrolling */
+html {
+  scroll-behavior: smooth;
+}
+
+/* Focus */
+*:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Transitions */
+* {
+  transition-timing-function: cubic-bezier(0.25, 0.1, 0.25, 1);
 }

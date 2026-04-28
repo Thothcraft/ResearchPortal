@@ -15,15 +15,7 @@ import {
 const FigureExport = dynamic(() => import('@/components/FigureExport'), { ssr: false });
 const PlotCustomizer = dynamic(() => import('@/components/PlotCustomizer'), { ssr: false });
 const FederatedLearningDashboard = dynamic(() => import('@/components/FederatedLearningDashboard'), { ssr: false });
-import { 
-  TrainingJobGroup, 
-  TrainingJobInGroup, 
-  TrainingJobGroupCard, 
-  CreateJobGroupModal,
-  CENTRAL_MODELS,
-  FL_ALGORITHMS,
-} from '@/components/TrainingJobGroup';
-const JobGroupComparisonPlots = dynamic(() => import('@/components/JobGroupComparisonPlots'), { ssr: false });
+import { DatasetStats } from '@/components/DatasetStats';
 
 const PREPROCESSING_STEP_HELP: Record<string, { title: string; details: string }> = {
   csi_loader: {
@@ -73,10 +65,12 @@ const PREPROCESSING_STEP_HELP: Record<string, { title: string; details: string }
 };
 
 type TrainingMode = 'cloud' | 'on-device' | 'federated';
+type DatasetType = 'image' | 'csi' | 'imu' | 'audio' | 'mixed' | 'other';
 type Dataset = {
   id: number;
   name: string;
   description: string | null;
+  dataset_type?: DatasetType;
   file_count: number;
   labels: string[];
   label_distribution?: Record<string, number>;
@@ -85,7 +79,7 @@ type Dataset = {
   files?: DatasetFile[];
 };
 type DatasetFile = { id: number; file_id: number; filename: string; label: string; size?: number; content_type?: string; created_at?: string; file_missing?: boolean };
-type CloudFile = { file_id: number; filename: string; size: number; content_type: string; uploaded_at: string };
+type CloudFile = { file_id: number; filename: string; size: number; content_type: string; uploaded_at: string; labels?: string[] };
 type ModelOption = { value: string; label: string; description: string; supported_data: string[] };
 type PreprocessingPipelineSummary = {
   id: number;
@@ -265,6 +259,19 @@ function detectDataType(filename: string): string {
   return 'other';
 };
 
+function getEffectiveDatasetType(dataset: Dataset | null): DatasetType {
+  if (dataset?.dataset_type && dataset.dataset_type !== 'other') return dataset.dataset_type;
+  if (!dataset?.files || dataset.files.length === 0) return dataset?.dataset_type || 'other';
+  const types = new Set(dataset.files.map(f => detectDataType(f.filename)));
+  if (types.has('img') || types.has('vid')) return 'image';
+  if (types.has('csi') || types.has('mfcw')) return 'csi';
+  if (types.has('imu')) return 'imu';
+  if (types.size > 1) return 'mixed';
+  return dataset?.dataset_type || 'other';
+}
+
+const isLineBasedDataset = (type: DatasetType) => ['csi', 'imu', 'other', 'mixed'].includes(type);
+
 const TRAINING_STATUS_CONFIG: Record<string, { color: string; bg: string; icon: React.ElementType }> = {
   completed: { color: 'text-green-400', bg: 'bg-green-500/20', icon: CheckCircle },
   failed: { color: 'text-red-400', bg: 'bg-red-500/20', icon: AlertCircle },
@@ -280,6 +287,7 @@ export default function TrainingPage() {
   const [showCreateDataset, setShowCreateDataset] = useState(false);
   const [newDatasetName, setNewDatasetName] = useState('');
   const [newDatasetDesc, setNewDatasetDesc] = useState('');
+  const [newDatasetType, setNewDatasetType] = useState<DatasetType>('csi');
   const [newDatasetLabel, setNewDatasetLabel] = useState('');
   const [newDatasetLabels, setNewDatasetLabels] = useState<string[]>([]);
   const [datasetLabelOverrides, setDatasetLabelOverrides] = useState<Record<number, string[]>>({});
@@ -407,17 +415,11 @@ export default function TrainingPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const toast = useToast();
-  const [activeTab, setActiveTab] = useState<'datasets' | 'jobs' | 'models' | 'compare' | 'groups'>('datasets');
+  const [activeTab, setActiveTab] = useState<'datasets' | 'jobs' | 'models' | 'compare'>('datasets');
   const [renamingModel, setRenamingModel] = useState<TrainedModel | null>(null);
   const [newModelName, setNewModelName] = useState('');
   const [selectedJob, setSelectedJob] = useState<TrainingJob | null>(null);
   const [expandedJobs, setExpandedJobs] = useState<Set<string>>(new Set());
-  
-  // Training Job Groups state
-  const [jobGroups, setJobGroups] = useState<TrainingJobGroup[]>([]);
-  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
-  const [showCreateGroupModal, setShowCreateGroupModal] = useState(false);
-  const [createGroupType, setCreateGroupType] = useState<'central' | 'federated'>('central');
   
   // Granular loading states
   const [loadingStates, setLoadingStates] = useState({
@@ -438,8 +440,14 @@ export default function TrainingPage() {
     cancellingJob: false,
     deletingModel: null as number | null,
     downloadingModel: null as number | null,
-    renamingModel: null as number | null
+    renamingModel: null as number | null,
+    deployingModel: null as number | null,
   });
+  const [showDeployModal, setShowDeployModal] = useState<{modelId: number; modelName: string} | null>(null);
+  const [devices, setDevices] = useState<{device_id: string; device_name: string; online: boolean; device_type: string; last_seen?: string}[]>([]);
+  const [selectedDeviceId, setSelectedDeviceId] = useState<string>('');
+  const [devicesLoading, setDevicesLoading] = useState(false);
+  const [showStatsModal, setShowStatsModal] = useState<{datasetName: string; files: any[]} | null>(null);
 
   const fetchData = async (options?: { datasets?: boolean; jobs?: boolean; models?: boolean; files?: boolean }) => {
     const opts = { datasets: true, jobs: true, models: true, files: true, ...options };
@@ -751,9 +759,10 @@ export default function TrainingPage() {
         new Set(newDatasetLabels.map(l => l.trim()).filter(Boolean))
       );
 
-      const created = await post('/datasets/create', { name: newDatasetName.trim(), description: newDatasetDesc.trim() });
+      const created = await post('/datasets/create', { name: newDatasetName.trim(), description: newDatasetDesc.trim(), dataset_type: newDatasetType });
       setNewDatasetName('');
       setNewDatasetDesc('');
+      setNewDatasetType('csi');
       setNewDatasetLabel('');
       setNewDatasetLabels([]);
       setShowCreateDataset(false);
@@ -774,19 +783,34 @@ export default function TrainingPage() {
       setLoadingStates(prev => ({ ...prev, datasetDetail: true }));
       const res = await get(`/datasets/${dataset.id}`);
       if (res?.dataset) {
-        setSelectedDataset(res.dataset);
+        // Auto-detect dataset type based on file extensions
+        const ds = res.dataset;
+        if (ds.files && ds.files.length > 0) {
+          const hasImageFiles = ds.files.some((f: any) => 
+            /\.(jpg|jpeg|png|gif|bmp|webp)$/i.test(f.filename)
+          );
+          
+          // If dataset is CSI but has image files, update it to image type
+          if (ds.dataset_type === 'csi' && hasImageFiles) {
+            console.log(`Auto-correcting dataset ${ds.name} from csi to image type`);
+            await put(`/datasets/${ds.id}`, { dataset_type: 'image' });
+            ds.dataset_type = 'image'; // Update local copy
+          }
+        }
+        
+        setSelectedDataset(ds);
         // Update available labels based on dataset
-        const datasetLabels = res.dataset.labels || [];
-        const overrideLabels = datasetLabelOverrides[res.dataset.id] || [];
+        const datasetLabels = ds.labels || [];
+        const overrideLabels = datasetLabelOverrides[ds.id] || [];
         if (datasetLabels.length > 0) {
           const merged = Array.from(new Set([...overrideLabels, ...datasetLabels].map(l => l.trim()).filter(Boolean)));
           setAvailableLabels(merged);
-          if (merged.length > 0) setDatasetLabelOverrides(prev => ({ ...prev, [res.dataset.id]: merged }));
+          if (merged.length > 0) setDatasetLabelOverrides(prev => ({ ...prev, [ds.id]: merged }));
         } else if (overrideLabels.length > 0) {
           setAvailableLabels(overrideLabels);
         }
         // Update training config with first available model
-        const availableModels = getAvailableModels(res.dataset);
+        const availableModels = getAvailableModels(ds);
         if (availableModels.length > 0) {
           setTrainingConfig(prev => ({ 
             ...prev, 
@@ -809,6 +833,22 @@ export default function TrainingPage() {
     try {
       const files = Array.from(selectedFiles.entries()).map(([fileId, label]) => ({ file_id: fileId, label }));
       console.log(`Adding ${files.length} files to dataset ${selectedDataset.id}`);
+      
+      // Auto-detect dataset type based on file extensions
+      const fileData = files.map(f => {
+        const fileObj = cloudFiles.find((cf: CloudFile) => cf.file_id === f.file_id);
+        return fileObj?.filename || '';
+      });
+      
+      const hasImageFiles = fileData.some(fname => 
+        /\.(jpg|jpeg|png|gif|bmp|webp)$/i.test(fname)
+      );
+      
+      // If dataset is currently CSI but has image files, update to image type
+      if (selectedDataset.dataset_type === 'csi' && hasImageFiles) {
+        console.log('Detected image files, updating dataset type from csi to image');
+        await put(`/datasets/${selectedDataset.id}`, { dataset_type: 'image' });
+      }
       
       const result = await post(`/datasets/${selectedDataset.id}/files`, { files });
       console.log('Add files result:', result);
@@ -1035,6 +1075,37 @@ export default function TrainingPage() {
       toast.success('Model Renamed', `Model renamed to "${newModelName.trim()}"`);
     } catch { toast.error('Rename Failed', 'Failed to rename model'); }
     finally { setOperations(prev => ({ ...prev, renamingModel: null })); }
+  };
+
+  const handleDeployModel = async () => {
+    if (!showDeployModal || !selectedDeviceId) return;
+    setOperations(prev => ({ ...prev, deployingModel: showDeployModal.modelId }));
+    try {
+      const result = await post(`/datasets/models/${showDeployModal.modelId}/deploy`, {
+        model_id: showDeployModal.modelId,
+        device_id: selectedDeviceId,
+        config: {},
+      });
+      if (result?.success) {
+        toast.success('Deploying', `${result.model_name} → ${result.device_name}`);
+        setShowDeployModal(null);
+        setSelectedDeviceId('');
+      } else {
+        toast.error('Deploy Failed', result?.detail || 'Unknown error');
+      }
+    } catch (err: any) {
+      toast.error('Deploy Failed', err?.message || 'Network error');
+    } finally {
+      setOperations(prev => ({ ...prev, deployingModel: null }));
+    }
+  };
+
+  const loadDevices = async () => {
+    setDevicesLoading(true);
+    try {
+      const result = await get('/device/list?include_offline=true');
+      if (result?.devices) setDevices(result.devices);
+    } catch {} finally { setDevicesLoading(false); }
   };
 
   const handleDownloadModel = async (modelId: number, modelName: string) => {
@@ -1340,96 +1411,7 @@ export default function TrainingPage() {
     setSelectedFiles(newSelected);
   };
 
-  // Training Job Group handlers
-  const handleCreateJobGroup = (group: TrainingJobGroup) => {
-    setJobGroups(prev => [...prev, group]);
-    toast.success('Group Created', `Training group "${group.name}" created with ${group.jobs.length} jobs`);
-  };
-
-  const handleUpdateJobGroup = (updatedGroup: TrainingJobGroup) => {
-    setJobGroups(prev => prev.map(g => g.id === updatedGroup.id ? updatedGroup : g));
-  };
-
-  const handleDeleteJobGroup = (groupId: string) => {
-    const group = jobGroups.find(g => g.id === groupId);
-    if (group?.status === 'running') {
-      toast.error('Cannot Delete', 'Stop the running group before deleting');
-      return;
-    }
-    setJobGroups(prev => prev.filter(g => g.id !== groupId));
-    setExpandedGroups(prev => {
-      const next = new Set(prev);
-      next.delete(groupId);
-      return next;
-    });
-    toast.success('Group Deleted', 'Training group deleted');
-  };
-
-  const handleStartJobGroup = async (groupId: string) => {
-    const group = jobGroups.find(g => g.id === groupId);
-    if (!group || group.jobs.length === 0) {
-      toast.error('Cannot Start', 'Add jobs to the group first');
-      return;
-    }
-
-    // Update group status to running
-    setJobGroups(prev => prev.map(g => 
-      g.id === groupId ? { ...g, status: 'running', started_at: new Date().toISOString() } : g
-    ));
-
-    toast.success('Group Started', `Starting ${group.jobs.length} training jobs in ${group.execution_mode} mode`);
-
-    // Start jobs based on execution mode
-    if (group.execution_mode === 'parallel') {
-      // Start all jobs simultaneously
-      const updatedJobs = group.jobs.map(job => ({ ...job, status: 'running' as const, progress: 0 }));
-      setJobGroups(prev => prev.map(g => 
-        g.id === groupId ? { ...g, jobs: updatedJobs } : g
-      ));
-      // TODO: Actually trigger backend training for each job
-    } else {
-      // Sequential: start first job, queue others
-      const updatedJobs = group.jobs.map((job, idx) => ({
-        ...job,
-        status: idx === 0 ? 'running' as const : 'queued' as const,
-        progress: 0,
-      }));
-      setJobGroups(prev => prev.map(g => 
-        g.id === groupId ? { ...g, jobs: updatedJobs } : g
-      ));
-      // TODO: Actually trigger backend training for first job
-    }
-  };
-
-  const handlePauseJobGroup = (groupId: string) => {
-    setJobGroups(prev => prev.map(g => 
-      g.id === groupId ? { ...g, status: 'paused' } : g
-    ));
-    toast.info('Group Paused', 'Training group paused');
-  };
-
-  const handleCancelJobGroup = (groupId: string) => {
-    setJobGroups(prev => prev.map(g => 
-      g.id === groupId ? { 
-        ...g, 
-        status: 'draft',
-        jobs: g.jobs.map(j => ({ ...j, status: 'pending' as const, progress: 0 }))
-      } : g
-    ));
-    toast.info('Group Cancelled', 'Training group cancelled');
-  };
-
-  const toggleGroupExpand = (groupId: string) => {
-    setExpandedGroups(prev => {
-      const next = new Set(prev);
-      if (next.has(groupId)) next.delete(groupId);
-      else next.add(groupId);
-      return next;
-    });
-  };
-
   const activeJobsCount = trainingJobs.filter(j => ['pending', 'running'].includes(j.status)).length;
-  const activeGroupsCount = jobGroups.filter(g => g.status === 'running').length;
 
   if (loading && datasets.length === 0) return <div className="min-h-screen flex items-center justify-center"><Loader2 className="w-8 h-8 text-indigo-500 animate-spin" /></div>;
 
@@ -1485,7 +1467,6 @@ export default function TrainingPage() {
           {/* Tabs */}
           <div className="flex gap-2 mb-6 border-b border-slate-700">
             <button onClick={() => setActiveTab('datasets')} className={`px-4 py-2 font-medium transition-colors ${activeTab === 'datasets' ? 'text-indigo-400 border-b-2 border-indigo-400' : 'text-slate-400 hover:text-white'}`}><Database className="w-4 h-4 inline mr-2" />Datasets</button>
-            <button onClick={() => setActiveTab('groups')} className={`px-4 py-2 font-medium transition-colors ${activeTab === 'groups' ? 'text-indigo-400 border-b-2 border-indigo-400' : 'text-slate-400 hover:text-white'}`}><Layers className="w-4 h-4 inline mr-2" />Job Groups{jobGroups.length > 0 && <span className="ml-2 px-2 py-0.5 bg-indigo-500/20 text-indigo-400 text-xs rounded-full">{jobGroups.length}</span>}</button>
             <button onClick={() => setActiveTab('jobs')} className={`px-4 py-2 font-medium transition-colors ${activeTab === 'jobs' ? 'text-indigo-400 border-b-2 border-indigo-400' : 'text-slate-400 hover:text-white'}`}><BarChart3 className="w-4 h-4 inline mr-2" />Training Jobs{activeJobsCount > 0 && <span className="ml-2 px-2 py-0.5 bg-blue-500/20 text-blue-400 text-xs rounded-full">{activeJobsCount}</span>}</button>
             <button onClick={() => setActiveTab('models')} className={`px-4 py-2 font-medium transition-colors ${activeTab === 'models' ? 'text-indigo-400 border-b-2 border-indigo-400' : 'text-slate-400 hover:text-white'}`}><Brain className="w-4 h-4 inline mr-2" />Trained Models</button>
             <button onClick={() => setActiveTab('compare')} className={`px-4 py-2 font-medium transition-colors ${activeTab === 'compare' ? 'text-indigo-400 border-b-2 border-indigo-400' : 'text-slate-400 hover:text-white'}`}><GitCompare className="w-4 h-4 inline mr-2" />Compare{compareModels.length > 0 && <span className="ml-2 px-2 py-0.5 bg-purple-500/20 text-purple-400 text-xs rounded-full">{compareModels.length}</span>}</button>
@@ -1512,10 +1493,18 @@ export default function TrainingPage() {
                       <button onClick={() => setShowCreateDataset(true)} className="mt-3 text-indigo-400 hover:text-indigo-300 text-sm">Create your first dataset</button>
                     </div>
                   ) : datasets.map(dataset => (
-                    <button key={dataset.id} onClick={() => handleSelectDataset(dataset)} className={`w-full p-4 rounded-xl border text-left transition-all ${selectedDataset?.id === dataset.id ? 'border-indigo-500 bg-indigo-500/10' : 'border-slate-700 bg-slate-800/50 hover:border-slate-600'}`}>
-                      <div className="flex items-center justify-between mb-2"><h3 className="font-medium text-white">{dataset.name}</h3><ChevronRight className="w-4 h-4 text-slate-400" /></div>
+                    <div key={dataset.id} className={`w-full p-4 rounded-xl border text-left transition-all ${selectedDataset?.id === dataset.id ? 'border-indigo-500 bg-indigo-500/10' : 'border-slate-700 bg-slate-800/50 hover:border-slate-600'}`}>
+                      <div className="flex items-center justify-between mb-2">
+                        <button onClick={() => handleSelectDataset(dataset)} className="flex-1 text-left"><h3 className="font-medium text-white">{dataset.name}</h3></button>
+                        <div className="flex items-center gap-1">
+                          <button onClick={() => setShowStatsModal({ datasetName: dataset.name, files: dataset.files || [] })} className="p-1.5 text-slate-400 hover:text-indigo-400 hover:bg-indigo-500/10 rounded-lg transition-colors" title="View Statistics">
+                            <BarChart3 className="w-4 h-4" />
+                          </button>
+                          <ChevronRight className="w-4 h-4 text-slate-400" />
+                        </div>
+                      </div>
                       <div className="flex items-center gap-3 text-sm text-slate-400"><span className="flex items-center gap-1"><FileText className="w-3 h-3" />{dataset.file_count} files</span><span className="flex items-center gap-1"><Tag className="w-3 h-3" />{dataset.labels?.length || 0} labels</span></div>
-                    </button>
+                    </div>
                   ))}
                 </div>
               </div>
@@ -1632,80 +1621,6 @@ export default function TrainingPage() {
                   <div className="bg-slate-800/50 rounded-xl border border-slate-700 p-12 text-center"><Database className="w-16 h-16 text-slate-500 mx-auto mb-4" /><h3 className="text-xl font-medium text-white mb-2">Select a Dataset</h3><p className="text-slate-400">Choose a dataset from the list to view and manage its files</p></div>
                 )}
               </div>
-            </div>
-          )}
-
-          {/* Job Groups Tab */}
-          {activeTab === 'groups' && (
-            <div className="space-y-6">
-              {/* Header */}
-              <div className="flex items-center justify-between">
-                <div>
-                  <h2 className="text-xl font-semibold text-white flex items-center gap-2">
-                    <Layers className="w-5 h-5 text-indigo-400" />
-                    Training Job Groups
-                  </h2>
-                  <p className="text-sm text-slate-400 mt-1">
-                    Create groups of ML/DL models to train and compare in parallel or sequentially
-                  </p>
-                </div>
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => { setCreateGroupType('central'); setShowCreateGroupModal(true); }}
-                    className="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg transition-colors"
-                  >
-                    <Plus className="w-4 h-4" />
-                    New ML/DL Group
-                  </button>
-                </div>
-              </div>
-
-              {/* Groups List */}
-              {jobGroups.length === 0 ? (
-                <div className="bg-slate-800/50 rounded-xl border border-slate-700 p-12 text-center">
-                  <Layers className="w-16 h-16 text-slate-600 mx-auto mb-4" />
-                  <h3 className="text-lg font-medium text-white mb-2">No Training Groups</h3>
-                  <p className="text-slate-400 mb-4">
-                    Create a job group to train multiple models and compare their performance
-                  </p>
-                  <div className="flex justify-center gap-3">
-                    <button
-                      onClick={() => { setCreateGroupType('central'); setShowCreateGroupModal(true); }}
-                      className="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg"
-                    >
-                      <Plus className="w-4 h-4" />
-                      Create ML/DL Group
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <div className="space-y-4">
-                  {jobGroups.map(group => (
-                    <TrainingJobGroupCard
-                      key={group.id}
-                      group={group}
-                      onUpdate={handleUpdateJobGroup}
-                      onDelete={handleDeleteJobGroup}
-                      onStartGroup={handleStartJobGroup}
-                      onPauseGroup={handlePauseJobGroup}
-                      onCancelGroup={handleCancelJobGroup}
-                      isExpanded={expandedGroups.has(group.id)}
-                      onToggleExpand={() => toggleGroupExpand(group.id)}
-                    />
-                  ))}
-                </div>
-              )}
-
-              {/* Comparison Section */}
-              {jobGroups.some(g => g.jobs.some(j => j.status === 'completed')) && (
-                <div className="mt-8">
-                  <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
-                    <GitCompare className="w-5 h-5 text-purple-400" />
-                    Group Comparison
-                  </h3>
-                  <JobGroupComparisonPlots groups={jobGroups} />
-                </div>
-              )}
             </div>
           )}
 
@@ -2092,6 +2007,17 @@ export default function TrainingPage() {
                               )}
                             </button>
                             <button 
+                              onClick={() => { setShowDeployModal({ modelId: m.id, modelName: m.name }); loadDevices(); }} 
+                              disabled={operations.deployingModel === m.id}
+                              className="flex items-center gap-1 px-2 py-1 text-green-400 hover:bg-green-500/10 disabled:text-green-600 disabled:hover:bg-green-500/5 rounded text-sm"
+                            >
+                              {operations.deployingModel === m.id ? (
+                                <><Loader2 className="w-4 h-4 animate-spin" /> Deploying...</>
+                              ) : (
+                                <><Rocket className="w-4 h-4" /> Deploy</>
+                              )}
+                            </button>
+                            <button 
                               onClick={() => { setRenamingModel(m); setNewModelName(m.name); }} 
                               disabled={operations.renamingModel === m.id}
                               className="flex items-center gap-1 px-2 py-1 text-blue-400 hover:bg-blue-500/10 disabled:text-blue-600 disabled:hover:bg-blue-500/5 rounded text-sm"
@@ -2198,6 +2124,34 @@ export default function TrainingPage() {
               <div><label className="block text-sm text-slate-300 mb-1">Dataset Name</label><input type="text" value={newDatasetName} onChange={(e) => setNewDatasetName(e.target.value)} placeholder="e.g., Activity Recognition" className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white placeholder-slate-500" /></div>
               <div><label className="block text-sm text-slate-300 mb-1">Description</label><textarea value={newDatasetDesc} onChange={(e) => setNewDatasetDesc(e.target.value)} placeholder="Describe your dataset..." rows={3} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white placeholder-slate-500" /></div>
               <div>
+                <label className="block text-sm text-slate-300 mb-1">Dataset Type</label>
+                <div className="grid grid-cols-3 gap-2">
+                  {([
+                    { value: 'csi' as DatasetType, label: 'CSI', icon: '📡', desc: 'WiFi Channel State Information' },
+                    { value: 'image' as DatasetType, label: 'Image', icon: '🖼️', desc: 'Photos, frames, timelapse' },
+                    { value: 'imu' as DatasetType, label: 'IMU', icon: '📱', desc: 'Accelerometer & gyroscope' },
+                    { value: 'audio' as DatasetType, label: 'Audio', icon: '🎤', desc: 'Sound recordings' },
+                    { value: 'mixed' as DatasetType, label: 'Mixed', icon: '🔀', desc: 'Multiple sensor types' },
+                    { value: 'other' as DatasetType, label: 'Other', icon: '📁', desc: 'Custom data format' },
+                  ]).map(opt => (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      onClick={() => setNewDatasetType(opt.value)}
+                      className={`p-2 rounded-lg border text-left transition-colors ${newDatasetType === opt.value ? 'bg-indigo-600/20 border-indigo-500/50 ring-1 ring-indigo-500/30' : 'bg-slate-800/50 border-slate-700 hover:border-slate-500'}`}
+                    >
+                      <div className="flex items-center gap-2">
+                        <span className="text-lg">{opt.icon}</span>
+                        <div>
+                          <div className={`text-sm font-medium ${newDatasetType === opt.value ? 'text-indigo-300' : 'text-white'}`}>{opt.label}</div>
+                          <div className="text-[10px] text-slate-500">{opt.desc}</div>
+                        </div>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div>
                 <label className="block text-sm text-slate-300 mb-1">Labels</label>
                 <div className="flex gap-2">
                   <input
@@ -2272,12 +2226,19 @@ export default function TrainingPage() {
                 <p className="text-slate-400 text-center py-4">No files in cloud storage</p>
               ) : (
                 <div className="space-y-2">
-                  {cloudFiles.map(file => (
-                    <div key={file.file_id} className={`flex items-center justify-between p-3 rounded-lg border ${selectedFiles.has(file.file_id) ? 'border-indigo-500 bg-indigo-500/10' : 'border-slate-700 bg-slate-800/50'}`}>
-                      <div className="flex items-center gap-3"><input type="checkbox" checked={selectedFiles.has(file.file_id)} onChange={() => toggleFileSelection(file.file_id, (availableLabels || [])[0] || '')} className="w-4 h-4" /><div><p className="text-white text-sm">{file.filename}</p><p className="text-slate-500 text-xs">{(file.size / 1024).toFixed(1)} KB</p></div></div>
-                      {selectedFiles.has(file.file_id) && <select value={selectedFiles.get(file.file_id)} onChange={(e) => { const m = new Map(selectedFiles); m.set(file.file_id, e.target.value); setSelectedFiles(m); }} className="px-2 py-1 bg-slate-800 border border-slate-600 rounded text-sm text-white">{(availableLabels || []).map(l => <option key={l} value={l}>{l}</option>)}</select>}
-                    </div>
-                  ))}
+                  {cloudFiles.map(file => {
+                    // Include file's original labels in the dropdown options
+                    const fileLabelOptions = file.labels && file.labels.length > 0 ? file.labels.filter(l => !availableLabels.includes(l)) : [];
+                    const allOptions = [...availableLabels, ...fileLabelOptions];
+                    const defaultLabel = file.labels && file.labels.length > 0 ? file.labels[0] : (availableLabels || [])[0];
+                    
+                    return (
+                      <div key={file.file_id} className={`flex items-center justify-between p-3 rounded-lg border ${selectedFiles.has(file.file_id) ? 'border-indigo-500 bg-indigo-500/10' : 'border-slate-700 bg-slate-800/50'}`}>
+                        <div className="flex items-center gap-3"><input type="checkbox" checked={selectedFiles.has(file.file_id)} onChange={() => toggleFileSelection(file.file_id, defaultLabel || '')} className="w-4 h-4" /><div><p className="text-white text-sm">{file.filename}</p><p className="text-slate-500 text-xs">{(file.size / 1024).toFixed(1)} KB</p>{file.labels && file.labels.length > 0 && <p className="text-indigo-400 text-xs mt-0.5">{file.labels.join(', ')}</p>}</div></div>
+                        {selectedFiles.has(file.file_id) && <select value={selectedFiles.get(file.file_id)} onChange={(e) => { const m = new Map(selectedFiles); m.set(file.file_id, e.target.value); setSelectedFiles(m); }} className="px-2 py-1 bg-slate-800 border border-slate-600 rounded text-sm text-white">{allOptions.map(l => <option key={l} value={l}>{l}</option>)}</select>}
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -2312,7 +2273,7 @@ export default function TrainingPage() {
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
           <div className="bg-slate-900 rounded-xl p-6 w-full max-w-2xl border border-slate-700 max-h-[90vh] overflow-y-auto">
             <h3 className="text-xl font-semibold text-white mb-4">Configure Training</h3>
-            <p className="text-slate-400 text-sm mb-4">Dataset: <span className="text-white">{selectedDataset.name}</span> ({selectedDataset.files?.length} files)</p>
+            <p className="text-slate-400 text-sm mb-4">Dataset: <span className="text-white">{selectedDataset.name}</span> ({selectedDataset.files?.length} files) <span className="ml-2 px-2 py-0.5 rounded-full text-xs font-medium bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">{getEffectiveDatasetType(selectedDataset).toUpperCase()}</span></p>
             <div className="flex items-center justify-between mb-6">
               <div className="flex gap-2">
                 {(['Preprocessing', 'Model', 'Optimization', 'Review'] as const).map((label, idx) => (
@@ -2346,8 +2307,14 @@ export default function TrainingPage() {
                       <span className="text-yellow-400 font-medium">Default (Auto-detect)</span>: Uses built-in preprocessing based on detected data type:
                     </p>
                     <ul className="text-xs text-slate-500 mt-1 ml-4 list-disc">
-                      <li><span className="text-cyan-400">CSI</span>: Extract amplitude+phase → Filter subcarriers (5-32) → Window (1000 rows) → Flatten</li>
-                      <li><span className="text-green-400">IMU</span>: Window (128 rows) → Flatten to feature vector</li>
+                      {getEffectiveDatasetType(selectedDataset) === 'image' ? (
+                        <li><span className="text-pink-400">Image</span>: Resize → Normalize → Augment (optional) → Batch</li>
+                      ) : (
+                        <>
+                          <li><span className="text-cyan-400">CSI</span>: Extract amplitude+phase → Filter subcarriers (5-32) → Window (1000 rows) → Flatten</li>
+                          <li><span className="text-green-400">IMU</span>: Window (128 rows) → Flatten to feature vector</li>
+                        </>
+                      )}
                     </ul>
                     <p className="text-xs text-slate-500 mt-1">
                       For custom preprocessing, create a pipeline in the <span className="text-indigo-400">Processing</span> page.
@@ -2357,7 +2324,8 @@ export default function TrainingPage() {
                   {selectedDataset?.files && selectedDataset.files.length > 0 ? (
                     <div className="space-y-3">
                       {selectedDataset.files.map((file: any) => {
-                        const assignment = trainingConfig.file_assignments[file.file_id] || { pipeline_id: null, split: 'split' as const, split_ratio: 0.8 };
+                        const isLineBased = isLineBasedDataset(getEffectiveDatasetType(selectedDataset));
+                        const assignment = trainingConfig.file_assignments[file.file_id] || { pipeline_id: null, split: isLineBased ? 'split' : 'train', split_ratio: 0.8 };
                         const lineCount = fileLineCounts[file.file_id];
                         const totalLines = lineCount?.data_lines || assignment.total_lines || 0;
                         const selectedLines = assignment.selected_lines ?? totalLines;
@@ -2368,16 +2336,19 @@ export default function TrainingPage() {
                                 <div className="text-sm text-white font-medium">{file.filename}</div>
                                 <div className="text-xs text-slate-500">
                                   Label: <span className="text-indigo-300">{file.label}</span>
-                                  {lineCount?.loading ? (
-                                    <span className="ml-2 text-slate-400">· Loading lines...</span>
-                                  ) : totalLines > 0 ? (
-                                    <span className="ml-2 text-slate-400">· <span className="text-green-400">{selectedLines}</span>/{totalLines} lines</span>
-                                  ) : null}
+                                  {isLineBasedDataset(getEffectiveDatasetType(selectedDataset)) && (
+                                    lineCount?.loading ? (
+                                      <span className="ml-2 text-slate-400">· Loading lines...</span>
+                                    ) : totalLines > 0 ? (
+                                      <span className="ml-2 text-slate-400">· <span className="text-green-400">{selectedLines}</span>/{totalLines} lines</span>
+                                    ) : null
+                                  )}
                                 </div>
                               </div>
                             </div>
-                            <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-                              {/* Lines Selection */}
+                            <div className={`grid grid-cols-1 ${isLineBasedDataset(getEffectiveDatasetType(selectedDataset)) ? 'md:grid-cols-4' : 'md:grid-cols-3'} gap-3`}>
+                              {/* Lines Selection - only for line-based datasets (CSI, IMU, etc.) */}
+                              {isLineBasedDataset(getEffectiveDatasetType(selectedDataset)) && (
                               <div>
                                 <label className="block text-xs text-slate-400 mb-1">Lines to Use</label>
                                 <div className="flex items-center gap-1">
@@ -2398,6 +2369,7 @@ export default function TrainingPage() {
                                   <span className="text-xs text-slate-500 whitespace-nowrap">/ {totalLines}</span>
                                 </div>
                               </div>
+                              )}
                               <div>
                                 <label className="block text-xs text-slate-400 mb-1">Pipeline</label>
                                 <select
@@ -2431,10 +2403,12 @@ export default function TrainingPage() {
                                 >
                                   <option value="train">Train Only</option>
                                   <option value="test">Test Only</option>
-                                  <option value="split">Train/Test Split</option>
+                                  {isLineBasedDataset(getEffectiveDatasetType(selectedDataset)) && (
+                                    <option value="split">Train/Test Split</option>
+                                  )}
                                 </select>
                               </div>
-                              {assignment.split === 'split' && (
+                              {assignment.split === 'split' && isLineBasedDataset(getEffectiveDatasetType(selectedDataset)) && (
                                 <div>
                                   <label className="block text-xs text-slate-400 mb-1">Train Ratio</label>
                                   <input
@@ -2541,14 +2515,19 @@ export default function TrainingPage() {
                     };
                     
                     const formatLines = (n: number) => n.toLocaleString();
+                    const dsType = getEffectiveDatasetType(selectedDataset);
+                    const isImageDs = dsType === 'image';
+                    const totalTrainItems = isImageDs ? trainOnlyFiles.length + splitFiles.length : totalTrainLines;
+                    const totalTestItems = isImageDs ? testOnlyFiles.length + Math.ceil(splitFiles.length * 0.2) : totalTestLines;
+                    const totalItems = isImageDs ? files.length : totalLines;
                     
                     return (
                       <div className="space-y-4">
                         {/* Overall Stats */}
                         <div className="flex items-center gap-4 text-xs text-slate-400 pb-3 border-b border-slate-700">
                           <span>Total files: <span className="text-white font-medium">{files.length}</span></span>
-                          <span>Total lines: <span className="text-white font-medium">{formatLines(totalLines)}</span></span>
-                          <span>Train/Test ratio: <span className="text-white font-medium">{totalLines > 0 ? `${((totalTrainLines / totalLines) * 100).toFixed(0)}%` : '0%'} / {totalLines > 0 ? `${((totalTestLines / totalLines) * 100).toFixed(0)}%` : '0%'}</span></span>
+                          {!isImageDs && <span>Total lines: <span className="text-white font-medium">{formatLines(totalLines)}</span></span>}
+                          <span>Train/Test ratio: <span className="text-white font-medium">{totalItems > 0 ? `${((totalTrainItems / totalItems) * 100).toFixed(0)}%` : '0%'} / {totalItems > 0 ? `${((totalTestItems / totalItems) * 100).toFixed(0)}%` : '0%'}</span></span>
                         </div>
                         
                         <div className="grid grid-cols-2 gap-4">
@@ -3377,6 +3356,72 @@ export default function TrainingPage() {
         </div>
       )}
 
+      {/* Deploy Model Modal */}
+      {showDeployModal && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
+          <div className="bg-slate-900 rounded-xl p-6 w-full max-w-md border border-slate-700">
+            <h3 className="text-xl font-semibold text-white mb-2">Deploy Model</h3>
+            <p className="text-sm text-slate-400 mb-4">
+              Deploy <span className="text-indigo-300 font-medium">{showDeployModal.modelName}</span> to a device
+            </p>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm text-slate-300 mb-1">Target Device</label>
+                {devicesLoading ? (
+                  <div className="flex items-center gap-2 text-slate-400 text-sm py-2">
+                    <Loader2 className="w-4 h-4 animate-spin" /> Loading devices...
+                  </div>
+                ) : devices.length === 0 ? (
+                  <div className="p-3 bg-slate-800/50 rounded-lg border border-slate-700 text-sm text-slate-400">
+                    No devices registered. Connect a Thoth device first.
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {devices.map(d => (
+                      <button
+                        key={d.device_id}
+                        type="button"
+                        onClick={() => setSelectedDeviceId(d.device_id)}
+                        className={`w-full p-3 rounded-lg border text-left transition-colors ${
+                          selectedDeviceId === d.device_id
+                            ? 'bg-green-600/20 border-green-500/50 ring-1 ring-green-500/30'
+                            : 'bg-slate-800/50 border-slate-700 hover:border-slate-500'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <div className="text-sm font-medium text-white">{d.device_name}</div>
+                            <div className="text-xs text-slate-500">{d.device_type} · {d.device_id.slice(0, 8)}...</div>
+                          </div>
+                          <span className={`w-2 h-2 rounded-full ${d.online ? 'bg-green-400' : 'bg-slate-500'}`} />
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+            <div className="flex gap-3 mt-6">
+              <button
+                onClick={handleDeployModel}
+                disabled={!selectedDeviceId || operations.deployingModel === showDeployModal.modelId}
+                className="flex-1 px-4 py-2 bg-green-600 hover:bg-green-700 disabled:bg-slate-600 text-white rounded-lg font-medium flex items-center justify-center gap-2"
+              >
+                {operations.deployingModel === showDeployModal.modelId ? (
+                  <><Loader2 className="w-4 h-4 animate-spin" /> Deploying...</>
+                ) : (
+                  <><Rocket className="w-4 h-4" /> Deploy</>
+                )}
+              </button>
+              <button
+                onClick={() => { setShowDeployModal(null); setSelectedDeviceId(''); }}
+                className="flex-1 px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg font-medium"
+              >Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Job Details Modal */}
       {selectedJob && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
@@ -3909,22 +3954,14 @@ export default function TrainingPage() {
         </div>
       )}
 
-      {/* Create Job Group Modal */}
-      <CreateJobGroupModal
-        isOpen={showCreateGroupModal}
-        onClose={() => setShowCreateGroupModal(false)}
-        onCreate={handleCreateJobGroup}
-        type={createGroupType}
-        datasets={datasets.map(d => ({ id: d.id, name: d.name, file_count: d.file_count, labels: d.labels }))}
-        trainingConfig={{
-          epochs: trainingConfig.epochs,
-          batch_size: trainingConfig.batch_size,
-          learning_rate: trainingConfig.learning_rate,
-          test_split: trainingConfig.test_split,
-          preprocessing_pipeline_id: trainingConfig.preprocessing_pipeline_id,
-        }}
-        selectedDatasetId={selectedDataset?.id}
-      />
+      {/* Dataset Stats Modal */}
+      {showStatsModal && (
+        <DatasetStats
+          datasetName={showStatsModal.datasetName}
+          files={showStatsModal.files}
+          onClose={() => setShowStatsModal(null)}
+        />
+      )}
     </div>
   );
 }

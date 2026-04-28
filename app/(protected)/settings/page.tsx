@@ -1,7 +1,9 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
+import { useTheme } from '@/contexts/ThemeContext';
+import { useI18n } from '@/contexts/I18nContext';
 import {
   User,
   Bell,
@@ -11,10 +13,13 @@ import {
   Key,
   Save,
   Check,
+  Languages,
 } from 'lucide-react';
 
 export default function SettingsPage() {
   const { user } = useAuth();
+  const { theme, setTheme } = useTheme();
+  const { locale, setLocale, localeLabels } = useI18n();
   const [saved, setSaved] = useState(false);
   const [settings, setSettings] = useState({
     notifications: {
@@ -28,7 +33,7 @@ export default function SettingsPage() {
       analytics: true,
     },
     appearance: {
-      theme: 'dark',
+      theme: theme,
       compactMode: false,
     },
     data: {
@@ -121,6 +126,45 @@ export default function SettingsPage() {
               </button>
             </div>
           ))}
+        </div>
+      </div>
+
+      {/* Appearance Section */}
+      <div className="bg-slate-800/50 backdrop-blur-sm rounded-xl p-6 border border-slate-700 mb-6">
+        <div className="flex items-center gap-3 mb-6">
+          <Palette className="w-5 h-5 text-indigo-400" />
+          <h2 className="text-xl font-semibold text-white">Appearance</h2>
+        </div>
+        <div className="space-y-4">
+          <div className="flex items-center justify-between py-2">
+            <div>
+              <p className="text-white font-medium">Theme</p>
+              <p className="text-slate-500 text-sm">Choose your preferred color scheme</p>
+            </div>
+            <select
+              value={theme}
+              onChange={(e) => setTheme(e.target.value as 'light' | 'dark')}
+              className="px-4 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-indigo-500"
+            >
+              <option value="light">Light</option>
+              <option value="dark">Dark</option>
+            </select>
+          </div>
+          <div className="flex items-center justify-between py-2">
+            <div>
+              <p className="text-white font-medium">Language</p>
+              <p className="text-slate-500 text-sm">Select your preferred language</p>
+            </div>
+            <select
+              value={locale}
+              onChange={(e) => setLocale(e.target.value as any)}
+              className="px-4 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-indigo-500"
+            >
+              {Object.entries(localeLabels).map(([code, label]) => (
+                <option key={code} value={code}>{label}</option>
+              ))}
+            </select>
+          </div>
         </div>
       </div>
 
