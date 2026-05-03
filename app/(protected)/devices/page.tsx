@@ -7,7 +7,8 @@ import {
   Monitor, Wifi, WifiOff, Battery, Clock, RefreshCw, 
   ChevronDown, ChevronUp, Laptop, Smartphone, Server, Cpu,
   Camera, Mic, Activity, Radio, Thermometer, Trash2,
-  Play, Square, AlertCircle, CheckCircle, XCircle
+  Play, Square, AlertCircle, CheckCircle, XCircle,
+  Rocket, X, Bell
 } from 'lucide-react';
 
 type Sensor = {
@@ -398,13 +399,30 @@ function DeviceCard({
   );
 }
 
+type PendingDeployment = {
+  deployment_id: string;
+  model_id: number;
+  model_name: string;
+  device_id: string;
+  device_name: string;
+  config: {
+    prediction_duration: number;
+    prediction_interval: number;
+    actions: Array<{label: string; action_type: string; action_value: string}>;
+  };
+  sent_at: string;
+};
+
 export default function DevicesPage() {
   const [devices, setDevices] = useState<Device[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<'all' | 'online' | 'offline'>('all');
   const [isDeletingAll, setIsDeletingAll] = useState(false);
-  const { get, delete: del } = useApi();
+  const [pendingDeployments, setPendingDeployments] = useState<PendingDeployment[]>([]);
+  const [expandedDeploy, setExpandedDeploy] = useState<string | null>(null);
+  const [deployEditConfig, setDeployEditConfig] = useState<Record<string, { prediction_duration: number; prediction_interval: number }>>({});
+  const { get, post, delete: del } = useApi();
   const toast = useToast();
 
   const fetchDevices = useCallback(async () => {
@@ -423,9 +441,47 @@ export default function DevicesPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const fetchPendingDeployments = useCallback(async () => {
+    try {
+      const data = await get('/datasets/models/pending-deployments');
+      if (data && Array.isArray(data.deployments)) {
+        setPendingDeployments(data.deployments);
+      }
+    } catch {
+      // Silently ignore - endpoint may not exist yet
+    }
+  }, [get]);
+
+  const handleAcceptDeployment = async (deployment: PendingDeployment) => {
+    const editedConfig = deployEditConfig[deployment.deployment_id];
+    try {
+      await post(`/datasets/models/deployments/${deployment.deployment_id}/confirm`, {
+        accepted: true,
+        config: editedConfig ? { ...deployment.config, ...editedConfig } : deployment.config,
+      });
+      toast.success('Deployment Accepted', `Model "${deployment.model_name}" is now running on this device`);
+      setPendingDeployments(prev => prev.filter(d => d.deployment_id !== deployment.deployment_id));
+    } catch (err) {
+      toast.error('Accept Failed', err instanceof Error ? err.message : 'Failed to accept deployment');
+    }
+  };
+
+  const handleDeclineDeployment = async (deployment: PendingDeployment) => {
+    try {
+      await post(`/datasets/models/deployments/${deployment.deployment_id}/confirm`, { accepted: false });
+      toast.warning('Deployment Declined', `Deployment of "${deployment.model_name}" was declined`);
+      setPendingDeployments(prev => prev.filter(d => d.deployment_id !== deployment.deployment_id));
+    } catch (err) {
+      toast.error('Decline Failed', err instanceof Error ? err.message : 'Failed to decline deployment');
+    }
+  };
+
   useEffect(() => {
     fetchDevices();
-  }, [fetchDevices]);
+    fetchPendingDeployments();
+    const interval = setInterval(fetchPendingDeployments, 10000);
+    return () => clearInterval(interval);
+  }, [fetchDevices, fetchPendingDeployments]);
 
   const handleDeleteDevice = async (deviceId: string) => {
     try {
@@ -555,6 +611,102 @@ export default function DevicesPage() {
           >
             <XCircle className="w-4 h-4" />
           </button>
+        </div>
+      )}
+
+      {/* Pending Deployments Banner */}
+      {pendingDeployments.length > 0 && (
+        <div className="mb-6 space-y-3">
+          <div className="flex items-center gap-2 mb-3">
+            <Bell className="w-5 h-5 text-yellow-400 animate-pulse" />
+            <h2 className="text-lg font-semibold text-yellow-300">
+              {pendingDeployments.length} Pending Deployment{pendingDeployments.length > 1 ? 's' : ''}
+            </h2>
+          </div>
+          {pendingDeployments.map(deploy => (
+            <div key={deploy.deployment_id} className="bg-yellow-500/10 border border-yellow-500/40 rounded-xl overflow-hidden">
+              <div className="p-4">
+                <div className="flex items-start justify-between">
+                  <div className="flex items-start gap-3">
+                    <div className="p-2 bg-yellow-500/20 rounded-lg mt-0.5">
+                      <Rocket className="w-5 h-5 text-yellow-400" />
+                    </div>
+                    <div>
+                      <p className="text-white font-medium">Deploy request: <span className="text-yellow-300">{deploy.model_name}</span></p>
+                      <p className="text-slate-400 text-xs mt-0.5">Target: {deploy.device_name} · Sent {new Date(deploy.sent_at).toLocaleTimeString()}</p>
+                      <div className="flex gap-3 mt-1 text-xs text-slate-300">
+                        <span>⏱ {deploy.config.prediction_duration}s duration</span>
+                        <span>🔄 every {deploy.config.prediction_interval}s</span>
+                        {deploy.config.actions.length > 0 && <span>⚡ {deploy.config.actions.length} action{deploy.config.actions.length > 1 ? 's' : ''}</span>}
+                      </div>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => setExpandedDeploy(expandedDeploy === deploy.deployment_id ? null : deploy.deployment_id)}
+                    className="text-slate-400 hover:text-white text-xs px-2 py-1 bg-slate-700/50 rounded"
+                  >
+                    {expandedDeploy === deploy.deployment_id ? 'Hide' : 'Adjust'}
+                  </button>
+                </div>
+
+                {/* Editable config */}
+                {expandedDeploy === deploy.deployment_id && (
+                  <div className="mt-4 pt-4 border-t border-yellow-500/20 space-y-3">
+                    <p className="text-xs text-slate-400 mb-2">Adjust settings before accepting:</p>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-xs text-slate-400 mb-1">Prediction Duration (s)</label>
+                        <input
+                          type="number" min={5} max={3600}
+                          value={deployEditConfig[deploy.deployment_id]?.prediction_duration ?? deploy.config.prediction_duration}
+                          onChange={e => setDeployEditConfig(prev => ({ ...prev, [deploy.deployment_id]: { ...(prev[deploy.deployment_id] || deploy.config), prediction_duration: parseInt(e.target.value) || 60 } }))}
+                          className="w-full px-2 py-1.5 bg-slate-800 border border-slate-600 rounded text-white text-sm"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs text-slate-400 mb-1">Prediction Interval (s)</label>
+                        <input
+                          type="number" min={0.1} step={0.1} max={60}
+                          value={deployEditConfig[deploy.deployment_id]?.prediction_interval ?? deploy.config.prediction_interval}
+                          onChange={e => setDeployEditConfig(prev => ({ ...prev, [deploy.deployment_id]: { ...(prev[deploy.deployment_id] || deploy.config), prediction_interval: parseFloat(e.target.value) || 1 } }))}
+                          className="w-full px-2 py-1.5 bg-slate-800 border border-slate-600 rounded text-white text-sm"
+                        />
+                      </div>
+                    </div>
+                    {deploy.config.actions.length > 0 && (
+                      <div>
+                        <p className="text-xs text-slate-400 mb-1">Configured actions:</p>
+                        <div className="space-y-1">
+                          {deploy.config.actions.map((a, i) => (
+                            <div key={i} className="flex items-center gap-2 text-xs p-2 bg-slate-800/50 rounded">
+                              <span className="text-indigo-300">When <span className="text-white font-medium">{a.label}</span>:</span>
+                              <span className="text-xs px-1 py-0.5 rounded bg-slate-700 text-slate-300 uppercase">{a.action_type}</span>
+                              <span className="text-slate-400 truncate">{a.action_value}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                <div className="flex gap-2 mt-4">
+                  <button
+                    onClick={() => handleAcceptDeployment(deploy)}
+                    className="flex-1 flex items-center justify-center gap-2 px-3 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm font-medium transition-colors"
+                  >
+                    <CheckCircle className="w-4 h-4" /> Accept &amp; Deploy
+                  </button>
+                  <button
+                    onClick={() => handleDeclineDeployment(deploy)}
+                    className="flex items-center justify-center gap-2 px-3 py-2 bg-slate-700 hover:bg-red-600/30 hover:border-red-500/50 text-slate-300 hover:text-red-300 border border-slate-600 rounded-lg text-sm transition-colors"
+                  >
+                    <X className="w-4 h-4" /> Decline
+                  </button>
+                </div>
+              </div>
+            </div>
+          ))}
         </div>
       )}
 

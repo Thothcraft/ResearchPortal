@@ -1,25 +1,21 @@
 /**
  * Smart File Detection Utilities
  * 
- * Detects valid data files based on:
- * 1. File naming conventions (type prefix + date)
- * 2. Metadata file presence
- * 3. File extension validation
+ * Detects valid data files based on extension.
  * 
- * Valid file formats:
- * - CSI: csi_YYYY-MM-DD_*.csv (with optional csi_YYYY-MM-DD_*.meta.json)
- * - IMU: imu_YYYY-MM-DD_*.json/jsonl/csv
- * - Image: img_YYYY-MM-DD_*.jpg/png/etc
- * - Video: vid_YYYY-MM-DD_*.mp4/avi/etc
- * - Audio: audio_YYYY-MM-DD_*.wav/mp3/etc
- * - Sensor: sensor_YYYY-MM-DD_*.csv/json
+ * Valid file formats (5 supported types):
+ * - Image: *.jpg/jpeg/png/gif/bmp/webp/tiff/heic
+ * - Audio: *.wav/mp3/m4a/flac/ogg/aac
+ * - CSI:   *.csv (WiFi Channel State Information)
+ * - Video: *.mp4/avi/mov/mkv/webm/m4v
+ * - FMCW:  *.bin/dat/npy (radar data)
  */
 
-export type DataFileType = 'csi' | 'imu' | 'image' | 'video' | 'audio' | 'sensor' | 'timelapse' | 'other';
+export type DataFileType = 'image' | 'audio' | 'csi' | 'video' | 'fmcw';
 
 export interface DataFileInfo {
   name: string;
-  type: DataFileType;
+  type: DataFileType | 'other';
   date: string | null;
   extension: string;
   hasMetadata: boolean;
@@ -34,24 +30,9 @@ const FILE_TYPE_PATTERNS: Record<DataFileType, {
   extensions: string[];
   requiresMetadata: boolean;
 }> = {
-  csi: {
-    prefixes: ['csi_', 'csi-'],
-    extensions: ['csv'],
-    requiresMetadata: false,
-  },
-  imu: {
-    prefixes: ['imu_', 'imu-'],
-    extensions: ['json', 'jsonl', 'csv'],
-    requiresMetadata: false,
-  },
   image: {
     prefixes: ['img_', 'image_', 'img-', 'image-'],
     extensions: ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'tiff', 'heic'],
-    requiresMetadata: false,
-  },
-  video: {
-    prefixes: ['vid_', 'video_', 'vid-', 'video-'],
-    extensions: ['mp4', 'avi', 'mov', 'mkv', 'webm', 'm4v'],
     requiresMetadata: false,
   },
   audio: {
@@ -59,19 +40,19 @@ const FILE_TYPE_PATTERNS: Record<DataFileType, {
     extensions: ['wav', 'mp3', 'm4a', 'flac', 'ogg', 'aac'],
     requiresMetadata: false,
   },
-  sensor: {
-    prefixes: ['sensor_', 'mfcw_', 'radar_', 'sensor-'],
-    extensions: ['csv', 'json', 'jsonl'],
+  csi: {
+    prefixes: ['csi_', 'csi-'],
+    extensions: ['csv'],
     requiresMetadata: false,
   },
-  timelapse: {
-    prefixes: ['timelapse_', 'tl_', 'timelapse-'],
-    extensions: ['mp4', 'avi', 'mov', 'zip'],
+  video: {
+    prefixes: ['vid_', 'video_', 'vid-', 'video-'],
+    extensions: ['mp4', 'avi', 'mov', 'mkv', 'webm', 'm4v'],
     requiresMetadata: false,
   },
-  other: {
-    prefixes: [],
-    extensions: [],
+  fmcw: {
+    prefixes: ['fmcw_', 'radar_', 'fmcw-', 'radar-'],
+    extensions: ['bin', 'dat', 'npy'],
     requiresMetadata: false,
   },
 };
@@ -107,15 +88,13 @@ export function extractDateFromFilename(filename: string): string | null {
  * Detect file type from filename - primarily by extension
  * No naming convention required
  */
-export function detectFileType(filename: string): DataFileType {
+export function detectFileType(filename: string): DataFileType | 'other' {
   const lowerName = filename.toLowerCase();
   const extension = lowerName.split('.').pop() || '';
   
-  // First check by extension (primary detection method)
+  // First check by extension + prefix (most specific match)
   for (const [type, config] of Object.entries(FILE_TYPE_PATTERNS) as [DataFileType, typeof FILE_TYPE_PATTERNS[DataFileType]][]) {
-    if (type === 'other') continue;
     if (config.extensions.includes(extension)) {
-      // If has prefix, use that type specifically
       const hasPrefix = config.prefixes.some(prefix => lowerName.startsWith(prefix));
       if (hasPrefix) {
         return type;
@@ -125,7 +104,6 @@ export function detectFileType(filename: string): DataFileType {
   
   // Fallback: detect by extension only
   for (const [type, config] of Object.entries(FILE_TYPE_PATTERNS) as [DataFileType, typeof FILE_TYPE_PATTERNS[DataFileType]][]) {
-    if (type === 'other') continue;
     if (config.extensions.includes(extension)) {
       return type;
     }
@@ -139,9 +117,7 @@ export function detectFileType(filename: string): DataFileType {
  * No naming convention required - just needs a recognized extension
  */
 export function isValidDataFile(filename: string): boolean {
-  const type = detectFileType(filename);
-  // Any recognized file type is valid
-  return type !== 'other';
+  return detectFileType(filename) !== 'other';
 }
 
 /**
@@ -214,7 +190,7 @@ export function filterValidDataFiles(
       if (!includeInvalid && !f.isValid) return false;
       
       // Filter by type
-      if (types && types.length > 0 && !types.includes(f.type)) return false;
+      if (types && types.length > 0 && (f.type === 'other' || !types.includes(f.type as DataFileType))) return false;
       
       // Filter by date range
       if (dateRange && f.date) {
@@ -246,8 +222,8 @@ export function groupFilesByDate(files: DataFileInfo[]): Map<string, DataFileInf
 /**
  * Group files by type
  */
-export function groupFilesByType(files: DataFileInfo[]): Map<DataFileType, DataFileInfo[]> {
-  const groups = new Map<DataFileType, DataFileInfo[]>();
+export function groupFilesByType(files: DataFileInfo[]): Map<DataFileType | 'other', DataFileInfo[]> {
+  const groups = new Map<DataFileType | 'other', DataFileInfo[]>();
   
   files.forEach(file => {
     if (!groups.has(file.type)) {
@@ -262,23 +238,22 @@ export function groupFilesByType(files: DataFileInfo[]): Map<DataFileType, DataF
 /**
  * Get file type display info
  */
-export function getFileTypeDisplayInfo(type: DataFileType): {
+export function getFileTypeDisplayInfo(type: DataFileType | 'other'): {
   label: string;
   color: string;
   bgColor: string;
+  icon: string;
 } {
-  const displayInfo: Record<DataFileType, { label: string; color: string; bgColor: string }> = {
-    csi: { label: 'CSI', color: 'text-green-400', bgColor: 'bg-green-500/10' },
-    imu: { label: 'IMU', color: 'text-blue-400', bgColor: 'bg-blue-500/10' },
-    image: { label: 'Image', color: 'text-yellow-400', bgColor: 'bg-yellow-500/10' },
-    video: { label: 'Video', color: 'text-red-400', bgColor: 'bg-red-500/10' },
-    audio: { label: 'Audio', color: 'text-purple-400', bgColor: 'bg-purple-500/10' },
-    sensor: { label: 'Sensor', color: 'text-cyan-400', bgColor: 'bg-cyan-500/10' },
-    timelapse: { label: 'Timelapse', color: 'text-orange-400', bgColor: 'bg-orange-500/10' },
-    other: { label: 'Other', color: 'text-slate-400', bgColor: 'bg-slate-500/10' },
+  const displayInfo: Record<DataFileType | 'other', { label: string; color: string; bgColor: string; icon: string }> = {
+    image: { label: 'Image', color: 'text-yellow-400', bgColor: 'bg-yellow-500/10', icon: '🖼️' },
+    audio: { label: 'Audio', color: 'text-purple-400', bgColor: 'bg-purple-500/10', icon: '🎵' },
+    csi: { label: 'CSI', color: 'text-green-400', bgColor: 'bg-green-500/10', icon: '📡' },
+    video: { label: 'Video', color: 'text-red-400', bgColor: 'bg-red-500/10', icon: '🎬' },
+    fmcw: { label: 'FMCW', color: 'text-cyan-400', bgColor: 'bg-cyan-500/10', icon: '📻' },
+    other: { label: 'Other', color: 'text-slate-400', bgColor: 'bg-slate-500/10', icon: '📄' },
   };
   
-  return displayInfo[type] || displayInfo.other;
+  return displayInfo[type] ?? displayInfo.other;
 }
 
 /**

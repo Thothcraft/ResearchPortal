@@ -78,7 +78,7 @@ type DataFolder = {
 type DataFile = {
   id?: number;
   name: string;
-  type: DataFileType;
+  type: DataFileType | 'other';
   size: number;
   timestamp: string;
   extension: string;
@@ -92,16 +92,28 @@ type DataFile = {
   labels?: string[];
 };
 
-const FILE_TYPE_ICONS: Record<DataFileType, typeof Database> = {
-  csi: Wifi,
-  imu: Activity,
+const FILE_TYPE_ICONS: Record<DataFileType | 'other', typeof Database> = {
   image: Image,
-  video: Film,
   audio: Music,
-  sensor: Radio,
-  timelapse: Film,
+  csi: Wifi,
+  video: Film,
+  fmcw: Radio,
   other: FileText,
 };
+
+const ALLOWED_EXTENSIONS = new Set([
+  'jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'tiff', 'heic',
+  'wav', 'mp3', 'm4a', 'flac', 'ogg', 'aac',
+  'csv',
+  'mp4', 'avi', 'mov', 'mkv', 'webm', 'm4v',
+  'bin', 'dat', 'npy',
+]);
+
+const TYPE_ACCEPT_STRING =
+  'image/jpeg,image/png,image/gif,image/bmp,image/webp,image/tiff,image/heic,' +
+  'audio/wav,audio/mpeg,audio/mp4,audio/flac,audio/ogg,audio/aac,' +
+  'video/mp4,video/x-msvideo,video/quicktime,video/x-matroska,video/webm,' +
+  '.csv,.bin,.dat,.npy';
 
 export default function DataPage() {
   // Pagination state
@@ -111,7 +123,7 @@ export default function DataPage() {
   
   // Filter state
   const [searchQuery, setSearchQuery] = useState('');
-  const [filterType, setFilterType] = useState<DataFileType | 'all'>('all');
+  const [filterType, setFilterType] = useState<DataFileType | 'other' | 'all'>('all');
   const [showValidOnly, setShowValidOnly] = useState(true);
   
   // UI state
@@ -581,7 +593,7 @@ export default function DataPage() {
       
       if (!response.ok) throw new Error('Failed to load file');
       
-      if (['image', 'video', 'audio', 'timelapse'].includes(file.type)) {
+      if (['image', 'video', 'audio'].includes(file.type)) {
         const blob = await response.blob();
         setPreviewContent(URL.createObjectURL(blob));
       } else {
@@ -649,7 +661,12 @@ export default function DataPage() {
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    
+    const ext = file.name.split('.').pop()?.toLowerCase() || '';
+    if (!ALLOWED_EXTENSIONS.has(ext)) {
+      setUploadError(`Unsupported file type ".${ext}". Allowed types: Image, Audio, CSI (CSV), Video, FMCW (bin/dat/npy)`);
+      e.target.value = '';
+      return;
+    }
     setUploadFile(file);
     setUploadError(null);
   };
@@ -1135,6 +1152,7 @@ export default function DataPage() {
                 </label>
                 <input
                   type="file"
+                  accept={TYPE_ACCEPT_STRING}
                   onChange={handleFileSelect}
                   className="w-full px-4 py-3 bg-slate-900 border border-slate-700 rounded-lg text-white file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:bg-indigo-600 file:text-white file:cursor-pointer hover:file:bg-indigo-700"
                 />

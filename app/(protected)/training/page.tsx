@@ -65,7 +65,7 @@ const PREPROCESSING_STEP_HELP: Record<string, { title: string; details: string }
 };
 
 type TrainingMode = 'cloud' | 'on-device' | 'federated';
-type DatasetType = 'image' | 'csi' | 'imu' | 'audio' | 'mixed' | 'other';
+type DatasetType = 'image' | 'audio' | 'csi' | 'video' | 'fmcw' | 'other';
 type Dataset = {
   id: number;
   name: string;
@@ -239,38 +239,32 @@ const MODEL_OPTIONS: ModelOption[] = [
   },
 ];
 
-// Detect data type from filename
-function detectDataType(filename: string): string {
-  const ext = filename.split('.').pop()?.toLowerCase();
-  const name = filename.toLowerCase();
-  
-  // Check extension first
-  if (ext === 'json') {
-    if (name.includes('imu')) return 'imu';
-    if (name.includes('csi')) return 'csi';
-    if (name.includes('mfcw')) return 'mfcw';
-  }
-  
-  // Check common image/video extensions
-  if (['jpg', 'jpeg', 'png', 'gif', 'bmp', 'tiff', 'webp'].includes(ext || '')) return 'img';
-  if (['mp4', 'avi', 'mov', 'mkv', 'webm'].includes(ext || '')) return 'vid';
-  
-  // Default to other
+// Detect data type from filename - matches 5-type system
+function detectDataType(filename: string): DatasetType {
+  const ext = filename.split('.').pop()?.toLowerCase() || '';
+  if (['jpg', 'jpeg', 'png', 'gif', 'bmp', 'tiff', 'webp', 'heic'].includes(ext)) return 'image';
+  if (['mp4', 'avi', 'mov', 'mkv', 'webm', 'm4v'].includes(ext)) return 'video';
+  if (['wav', 'mp3', 'm4a', 'flac', 'ogg', 'aac'].includes(ext)) return 'audio';
+  if (ext === 'csv') return 'csi';
+  if (['bin', 'dat', 'npy'].includes(ext)) return 'fmcw';
   return 'other';
 };
 
 function getEffectiveDatasetType(dataset: Dataset | null): DatasetType {
-  if (dataset?.dataset_type && dataset.dataset_type !== 'other') return dataset.dataset_type;
-  if (!dataset?.files || dataset.files.length === 0) return dataset?.dataset_type || 'other';
+  if (dataset?.dataset_type && dataset.dataset_type !== 'other') return dataset.dataset_type as DatasetType;
+  if (!dataset?.files || dataset.files.length === 0) return (dataset?.dataset_type as DatasetType) || 'other';
   const types = new Set(dataset.files.map(f => detectDataType(f.filename)));
-  if (types.has('img') || types.has('vid')) return 'image';
-  if (types.has('csi') || types.has('mfcw')) return 'csi';
-  if (types.has('imu')) return 'imu';
-  if (types.size > 1) return 'mixed';
-  return dataset?.dataset_type || 'other';
+  const nonOther = [...types].filter(t => t !== 'other');
+  if (nonOther.length === 1) return nonOther[0] as DatasetType;
+  if (nonOther.length === 0) return 'other';
+  // Mixed types — return dominant type
+  for (const t of ['image', 'audio', 'csi', 'video', 'fmcw'] as DatasetType[]) {
+    if (types.has(t)) return t;
+  }
+  return 'other';
 }
 
-const isLineBasedDataset = (type: DatasetType) => ['csi', 'imu', 'other', 'mixed'].includes(type);
+const isLineBasedDataset = (type: DatasetType) => ['csi', 'fmcw', 'other'].includes(type);
 
 const TRAINING_STATUS_CONFIG: Record<string, { color: string; bg: string; icon: React.ElementType }> = {
   completed: { color: 'text-green-400', bg: 'bg-green-500/20', icon: CheckCircle },
@@ -447,6 +441,12 @@ export default function TrainingPage() {
   const [devices, setDevices] = useState<{device_id: string; device_name: string; online: boolean; device_type: string; last_seen?: string}[]>([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState<string>('');
   const [devicesLoading, setDevicesLoading] = useState(false);
+  const [deployConfig, setDeployConfig] = useState({
+    prediction_duration: 60,
+    prediction_interval: 1,
+    actions: [] as Array<{label: string; action_type: 'webhook' | 'alert' | 'log'; action_value: string}>,
+  });
+  const [newDeployAction, setNewDeployAction] = useState({ label: '', action_type: 'alert' as 'webhook' | 'alert' | 'log', action_value: '' });
   const [showStatsModal, setShowStatsModal] = useState<{datasetName: string; files: any[]} | null>(null);
 
   const fetchData = async (options?: { datasets?: boolean; jobs?: boolean; models?: boolean; files?: boolean }) => {
@@ -834,23 +834,7 @@ export default function TrainingPage() {
       const files = Array.from(selectedFiles.entries()).map(([fileId, label]) => ({ file_id: fileId, label }));
       console.log(`Adding ${files.length} files to dataset ${selectedDataset.id}`);
       
-      // Auto-detect dataset type based on file extensions
-      const fileData = files.map(f => {
-        const fileObj = cloudFiles.find((cf: CloudFile) => cf.file_id === f.file_id);
-        return fileObj?.filename || '';
-      });
-      
-      const hasImageFiles = fileData.some(fname => 
-        /\.(jpg|jpeg|png|gif|bmp|webp)$/i.test(fname)
-      );
-      
-      // If dataset is currently CSI but has image files, update to image type
-      if (selectedDataset.dataset_type === 'csi' && hasImageFiles) {
-        console.log('Detected image files, updating dataset type from csi to image');
-        await put(`/datasets/${selectedDataset.id}`, { dataset_type: 'image' });
-      }
-      
-      const result = await post(`/datasets/${selectedDataset.id}/files`, { files });
+        const result = await post(`/datasets/${selectedDataset.id}/files`, { files });
       console.log('Add files result:', result);
       
       setSelectedFiles(new Map());
@@ -1084,12 +1068,17 @@ export default function TrainingPage() {
       const result = await post(`/datasets/models/${showDeployModal.modelId}/deploy`, {
         model_id: showDeployModal.modelId,
         device_id: selectedDeviceId,
-        config: {},
+        config: {
+          prediction_duration: deployConfig.prediction_duration,
+          prediction_interval: deployConfig.prediction_interval,
+          actions: deployConfig.actions,
+        },
       });
       if (result?.success) {
-        toast.success('Deploying', `${result.model_name} → ${result.device_name}`);
+        toast.success('Deployment Sent', `${result.model_name || showDeployModal.modelName} sent to device. Awaiting confirmation on device dashboard.`);
         setShowDeployModal(null);
         setSelectedDeviceId('');
+        setDeployConfig({ prediction_duration: 60, prediction_interval: 1, actions: [] });
       } else {
         toast.error('Deploy Failed', result?.detail || 'Unknown error');
       }
@@ -2127,12 +2116,11 @@ export default function TrainingPage() {
                 <label className="block text-sm text-slate-300 mb-1">Dataset Type</label>
                 <div className="grid grid-cols-3 gap-2">
                   {([
-                    { value: 'csi' as DatasetType, label: 'CSI', icon: '📡', desc: 'WiFi Channel State Information' },
-                    { value: 'image' as DatasetType, label: 'Image', icon: '🖼️', desc: 'Photos, frames, timelapse' },
-                    { value: 'imu' as DatasetType, label: 'IMU', icon: '📱', desc: 'Accelerometer & gyroscope' },
-                    { value: 'audio' as DatasetType, label: 'Audio', icon: '🎤', desc: 'Sound recordings' },
-                    { value: 'mixed' as DatasetType, label: 'Mixed', icon: '🔀', desc: 'Multiple sensor types' },
-                    { value: 'other' as DatasetType, label: 'Other', icon: '📁', desc: 'Custom data format' },
+                    { value: 'image' as DatasetType, label: 'Image', icon: '🖼️', desc: 'Photos / PNG / JPG' },
+                    { value: 'audio' as DatasetType, label: 'Audio', icon: '🎵', desc: 'WAV / MP3 / FLAC' },
+                    { value: 'csi' as DatasetType, label: 'CSI', icon: '📡', desc: 'WiFi Channel State (CSV)' },
+                    { value: 'video' as DatasetType, label: 'Video', icon: '🎬', desc: 'MP4 / AVI / MOV' },
+                    { value: 'fmcw' as DatasetType, label: 'FMCW', icon: '📻', desc: 'Radar data (bin/dat/npy)' },
                   ]).map(opt => (
                     <button
                       key={opt.value}
@@ -2212,7 +2200,13 @@ export default function TrainingPage() {
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
           <div className="bg-slate-900 rounded-xl p-6 w-full max-w-2xl border border-slate-700 max-h-[80vh] overflow-hidden flex flex-col">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-xl font-semibold text-white">Add Files to Dataset</h3>
+              <div>
+                <h3 className="text-xl font-semibold text-white">Add Files to Dataset</h3>
+                <p className="text-xs text-slate-400 mt-1">
+                  Dataset type: <span className="font-medium text-indigo-300 uppercase">{selectedDataset.dataset_type || 'auto'}</span>
+                  {' · '}Only matching files are shown
+                </p>
+              </div>
               <button onClick={() => { setShowAddFiles(false); setSelectedFiles(new Map()); }} className="text-slate-400 hover:text-white"><X className="w-5 h-5" /></button>
             </div>
             <div className="flex-1 overflow-y-auto mb-4">
@@ -2222,25 +2216,46 @@ export default function TrainingPage() {
                   <Loader2 className="w-10 h-10 text-indigo-400 mx-auto mb-3 animate-spin" />
                   <p className="text-slate-400">Loading cloud files...</p>
                 </div>
-              ) : cloudFiles.length === 0 ? (
-                <p className="text-slate-400 text-center py-4">No files in cloud storage</p>
-              ) : (
-                <div className="space-y-2">
-                  {cloudFiles.map(file => {
-                    // Include file's original labels in the dropdown options
-                    const fileLabelOptions = file.labels && file.labels.length > 0 ? file.labels.filter(l => !availableLabels.includes(l)) : [];
-                    const allOptions = [...availableLabels, ...fileLabelOptions];
-                    const defaultLabel = file.labels && file.labels.length > 0 ? file.labels[0] : (availableLabels || [])[0];
-                    
-                    return (
-                      <div key={file.file_id} className={`flex items-center justify-between p-3 rounded-lg border ${selectedFiles.has(file.file_id) ? 'border-indigo-500 bg-indigo-500/10' : 'border-slate-700 bg-slate-800/50'}`}>
-                        <div className="flex items-center gap-3"><input type="checkbox" checked={selectedFiles.has(file.file_id)} onChange={() => toggleFileSelection(file.file_id, defaultLabel || '')} className="w-4 h-4" /><div><p className="text-white text-sm">{file.filename}</p><p className="text-slate-500 text-xs">{(file.size / 1024).toFixed(1)} KB</p>{file.labels && file.labels.length > 0 && <p className="text-indigo-400 text-xs mt-0.5">{file.labels.join(', ')}</p>}</div></div>
-                        {selectedFiles.has(file.file_id) && <select value={selectedFiles.get(file.file_id)} onChange={(e) => { const m = new Map(selectedFiles); m.set(file.file_id, e.target.value); setSelectedFiles(m); }} className="px-2 py-1 bg-slate-800 border border-slate-600 rounded text-sm text-white">{allOptions.map(l => <option key={l} value={l}>{l}</option>)}</select>}
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
+              ) : (() => {
+                const dsType = selectedDataset.dataset_type;
+                const compatibleFiles = cloudFiles.filter(file => {
+                  if (!dsType || dsType === 'other') return true;
+                  return detectDataType(file.filename) === dsType;
+                });
+                if (compatibleFiles.length === 0) return (
+                  <div className="text-center py-8 bg-slate-800/50 rounded-xl border border-slate-700">
+                    <AlertCircle className="w-10 h-10 text-slate-500 mx-auto mb-3" />
+                    <p className="text-slate-400">No {dsType?.toUpperCase()} files found in cloud storage</p>
+                    <p className="text-slate-500 text-xs mt-1">Upload {dsType?.toUpperCase()} files first from the Data page</p>
+                  </div>
+                );
+                return (
+                  <div className="space-y-2">
+                    {compatibleFiles.map(file => {
+                      const fileLabelOptions = file.labels && file.labels.length > 0 ? file.labels.filter((l: string) => !availableLabels.includes(l)) : [];
+                      const allOptions = [...availableLabels, ...fileLabelOptions];
+                      const defaultLabel = file.labels && file.labels.length > 0 ? file.labels[0] : (availableLabels || [])[0];
+                      return (
+                        <div key={file.file_id} className={`flex items-center justify-between p-3 rounded-lg border ${selectedFiles.has(file.file_id) ? 'border-indigo-500 bg-indigo-500/10' : 'border-slate-700 bg-slate-800/50'}`}>
+                          <div className="flex items-center gap-3">
+                            <input type="checkbox" checked={selectedFiles.has(file.file_id)} onChange={() => toggleFileSelection(file.file_id, defaultLabel || '')} className="w-4 h-4" />
+                            <div>
+                              <p className="text-white text-sm">{file.filename}</p>
+                              <p className="text-slate-500 text-xs">{(file.size / 1024).toFixed(1)} KB · <span className="uppercase text-slate-400">{detectDataType(file.filename)}</span></p>
+                              {file.labels && file.labels.length > 0 && <p className="text-indigo-400 text-xs mt-0.5">{file.labels.join(', ')}</p>}
+                            </div>
+                          </div>
+                          {selectedFiles.has(file.file_id) && (
+                            <select value={selectedFiles.get(file.file_id)} onChange={(e) => { const m = new Map(selectedFiles); m.set(file.file_id, e.target.value); setSelectedFiles(m); }} className="px-2 py-1 bg-slate-800 border border-slate-600 rounded text-sm text-white">
+                              {allOptions.map((l: string) => <option key={l} value={l}>{l}</option>)}
+                            </select>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              })()}
             </div>
             <div className="flex gap-3">
               <button 
@@ -2249,19 +2264,12 @@ export default function TrainingPage() {
                 className="flex-1 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-600 text-white rounded-lg font-medium flex items-center justify-center gap-2"
               >
                 {operations.addingFiles ? (
-                  <>
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    Adding {selectedFiles.size} file{selectedFiles.size !== 1 ? 's' : ''}...
-                  </>
+                  <><Loader2 className="w-4 h-4 animate-spin" />Adding {selectedFiles.size} file{selectedFiles.size !== 1 ? 's' : ''}...</>
                 ) : (
                   `Add ${selectedFiles.size} file${selectedFiles.size !== 1 ? 's' : ''} to Dataset`
                 )}
               </button>
-              <button 
-                onClick={() => { setShowAddFiles(false); setSelectedFiles(new Map()); }} 
-                disabled={operations.addingFiles}
-                className="flex-1 px-4 py-2 bg-slate-700 hover:bg-slate-600 disabled:bg-slate-600 text-white rounded-lg font-medium"
-              >
+              <button onClick={() => { setShowAddFiles(false); setSelectedFiles(new Map()); }} disabled={operations.addingFiles} className="flex-1 px-4 py-2 bg-slate-700 hover:bg-slate-600 disabled:bg-slate-600 text-white rounded-lg font-medium">
                 Cancel
               </button>
             </div>
@@ -3358,49 +3366,124 @@ export default function TrainingPage() {
 
       {/* Deploy Model Modal */}
       {showDeployModal && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
-          <div className="bg-slate-900 rounded-xl p-6 w-full max-w-md border border-slate-700">
-            <h3 className="text-xl font-semibold text-white mb-2">Deploy Model</h3>
-            <p className="text-sm text-slate-400 mb-4">
-              Deploy <span className="text-indigo-300 font-medium">{showDeployModal.modelName}</span> to a device
-            </p>
-            <div className="space-y-4">
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-slate-900 rounded-xl p-6 w-full max-w-lg border border-slate-700 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between mb-4">
               <div>
-                <label className="block text-sm text-slate-300 mb-1">Target Device</label>
+                <h3 className="text-xl font-semibold text-white">Deploy Model to Device</h3>
+                <p className="text-sm text-slate-400 mt-1">
+                  Model: <span className="text-indigo-300 font-medium">{showDeployModal.modelName}</span>
+                </p>
+              </div>
+              <button onClick={() => { setShowDeployModal(null); setSelectedDeviceId(''); }} className="text-slate-400 hover:text-white">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-5">
+              {/* Device Selection */}
+              <div>
+                <label className="block text-sm font-medium text-slate-300 mb-2">Target Device (online only)</label>
                 {devicesLoading ? (
-                  <div className="flex items-center gap-2 text-slate-400 text-sm py-2">
-                    <Loader2 className="w-4 h-4 animate-spin" /> Loading devices...
-                  </div>
-                ) : devices.length === 0 ? (
+                  <div className="flex items-center gap-2 text-slate-400 text-sm py-2"><Loader2 className="w-4 h-4 animate-spin" /> Loading devices...</div>
+                ) : devices.filter(d => d.online).length === 0 ? (
                   <div className="p-3 bg-slate-800/50 rounded-lg border border-slate-700 text-sm text-slate-400">
-                    No devices registered. Connect a Thoth device first.
+                    No online devices found. Connect a Thoth device first.
                   </div>
                 ) : (
                   <div className="space-y-2">
-                    {devices.map(d => (
-                      <button
-                        key={d.device_id}
-                        type="button"
-                        onClick={() => setSelectedDeviceId(d.device_id)}
-                        className={`w-full p-3 rounded-lg border text-left transition-colors ${
-                          selectedDeviceId === d.device_id
-                            ? 'bg-green-600/20 border-green-500/50 ring-1 ring-green-500/30'
-                            : 'bg-slate-800/50 border-slate-700 hover:border-slate-500'
-                        }`}
+                    {devices.filter(d => d.online).map(d => (
+                      <button key={d.device_id} type="button" onClick={() => setSelectedDeviceId(d.device_id)}
+                        className={`w-full p-3 rounded-lg border text-left transition-colors ${selectedDeviceId === d.device_id ? 'bg-green-600/20 border-green-500/50 ring-1 ring-green-500/30' : 'bg-slate-800/50 border-slate-700 hover:border-slate-500'}`}
                       >
                         <div className="flex items-center justify-between">
                           <div>
                             <div className="text-sm font-medium text-white">{d.device_name}</div>
                             <div className="text-xs text-slate-500">{d.device_type} · {d.device_id.slice(0, 8)}...</div>
                           </div>
-                          <span className={`w-2 h-2 rounded-full ${d.online ? 'bg-green-400' : 'bg-slate-500'}`} />
+                          <span className="w-2 h-2 rounded-full bg-green-400" />
                         </div>
                       </button>
                     ))}
                   </div>
                 )}
               </div>
+
+              {/* Prediction Duration & Interval */}
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-slate-300 mb-1">Prediction Duration (s)</label>
+                  <input
+                    type="number" min={5} max={3600}
+                    value={deployConfig.prediction_duration}
+                    onChange={e => setDeployConfig(p => ({ ...p, prediction_duration: parseInt(e.target.value) || 60 }))}
+                    className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white text-sm"
+                  />
+                  <p className="text-xs text-slate-500 mt-1">How long the device runs predictions</p>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-300 mb-1">Prediction Interval (s)</label>
+                  <input
+                    type="number" min={0.1} step={0.1} max={60}
+                    value={deployConfig.prediction_interval}
+                    onChange={e => setDeployConfig(p => ({ ...p, prediction_interval: parseFloat(e.target.value) || 1 }))}
+                    className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white text-sm"
+                  />
+                  <p className="text-xs text-slate-500 mt-1">Seconds between each prediction</p>
+                </div>
+              </div>
+
+              {/* Actions on Prediction */}
+              <div>
+                <label className="block text-sm font-medium text-slate-300 mb-2">Actions on Prediction</label>
+                <p className="text-xs text-slate-500 mb-3">Define what happens when a specific label is predicted on the device dashboard</p>
+                {deployConfig.actions.length > 0 && (
+                  <div className="space-y-2 mb-3">
+                    {deployConfig.actions.map((action, idx) => (
+                      <div key={idx} className="flex items-center gap-2 p-2 bg-slate-800/50 rounded-lg border border-slate-700 text-sm">
+                        <span className="text-indigo-300 font-medium min-w-0 truncate flex-1">When: <span className="text-white">{action.label}</span></span>
+                        <span className="text-xs px-1.5 py-0.5 rounded bg-slate-700 text-slate-300 uppercase">{action.action_type}</span>
+                        <span className="text-slate-400 text-xs truncate max-w-[100px]">{action.action_value}</span>
+                        <button onClick={() => setDeployConfig(p => ({ ...p, actions: p.actions.filter((_, i) => i !== idx) }))} className="text-red-400 hover:text-red-300 shrink-0">
+                          <X className="w-3 h-3" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <div className="grid grid-cols-3 gap-2">
+                  <input type="text" value={newDeployAction.label} onChange={e => setNewDeployAction(p => ({ ...p, label: e.target.value }))}
+                    placeholder="Label (e.g. walking)" className="px-2 py-1.5 bg-slate-800 border border-slate-600 rounded-lg text-sm text-white placeholder-slate-500" />
+                  <select value={newDeployAction.action_type} onChange={e => setNewDeployAction(p => ({ ...p, action_type: e.target.value as any }))}
+                    className="px-2 py-1.5 bg-slate-800 border border-slate-600 rounded-lg text-sm text-white">
+                    <option value="alert">Alert</option>
+                    <option value="webhook">Webhook</option>
+                    <option value="log">Log</option>
+                  </select>
+                  <input type="text" value={newDeployAction.action_value} onChange={e => setNewDeployAction(p => ({ ...p, action_value: e.target.value }))}
+                    placeholder={newDeployAction.action_type === 'webhook' ? 'https://...' : 'Message'} className="px-2 py-1.5 bg-slate-800 border border-slate-600 rounded-lg text-sm text-white placeholder-slate-500" />
+                </div>
+                <button
+                  onClick={() => {
+                    if (!newDeployAction.label.trim()) return;
+                    setDeployConfig(p => ({ ...p, actions: [...p.actions, { ...newDeployAction }] }));
+                    setNewDeployAction({ label: '', action_type: 'alert', action_value: '' });
+                  }}
+                  disabled={!newDeployAction.label.trim()}
+                  className="mt-2 w-full px-3 py-1.5 bg-slate-700 hover:bg-slate-600 disabled:bg-slate-800 disabled:text-slate-600 text-white rounded-lg text-sm transition-colors"
+                >
+                  + Add Action
+                </button>
+              </div>
+
+              {/* Info banner */}
+              <div className="p-3 bg-blue-500/10 border border-blue-500/30 rounded-lg">
+                <p className="text-blue-300 text-xs">
+                  <span className="font-medium">ℹ️ How it works:</span> A deployment request will be sent to the device. The device dashboard will show a confirmation prompt where the operator can accept or decline, and further adjust the settings.
+                </p>
+              </div>
             </div>
+
             <div className="flex gap-3 mt-6">
               <button
                 onClick={handleDeployModel}
@@ -3408,15 +3491,15 @@ export default function TrainingPage() {
                 className="flex-1 px-4 py-2 bg-green-600 hover:bg-green-700 disabled:bg-slate-600 text-white rounded-lg font-medium flex items-center justify-center gap-2"
               >
                 {operations.deployingModel === showDeployModal.modelId ? (
-                  <><Loader2 className="w-4 h-4 animate-spin" /> Deploying...</>
+                  <><Loader2 className="w-4 h-4 animate-spin" /> Sending Request...</>
                 ) : (
-                  <><Rocket className="w-4 h-4" /> Deploy</>
+                  <><Rocket className="w-4 h-4" /> Send Deployment Request</>
                 )}
               </button>
-              <button
-                onClick={() => { setShowDeployModal(null); setSelectedDeviceId(''); }}
-                className="flex-1 px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg font-medium"
-              >Cancel</button>
+              <button onClick={() => { setShowDeployModal(null); setSelectedDeviceId(''); setDeployConfig({ prediction_duration: 60, prediction_interval: 1, actions: [] }); }}
+                className="flex-1 px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg font-medium">
+                Cancel
+              </button>
             </div>
           </div>
         </div>

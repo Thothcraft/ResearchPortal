@@ -42,7 +42,7 @@ import {
   CheckSquare,
 } from 'lucide-react';
 
-type DataType = 'imu' | 'csi' | 'mfcw' | 'image' | 'video';
+type DataType = 'image' | 'audio' | 'csi' | 'video' | 'fmcw';
 
 type ProcessingBlock = {
   id: string;
@@ -99,23 +99,35 @@ const BLOCK_TYPES = {
     icon: Activity,
     color: 'cyan',
     category: 'loaders',
-    dataTypes: ['imu'],
-    description: 'Load IMU sensor data (6 channels)',
+    dataTypes: ['audio'],
+    description: 'Load audio waveform data (IMU-like 6-channel CSV)',
     info: 'Loads Inertial Measurement Unit data with 6 channels: 3-axis accelerometer (X, Y, Z) and 3-axis gyroscope (X, Y, Z). Used for motion and activity recognition.',
-    config: { file_type: 'json', num_rows: 1000, channels: ['accel_x', 'accel_y', 'accel_z', 'gyro_x', 'gyro_y', 'gyro_z'] },
+    config: { file_type: 'csv', num_rows: 1000, num_cols: 6 },
     transformShape: (input: number[], config: any) => [config?.num_rows || 1000, 6],
     isSource: true,
   },
-  mfcw_loader: {
-    name: 'MFCW Radar Loader',
+  fmcw_loader: {
+    name: 'FMCW Radar Loader',
     icon: Radio,
     color: 'cyan',
     category: 'loaders',
-    dataTypes: ['mfcw'],
-    description: 'Load MFCW radar range-Doppler data',
+    dataTypes: ['fmcw'],
+    description: 'Load FMCW radar range-Doppler data',
     info: 'Loads Multi-Frequency Continuous Wave radar data. Contains range-Doppler information for detecting motion and vital signs. Each row has 256 range bins.',
     config: { file_type: 'bin', num_rows: 1000, range_bins: 256 },
     transformShape: (input: number[], config: any) => [config?.num_rows || 1000, config?.range_bins || 256],
+    isSource: true,
+  },
+  audio_loader: {
+    name: 'Audio Loader',
+    icon: Activity,
+    color: 'cyan',
+    category: 'loaders',
+    dataTypes: ['audio'],
+    description: 'Load audio files (WAV/MP3/FLAC)',
+    info: 'Loads audio files and converts to waveform arrays. Supports WAV, MP3, FLAC formats.',
+    config: { sample_rate: 22050, duration: null, mono: true },
+    transformShape: (input: number[], config: any) => [1, config?.sample_rate || 22050],
     isSource: true,
   },
   // Image loader for visual data
@@ -144,13 +156,70 @@ const BLOCK_TYPES = {
     transformShape: (input: number[], config: any) => [1, config?.num_frames || 30, config?.height || 224, config?.width || 224],
     isSource: true,
   },
+  // Image-specific blocks
+  image_resize: {
+    name: 'Resize',
+    icon: Maximize2,
+    color: 'yellow',
+    category: 'transforms',
+    dataTypes: ['image'],
+    description: 'Resize images to a fixed width × height',
+    info: 'Resizes all images to the specified dimensions. Use bilinear interpolation for smooth results. Common sizes: 224×224 (ResNet/MobileNet), 256×256, 128×128.',
+    config: { width: 224, height: 224, interpolation: 'bilinear' },
+    transformShape: (input: number[], config: any) => [input[0], config?.height || 224, config?.width || 224, input[3] || 3],
+  },
+  canny_edge: {
+    name: 'Canny Edge Detection',
+    icon: ZoomIn,
+    color: 'green',
+    category: 'extractors',
+    dataTypes: ['image'],
+    description: 'Extract edges using Canny algorithm',
+    info: 'Applies Canny edge detection to images. Outputs grayscale edge maps. Adjust low/high thresholds to control sensitivity. Sigma controls Gaussian blur before edge detection.',
+    config: { low_threshold: 50, high_threshold: 150, sigma: 1.0, to_grayscale: true },
+    transformShape: (input: number[], config: any) => [input[0], input[1], input[2], 1],
+  },
+  image_normalize: {
+    name: 'Image Normalize',
+    icon: TrendingUp,
+    color: 'blue',
+    category: 'transforms',
+    dataTypes: ['image'],
+    description: 'Normalize pixel values to [0,1] or [-1,1]',
+    info: 'Scales pixel values from [0,255] to the specified range. Standard normalization for neural networks.',
+    config: { range: [0, 1], channel_mean: [0.485, 0.456, 0.406], channel_std: [0.229, 0.224, 0.225], use_imagenet_stats: false },
+    transformShape: (input: number[]) => input,
+  },
+  image_augmentation: {
+    name: 'Image Augmentation',
+    icon: Shuffle,
+    color: 'pink',
+    category: 'transforms',
+    dataTypes: ['image'],
+    description: 'Random flips, rotations, brightness',
+    info: 'Applies random augmentations during training to increase dataset diversity. Includes horizontal/vertical flips, rotation, brightness and contrast adjustments.',
+    config: { horizontal_flip: true, vertical_flip: false, rotation_degrees: 15, brightness: 0.2, contrast: 0.2 },
+    transformShape: (input: number[]) => input,
+  },
+  grayscale: {
+    name: 'Grayscale',
+    icon: Image,
+    color: 'slate',
+    category: 'transforms',
+    dataTypes: ['image'],
+    description: 'Convert RGB images to grayscale',
+    info: 'Converts 3-channel (RGB) images to single-channel grayscale using luminance weighting.',
+    config: {},
+    transformShape: (input: number[]) => [input[0], input[1], input[2], 1],
+  },
+  // CSI feature selection (already defined below)
   // Generic file loader
   generic_loader: {
     name: 'Generic Loader',
     icon: FileInput,
     color: 'cyan',
     category: 'loaders',
-    dataTypes: ['imu', 'csi', 'mfcw'],
+    dataTypes: ['csi', 'fmcw', 'audio'],
     description: 'Load data from CSV/JSON/NPY files',
     info: 'Flexible loader supporting multiple file formats (CSV, JSON, NPY). Automatically detects data shape from file headers.',
     config: { file_type: 'csv', num_rows: 1000, num_cols: 64 },
@@ -188,7 +257,7 @@ const BLOCK_TYPES = {
     icon: CheckSquare,
     color: 'purple',
     category: 'filters',
-    dataTypes: ['csi', 'imu', 'mfcw'],
+    dataTypes: ['csi', 'fmcw'],
     description: 'Select which features/subcarriers to include',
     info: 'Allows fine-grained control over which features to include in the pipeline. For CSI data, each feature represents a subcarrier. Uncheck features that are noisy or irrelevant (e.g., null guard subcarriers 0-4 and 59-63 for WiFi).',
     config: { 
@@ -207,7 +276,7 @@ const BLOCK_TYPES = {
     icon: TrendingUp,
     color: 'blue',
     category: 'transforms',
-    dataTypes: ['imu', 'csi', 'mfcw'],
+    dataTypes: ['csi', 'fmcw', 'audio'],
     description: 'Normalize data to [0, 1] or [-1, 1]',
     info: 'Scales data to a fixed range. MinMax scales to [0,1] or [-1,1]. Essential for neural networks and distance-based algorithms.',
     config: { method: 'minmax', range: [0, 1] },
@@ -218,7 +287,7 @@ const BLOCK_TYPES = {
     icon: Filter,
     color: 'green',
     category: 'filters',
-    dataTypes: ['imu', 'csi'],
+    dataTypes: ['csi', 'fmcw', 'audio'],
     description: 'Remove high-frequency noise',
     info: 'Butterworth low-pass filter removes high-frequency noise while preserving slow-changing signals. Adjust cutoff frequency based on your signal characteristics.',
     config: { cutoff_freq: 20, order: 4, sampling_rate: 100 },
@@ -229,7 +298,7 @@ const BLOCK_TYPES = {
     icon: Filter,
     color: 'purple',
     category: 'filters',
-    dataTypes: ['imu', 'csi'],
+    dataTypes: ['csi', 'fmcw', 'audio'],
     description: 'Remove low-frequency drift',
     info: 'Removes DC offset and slow baseline drift. Useful for isolating dynamic movements from static background.',
     config: { cutoff_freq: 0.5, order: 4, sampling_rate: 100 },
@@ -240,7 +309,7 @@ const BLOCK_TYPES = {
     icon: Filter,
     color: 'indigo',
     category: 'filters',
-    dataTypes: ['imu', 'csi', 'mfcw'],
+    dataTypes: ['csi', 'fmcw', 'audio'],
     description: 'Keep frequencies in a specific range',
     info: 'Combines low-pass and high-pass filtering to isolate a frequency band of interest. Useful for breathing (0.1-0.5 Hz) or heartbeat (0.8-2 Hz) detection.',
     config: { low_cutoff: 0.1, high_cutoff: 2.0, order: 4, sampling_rate: 100 },
@@ -251,7 +320,7 @@ const BLOCK_TYPES = {
     icon: TrendingUp,
     color: 'teal',
     category: 'filters',
-    dataTypes: ['imu', 'csi', 'mfcw'],
+    dataTypes: ['csi', 'fmcw', 'audio'],
     description: 'Smooth data with moving average',
     info: 'Simple smoothing filter that averages values over a sliding window. Larger windows = smoother but more lag.',
     config: { window_size: 5 },
@@ -262,7 +331,7 @@ const BLOCK_TYPES = {
     icon: Zap,
     color: 'violet',
     category: 'filters',
-    dataTypes: ['imu', 'csi', 'mfcw'],
+    dataTypes: ['csi', 'fmcw', 'audio'],
     description: 'Denoise using wavelet transform',
     info: 'Uses discrete wavelet transform for adaptive denoising. Preserves sharp transitions better than simple filters. Common wavelets: db4, sym4, coif1.',
     config: { wavelet: 'db4', level: 3, threshold_mode: 'soft' },
@@ -273,7 +342,7 @@ const BLOCK_TYPES = {
     icon: AlertCircle,
     color: 'red',
     category: 'filters',
-    dataTypes: ['imu', 'csi', 'mfcw'],
+    dataTypes: ['csi', 'fmcw', 'audio'],
     description: 'Remove statistical outliers',
     info: 'Removes data points that deviate significantly from the mean. Z-score method flags points > N standard deviations away.',
     config: { method: 'zscore', threshold: 3.0 },
@@ -286,7 +355,7 @@ const BLOCK_TYPES = {
     icon: Maximize2,
     color: 'yellow',
     category: 'transforms',
-    dataTypes: ['imu', 'csi', 'mfcw'],
+    dataTypes: ['csi', 'fmcw', 'audio'],
     description: 'Split into fixed-size windows (creates 3D output)',
     info: 'Segments continuous data into overlapping windows for temporal analysis. Overlap of 0.5 means 50% of each window overlaps with the next. Essential for activity recognition.',
     config: { window_size: 100, overlap: 0.5 },
@@ -305,7 +374,7 @@ const BLOCK_TYPES = {
     icon: Minimize2,
     color: 'orange',
     category: 'transforms',
-    dataTypes: ['imu', 'csi', 'mfcw'],
+    dataTypes: ['csi', 'fmcw', 'audio'],
     description: 'Flatten each window to 1D feature vector',
     info: 'Converts multi-dimensional data to a flat 1D vector per sample. Required before feeding into fully-connected neural networks or traditional ML classifiers.',
     config: {},
@@ -320,7 +389,7 @@ const BLOCK_TYPES = {
     icon: Zap,
     color: 'red',
     category: 'transforms',
-    dataTypes: ['imu', 'csi', 'mfcw'],
+    dataTypes: ['csi', 'fmcw', 'audio'],
     description: 'Convert to frequency domain',
     info: 'Fast Fourier Transform converts time-domain signals to frequency domain. Reveals periodic patterns and dominant frequencies in the data.',
     config: { n_fft: 256 },
@@ -335,7 +404,7 @@ const BLOCK_TYPES = {
     icon: BarChart3,
     color: 'indigo',
     category: 'extractors',
-    dataTypes: ['imu', 'csi', 'mfcw'],
+    dataTypes: ['csi', 'fmcw', 'audio'],
     description: 'Extract statistical features per channel',
     info: 'Computes statistical features (mean, std, min, max, RMS, skewness, kurtosis) for each channel. Creates a compact representation for traditional ML classifiers.',
     config: { features: ['mean', 'std', 'min', 'max', 'rms'] },
@@ -351,7 +420,7 @@ const BLOCK_TYPES = {
     icon: TrendingUp,
     color: 'emerald',
     category: 'transforms',
-    dataTypes: ['imu', 'csi', 'mfcw'],
+    dataTypes: ['csi', 'fmcw', 'audio'],
     description: 'Reduce dimensions with PCA',
     info: 'Principal Component Analysis reduces dimensionality while preserving variance. Useful for visualization and reducing overfitting.',
     config: { n_components: 10, explained_variance: 0.95 },
@@ -363,7 +432,7 @@ const BLOCK_TYPES = {
     icon: Shuffle,
     color: 'pink',
     category: 'combiners',
-    dataTypes: ['imu', 'csi', 'mfcw'],
+    dataTypes: ['csi', 'fmcw', 'audio'],
     description: 'Concatenate multiple feature streams',
     info: 'Combines features from multiple processing branches (e.g., amplitude + phase). Connect multiple outputs to this block.',
     config: { axis: -1 },
@@ -375,7 +444,7 @@ const BLOCK_TYPES = {
     icon: Shuffle,
     color: 'pink',
     category: 'transforms',
-    dataTypes: ['imu', 'csi', 'mfcw'],
+    dataTypes: ['csi', 'fmcw', 'audio'],
     description: 'Add noise, scale, time-shift',
     info: 'Artificially expands training data by applying random transformations. Helps prevent overfitting and improves model generalization.',
     config: { noise_level: 0.01, scale_range: [0.9, 1.1], time_shift: 5 },
@@ -386,7 +455,7 @@ const BLOCK_TYPES = {
     icon: Minimize2,
     color: 'orange',
     category: 'transforms',
-    dataTypes: ['imu', 'csi', 'mfcw'],
+    dataTypes: ['csi', 'fmcw', 'audio'],
     description: 'Reduce sampling rate',
     info: 'Reduces data size by keeping every Nth sample. Apply low-pass filter first to avoid aliasing.',
     config: { factor: 2 },
@@ -397,7 +466,7 @@ const BLOCK_TYPES = {
     icon: TrendingUp,
     color: 'teal',
     category: 'transforms',
-    dataTypes: ['imu', 'csi', 'mfcw'],
+    dataTypes: ['csi', 'fmcw', 'audio'],
     description: 'Zero mean, unit variance',
     info: 'Transforms data to have zero mean and unit standard deviation. Preferred over normalization for Gaussian-distributed data.',
     config: { per_channel: true },
@@ -428,22 +497,22 @@ const DEFAULT_TEMPLATE_PIPELINES: Pipeline[] = [
   },
   {
     id: -2,
-    name: 'IMU Activity Recognition',
-    description: 'IMU preprocessing for activity recognition: smoothing, outlier removal, windowing',
-    data_type: 'imu',
+    name: 'Image Classification Pipeline',
+    description: 'Standard image preprocessing: load → resize → normalize → edge detection',
+    data_type: 'image',
     output_shape: 'features',
     created_at: new Date().toISOString(),
     config: {
       blocks: [
-        { id: 'imu_loader_1', type: 'imu_loader', name: 'IMU Loader', dataType: 'imu', inputShape: [], outputShape: [1000, 6], config: { file_type: 'json', num_rows: 1000 }, position: { x: 50, y: 100 } },
-        { id: 'moving_avg_1', type: 'moving_average', name: 'Moving Average', dataType: 'imu', inputShape: [1000, 6], outputShape: [1000, 6], config: { window_size: 5 }, position: { x: 320, y: 100 } },
-        { id: 'outlier_1', type: 'outlier_removal', name: 'Outlier Removal', dataType: 'imu', inputShape: [1000, 6], outputShape: [1000, 6], config: { method: 'zscore', threshold: 3.0 }, position: { x: 590, y: 100 } },
-        { id: 'window_1', type: 'window_segmentation', name: 'Windowing', dataType: 'imu', inputShape: [1000, 6], outputShape: [19, 100, 6], config: { window_size: 100, overlap: 0.5 }, position: { x: 860, y: 100 } },
+        { id: 'img_loader_1', type: 'image_loader', name: 'Image Loader', dataType: 'image' as DataType, inputShape: [], outputShape: [1, 224, 224, 3], config: { file_type: 'image', width: 224, height: 224, channels: 3 }, position: { x: 50, y: 100 } },
+        { id: 'resize_1', type: 'image_resize', name: 'Resize', dataType: 'image' as DataType, inputShape: [1, 224, 224, 3], outputShape: [1, 224, 224, 3], config: { width: 224, height: 224, interpolation: 'bilinear' }, position: { x: 320, y: 100 } },
+        { id: 'normalize_1', type: 'image_normalize', name: 'Image Normalize', dataType: 'image' as DataType, inputShape: [1, 224, 224, 3], outputShape: [1, 224, 224, 3], config: { range: [0, 1] }, position: { x: 590, y: 100 } },
+        { id: 'canny_1', type: 'canny_edge', name: 'Canny Edge', dataType: 'image' as DataType, inputShape: [1, 224, 224, 3], outputShape: [1, 224, 224, 1], config: { low_threshold: 50, high_threshold: 150, sigma: 1.0 }, position: { x: 860, y: 100 } },
       ],
       connections: [
-        { from: 'imu_loader_1', to: 'moving_avg_1' },
-        { from: 'moving_avg_1', to: 'outlier_1' },
-        { from: 'outlier_1', to: 'window_1' },
+        { from: 'img_loader_1', to: 'resize_1' },
+        { from: 'resize_1', to: 'normalize_1' },
+        { from: 'normalize_1', to: 'canny_1' },
       ]
     }
   },
@@ -479,7 +548,7 @@ export default function ProcessingPage() {
   const [blocks, setBlocks] = useState<ProcessingBlock[]>([]);
   const [connections, setConnections] = useState<Array<{ from: string; to: string }>>([]);
   const [showBlockMenu, setShowBlockMenu] = useState(false);
-  const [selectedDataType, setSelectedDataType] = useState<DataType>('imu');
+  const [selectedDataType, setSelectedDataType] = useState<DataType>('csi');
   const [error, setError] = useState<string | null>(null);
   const [showCreatePipeline, setShowCreatePipeline] = useState(false);
   const [newPipelineName, setNewPipelineName] = useState('');
@@ -617,11 +686,11 @@ export default function ProcessingPage() {
     if (blocks.length === 0) {
       // Default shapes for each data type (before any loader)
       const defaultShapes: Record<DataType, number[]> = {
-        imu: [1000, 6],       // [#rows, 6 channels]
-        csi: [1000, 128],     // [#rows, 128 raw I/Q values]
-        mfcw: [1000, 256],    // [#rows, 256 range bins]
-        image: [1, 224, 224], // [batch, height, width]
-        video: [1, 30, 224],  // [batch, frames, height]
+        image: [1, 224, 224, 3], // [batch, height, width, channels]
+        audio: [1, 22050],       // [batch, samples]
+        csi: [1000, 128],        // [#rows, 128 raw I/Q values]
+        video: [1, 30, 224, 224],// [batch, frames, height, width]
+        fmcw: [1000, 256],       // [#rows, 256 range bins]
       };
       return defaultShapes[selectedDataType];
     }
@@ -659,11 +728,11 @@ export default function ProcessingPage() {
 
   // Default input shapes for source blocks (before any processing)
   const defaultShapes: Record<DataType, number[]> = {
-    imu: [1000, 6],      // [#rows, 6 channels]
-    csi: [1000, 128],    // [#rows, 128 raw I/Q values]
-    mfcw: [1000, 256],   // [#rows, 256 range bins]
-    image: [1, 224, 224],
-    video: [1, 30, 224],
+    image: [1, 224, 224, 3],  // [batch, height, width, channels]
+    audio: [1, 22050],        // [batch, samples]
+    csi: [1000, 128],         // [#rows, 128 raw I/Q values]
+    video: [1, 30, 224, 224], // [batch, frames, height, width]
+    fmcw: [1000, 256],        // [#rows, 256 range bins]
   };
 
   // Recalculate shapes through the pipeline (linear chain)
@@ -894,7 +963,7 @@ export default function ProcessingPage() {
     }, 300);
   };
 
-  // Drag handlers for blocks - improved with canvas-relative positioning
+  // Drag handlers for blocks - use pointer capture for smooth drag across all elements
   const handleBlockMouseDown = (e: React.MouseEvent, blockId: string) => {
     e.preventDefault();
     e.stopPropagation();
@@ -902,38 +971,38 @@ export default function ProcessingPage() {
     if (!block || !canvasRef.current) return;
     
     const canvasRect = canvasRef.current.getBoundingClientRect();
+    // Account for zoom and pan transforms
+    const scaledOffsetX = (e.clientX - canvasRect.left - canvasPan.x) / canvasZoom - block.position.x;
+    const scaledOffsetY = (e.clientY - canvasRect.top - canvasPan.y) / canvasZoom - block.position.y;
     setDraggedBlock(blockId);
-    setDragOffset({
-      x: e.clientX - canvasRect.left - block.position.x,
-      y: e.clientY - canvasRect.top - block.position.y,
-    });
+    setDragOffset({ x: scaledOffsetX, y: scaledOffsetY });
+    // Pointer capture handled via onPointerDown in JSX
   };
 
   const handleMouseMove = useCallback((e: React.MouseEvent) => {
     if (!draggedBlock || !canvasRef.current) return;
     
     const canvasRect = canvasRef.current.getBoundingClientRect();
-    const newX = Math.max(10, Math.min(e.clientX - canvasRect.left - dragOffset.x, canvasRect.width - BLOCK_WIDTH - 10));
-    const newY = Math.max(10, Math.min(e.clientY - canvasRect.top - dragOffset.y, canvasRect.height - BLOCK_HEIGHT - 10));
+    // Convert screen coords to canvas space (accounting for zoom/pan)
+    const canvasX = (e.clientX - canvasRect.left - canvasPan.x) / canvasZoom;
+    const canvasY = (e.clientY - canvasRect.top - canvasPan.y) / canvasZoom;
+    const newX = Math.max(10, canvasX - dragOffset.x);
+    const newY = Math.max(10, canvasY - dragOffset.y);
     
     setBlocks(prevBlocks => prevBlocks.map(block => {
       if (block.id === draggedBlock) {
-        return {
-          ...block,
-          position: { x: newX, y: newY },
-        };
+        return { ...block, position: { x: newX, y: newY } };
       }
       return block;
     }));
-  }, [draggedBlock, dragOffset, BLOCK_WIDTH, BLOCK_HEIGHT]);
+  }, [draggedBlock, dragOffset, canvasZoom, canvasPan, BLOCK_WIDTH, BLOCK_HEIGHT]);
 
   const handleMouseUp = useCallback(() => {
     if (draggedBlock) {
       setDraggedBlock(null);
-      // Recalculate shapes after drag ends
-      setBlocks(prevBlocks => recalculateShapes(prevBlocks));
+      setBlocks(prevBlocks => recalculateShapesFromConnections(prevBlocks, connections));
     }
-  }, [draggedBlock]);
+  }, [draggedBlock, connections]);
 
   // Generate SVG path for connection arrow between two blocks
   const getConnectionPath = (fromBlock: ProcessingBlock, toBlock: ProcessingBlock) => {
@@ -1346,8 +1415,14 @@ export default function ProcessingPage() {
               {/* Data Type Selector */}
               <div className="mb-6">
                 <label className="block text-sm text-slate-300 mb-2">Input Data Type</label>
-                <div className="flex gap-2">
-                  {(['imu', 'csi', 'mfcw'] as DataType[]).map(type => (
+                <div className="flex gap-2 flex-wrap">
+                  {([
+                    { type: 'image', label: '🖼️ Image' },
+                    { type: 'audio', label: '🎵 Audio' },
+                    { type: 'csi', label: '📡 CSI' },
+                    { type: 'video', label: '🎬 Video' },
+                    { type: 'fmcw', label: '📻 FMCW' },
+                  ] as { type: DataType; label: string }[]).map(({ type, label }) => (
                     <button
                       key={type}
                       onClick={() => setSelectedDataType(type)}
@@ -1357,7 +1432,7 @@ export default function ProcessingPage() {
                           : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
                       }`}
                     >
-                      {type.toUpperCase()}
+                      {label}
                     </button>
                   ))}
                 </div>
