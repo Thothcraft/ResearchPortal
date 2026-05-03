@@ -310,7 +310,7 @@ export default function TrainingPage() {
     window_size: 1000,
     test_split: 0.2,
     preprocessing_pipeline_id: null as number | null,
-    data_type: 'auto' as 'auto' | 'csi' | 'imu',
+    data_type: 'auto' as 'auto' | 'image' | 'audio' | 'csi' | 'video' | 'fmcw',
     output_shape: 'flattened' as 'flattened' | 'sequence',
     optimization_method: 'none' as 'none' | 'bayesian' | 'grid',
     // File-to-pipeline assignments: { fileId: { pipeline_id, split: 'train'|'test'|'split', split_ratio: 0.8, selected_lines: number, total_lines: number } }
@@ -929,6 +929,19 @@ export default function TrainingPage() {
     setShowTrainingConfig(true);
     if (selectedDataset?.files) {
       await fetchFileLineCounts(selectedDataset.files);
+      // Auto-detect data type from files to avoid backend using stale dataset_type
+      const files = selectedDataset.files as any[];
+      if (files.length > 0) {
+        const detectedTypes = files.map((f: any) => detectDataType(f.filename || f.name || ''));
+        const validTypes = detectedTypes.filter(t => t !== 'other');
+        if (validTypes.length > 0) {
+          // Find the dominant type
+          const typeCounts: Record<string, number> = {};
+          validTypes.forEach(t => { typeCounts[t] = (typeCounts[t] || 0) + 1; });
+          const dominantType = Object.entries(typeCounts).sort((a, b) => b[1] - a[1])[0][0] as 'image' | 'audio' | 'csi' | 'video' | 'fmcw';
+          setTrainingConfig(prev => ({ ...prev, data_type: dominantType }));
+        }
+      }
     }
   };
 
@@ -937,6 +950,18 @@ export default function TrainingPage() {
     
     setOperations(prev => ({ ...prev, startingTraining: true }));
     try {
+      // Resolve data_type: if still 'auto', detect from files to prevent backend using wrong stored dataset_type
+      let resolvedDataType = trainingConfig.data_type as string;
+      if (resolvedDataType === 'auto' && selectedDataset.files && (selectedDataset.files as any[]).length > 0) {
+        const files = selectedDataset.files as any[];
+        const detectedTypes = files.map((f: any) => detectDataType(f.filename || f.name || '')).filter(t => t !== 'other');
+        if (detectedTypes.length > 0) {
+          const typeCounts: Record<string, number> = {};
+          detectedTypes.forEach(t => { typeCounts[t] = (typeCounts[t] || 0) + 1; });
+          resolvedDataType = Object.entries(typeCounts).sort((a, b) => b[1] - a[1])[0][0];
+        }
+      }
+
       const ml_params =
         trainingConfig.model_type === 'knn'
           ? trainingConfig.knn_params
@@ -983,7 +1008,7 @@ export default function TrainingPage() {
         model_name: trainingConfig.model_name || undefined,
         window_size: trainingConfig.window_size,
         preprocessing_pipeline_id: trainingConfig.preprocessing_pipeline_id,
-        data_type: trainingConfig.data_type,
+        data_type: resolvedDataType,
         output_shape: trainingConfig.output_shape,
         ml_params,
         grid_search: grid_search || undefined,
@@ -2741,12 +2766,15 @@ export default function TrainingPage() {
                   <label className="block text-sm text-slate-300 mb-1">Data Type</label>
                   <select 
                     value={trainingConfig.data_type} 
-                    onChange={(e) => setTrainingConfig({ ...trainingConfig, data_type: e.target.value as 'auto' | 'csi' | 'imu' })} 
+                    onChange={(e) => setTrainingConfig({ ...trainingConfig, data_type: e.target.value as 'auto' | 'image' | 'audio' | 'csi' | 'video' | 'fmcw' })} 
                     className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white"
                   >
-                    <option value="auto">Auto-detect (Recommended)</option>
-                    <option value="csi">CSI (WiFi Channel State)</option>
-                    <option value="imu">IMU (Motion Sensors)</option>
+                    <option value="auto">Auto-detect from files</option>
+                    <option value="image">Image (JPG/PNG)</option>
+                    <option value="audio">Audio (WAV/MP3)</option>
+                    <option value="csi">CSI (WiFi Channel State / CSV)</option>
+                    <option value="video">Video (MP4/AVI)</option>
+                    <option value="fmcw">FMCW Radar (bin/dat/npy)</option>
                   </select>
                   <p className="text-xs text-slate-500 mt-1">
                     {trainingConfig.data_type === 'auto' ? 'Automatically detect data type from files' : `Force ${trainingConfig.data_type.toUpperCase()} processing`}

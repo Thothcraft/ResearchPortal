@@ -869,7 +869,7 @@ export default function DataPage() {
           <div className="text-xs font-medium">All</div>
           <div className="text-lg font-bold">{typeCounts.all || 0}</div>
         </button>
-        {(['csi', 'imu', 'image', 'video', 'audio', 'sensor', 'timelapse', 'other'] as DataFileType[]).map(type => {
+        {(['image', 'audio', 'csi', 'video', 'fmcw', 'other'] as (DataFileType | 'other')[]).map(type => {
           const Icon = FILE_TYPE_ICONS[type];
           const info = getFileTypeDisplayInfo(type);
           return (
