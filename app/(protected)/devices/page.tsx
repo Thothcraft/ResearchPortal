@@ -197,8 +197,23 @@ function DeviceCard({
   const fetchDeployedModels = useCallback(async () => {
     setLoadingModels(true);
     try {
-      const data = await get(`/datasets/models?device_id=${device.device_uuid}`);
-      if (data?.models) setDeployedModels(data.models.filter((m: any) => m.deployed));
+      const data = await get(`/models/deployments`);
+      if (data?.deployments) {
+        // Filter deployments for this specific device
+        const deviceDeployments = data.deployments.filter((d: any) => d.device_id === device.device_uuid);
+        // Convert to expected format
+        setDeployedModels(deviceDeployments.map((d: any) => ({
+          id: d.deployment_id,
+          name: d.model_name,
+          architecture: d.model_type,
+          accuracy: null, // We don't have accuracy in deployments
+          deployed: d.status === 'delivered',
+          deployment_id: d.deployment_id,
+          status: d.status,
+          deployed_at: d.delivered_at,
+          device_id: d.device_id
+        })));
+      }
     } catch {
       // silently ignore
     } finally {
@@ -518,11 +533,17 @@ function DeviceCard({
                     <div key={model.id} className="p-4 rounded-lg bg-slate-800/60 border border-indigo-500/20">
                       <div className="flex items-center justify-between mb-2">
                         <div className="flex items-center gap-2">
-                          <PackageCheck className="w-4 h-4 text-indigo-400" />
+                          <PackageCheck className={`w-4 h-4 ${model.status === 'delivered' ? 'text-indigo-400' : model.status === 'pending' ? 'text-yellow-400' : 'text-gray-400'}`} />
                           <span className="text-sm font-medium text-white">{model.name}</span>
                         </div>
-                        <span className="flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-green-500/15 text-green-400">
-                          <Zap className="w-3 h-3" />Active
+                        <span className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-xs ${
+                          model.status === 'delivered' ? 'bg-green-500/15 text-green-400' : 
+                          model.status === 'pending' ? 'bg-yellow-500/15 text-yellow-400' : 
+                          'bg-gray-500/15 text-gray-400'
+                        }`}>
+                          {model.status === 'delivered' && <><Zap className="w-3 h-3" />Active</>}
+                          {model.status === 'pending' && <><Clock className="w-3 h-3" />Pending</>}
+                          {model.status === 'declined' && <><XCircle className="w-3 h-3" />Declined</>}
                         </span>
                       </div>
                       <div className="flex items-center gap-3 text-xs text-slate-500 mb-3">
