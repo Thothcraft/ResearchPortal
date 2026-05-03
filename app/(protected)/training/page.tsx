@@ -409,17 +409,19 @@ export default function TrainingPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const toast = useToast();
-  const [activeTab, setActiveTab] = useState<'datasets' | 'jobs' | 'models' | 'compare'>('datasets');
+  const [activeTab, setActiveTab] = useState<'datasets' | 'jobs' | 'models' | 'compare' | 'deployments'>('datasets');
   const [renamingModel, setRenamingModel] = useState<TrainedModel | null>(null);
   const [newModelName, setNewModelName] = useState('');
   const [selectedJob, setSelectedJob] = useState<TrainingJob | null>(null);
   const [expandedJobs, setExpandedJobs] = useState<Set<string>>(new Set());
   
   // Granular loading states
+  const [deployments, setDeployments] = useState<any[]>([]);
   const [loadingStates, setLoadingStates] = useState({
     datasets: false,
     jobs: false,
     models: false,
+    deployments: false,
     files: false,
     datasetDetail: false,
     training: false,
@@ -642,6 +644,9 @@ export default function TrainingPage() {
     if (activeTab === 'models' || activeTab === 'compare') {
       fetchData({ datasets: false, jobs: false, models: true, files: false });
     }
+    if (activeTab === 'deployments') {
+      loadDeployments();
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, user?.token]);
 
@@ -699,9 +704,9 @@ export default function TrainingPage() {
 
   // Polling fallback (only when realtime is not active)
   useEffect(() => {
-    if (activeTab !== 'jobs' && activeTab !== 'models' && activeTab !== 'compare') return;
+    if (activeTab !== 'jobs' && activeTab !== 'models' && activeTab !== 'compare' && activeTab !== 'deployments') return;
 
-    // If realtime is active for jobs tab, use slower polling (just for models/compare or as backup)
+    // If realtime is active for jobs tab, use slower polling (just for models/compare/deployments or as backup)
     const pollInterval = realtimeActiveRef.current && activeTab === 'jobs' 
       ? 30000  // 30s backup poll when realtime is active
       : (activeTab === 'jobs' && hasRunningJobs ? 3000 : 10000);  // Fast poll when no realtime
@@ -711,12 +716,16 @@ export default function TrainingPage() {
       if (hasActiveOperation) return;
 
       try {
-        await fetchData({
-          datasets: false,
-          jobs: activeTab === 'jobs',
-          models: activeTab === 'models' || activeTab === 'compare',
-          files: false,
-        });
+        if (activeTab === 'deployments') {
+          await loadDeployments();
+        } else {
+          await fetchData({
+            datasets: false,
+            jobs: activeTab === 'jobs',
+            models: activeTab === 'models' || activeTab === 'compare',
+            files: false,
+          });
+        }
       } catch {}
     }, pollInterval);
 
@@ -1104,6 +1113,10 @@ export default function TrainingPage() {
         setShowDeployModal(null);
         setSelectedDeviceId('');
         setDeployConfig({ prediction_duration: 60, prediction_interval: 1, actions: [] });
+        // Refresh deployments
+        if (activeTab === 'deployments') {
+          loadDeployments();
+        }
       } else {
         toast.error('Deploy Failed', result?.detail || 'Unknown error');
       }
@@ -1111,6 +1124,36 @@ export default function TrainingPage() {
       toast.error('Deploy Failed', err?.message || 'Network error');
     } finally {
       setOperations(prev => ({ ...prev, deployingModel: null }));
+    }
+  };
+
+  const loadDeployments = async () => {
+    try {
+      setLoadingStates(prev => ({ ...prev, deployments: true }));
+      const res = await get('/models/deployments');
+      if (res?.deployments) {
+        setDeployments(res.deployments);
+      }
+    } catch (err: any) {
+      toast.error('Failed to load deployments', err?.message || 'Unknown error');
+    } finally {
+      setLoadingStates(prev => ({ ...prev, deployments: false }));
+    }
+  };
+
+  const handleCancelDeployment = async (deploymentId: string) => {
+    if (!confirm('Are you sure you want to cancel this deployment?')) return;
+    
+    try {
+      const res = await delete(`/models/deployments/${deploymentId}`);
+      if (res?.success) {
+        toast.success('Deployment cancelled', 'The deployment has been cancelled successfully.');
+        loadDeployments(); // Refresh deployments list
+      } else {
+        toast.error('Failed to cancel', res?.detail || 'Unknown error');
+      }
+    } catch (err: any) {
+      toast.error('Failed to cancel deployment', err?.message || 'Network error');
     }
   };
 
@@ -1483,6 +1526,7 @@ export default function TrainingPage() {
             <button onClick={() => setActiveTab('datasets')} className={`px-4 py-2 font-medium transition-colors ${activeTab === 'datasets' ? 'text-indigo-400 border-b-2 border-indigo-400' : 'text-slate-400 hover:text-white'}`}><Database className="w-4 h-4 inline mr-2" />Datasets</button>
             <button onClick={() => setActiveTab('jobs')} className={`px-4 py-2 font-medium transition-colors ${activeTab === 'jobs' ? 'text-indigo-400 border-b-2 border-indigo-400' : 'text-slate-400 hover:text-white'}`}><BarChart3 className="w-4 h-4 inline mr-2" />Training Jobs{activeJobsCount > 0 && <span className="ml-2 px-2 py-0.5 bg-blue-500/20 text-blue-400 text-xs rounded-full">{activeJobsCount}</span>}</button>
             <button onClick={() => setActiveTab('models')} className={`px-4 py-2 font-medium transition-colors ${activeTab === 'models' ? 'text-indigo-400 border-b-2 border-indigo-400' : 'text-slate-400 hover:text-white'}`}><Brain className="w-4 h-4 inline mr-2" />Trained Models</button>
+            <button onClick={() => setActiveTab('deployments')} className={`px-4 py-2 font-medium transition-colors ${activeTab === 'deployments' ? 'text-indigo-400 border-b-2 border-indigo-400' : 'text-slate-400 hover:text-white'}`}><Rocket className="w-4 h-4 inline mr-2" />Deployments</button>
             <button onClick={() => setActiveTab('compare')} className={`px-4 py-2 font-medium transition-colors ${activeTab === 'compare' ? 'text-indigo-400 border-b-2 border-indigo-400' : 'text-slate-400 hover:text-white'}`}><GitCompare className="w-4 h-4 inline mr-2" />Compare{compareModels.length > 0 && <span className="ml-2 px-2 py-0.5 bg-purple-500/20 text-purple-400 text-xs rounded-full">{compareModels.length}</span>}</button>
           </div>
 
@@ -2058,6 +2102,124 @@ export default function TrainingPage() {
                       ))}
                     </tbody>
                   </table>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Deployments Tab */}
+          {activeTab === 'deployments' && (
+            <div>
+              {loadingStates.deployments ? (
+                <div className="text-center py-12 bg-slate-800/50 rounded-xl border border-slate-700">
+                  <Loader2 className="w-8 h-8 animate-spin mx-auto mb-4 text-indigo-400" />
+                  <p className="text-slate-400">Loading deployments...</p>
+                </div>
+              ) : (
+                <div className="space-y-6">
+                  {/* Stats Overview */}
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div className="card py-4">
+                      <div className="flex items-center gap-3">
+                        <div className="p-2 bg-blue-500/20 rounded-lg">
+                          <Rocket className="w-5 h-5 text-blue-400" />
+                        </div>
+                        <div>
+                          <p className="text-2xl font-bold text-white">{deployments.length}</p>
+                          <p className="text-slate-400 text-sm">Total Deployments</p>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="card py-4">
+                      <div className="flex items-center gap-3">
+                        <div className="p-2 bg-green-500/20 rounded-lg">
+                          <CheckCircle className="w-5 h-5 text-green-400" />
+                        </div>
+                        <div>
+                          <p className="text-2xl font-bold text-white">{deployments.filter(d => d.status === 'delivered').length}</p>
+                          <p className="text-slate-400 text-sm">Successful</p>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="card py-4">
+                      <div className="flex items-center gap-3">
+                        <div className="p-2 bg-yellow-500/20 rounded-lg">
+                          <Clock className="w-5 h-5 text-yellow-400" />
+                        </div>
+                        <div>
+                          <p className="text-2xl font-bold text-white">{deployments.filter(d => d.status === 'pending').length}</p>
+                          <p className="text-slate-400 text-sm">Pending</p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Deployments List */}
+                  {deployments.length > 0 ? (
+                    <div className="space-y-4">
+                      {deployments.map((deployment) => (
+                        <div key={deployment.deployment_id} className="card">
+                          <div className="flex items-start justify-between">
+                            <div className="flex items-start gap-4">
+                              <div className="p-3 bg-slate-800 rounded-lg">
+                                <Rocket className="w-6 h-6 text-indigo-400" />
+                              </div>
+                              <div className="flex-1">
+                                <h3 className="text-lg font-semibold text-white">{deployment.model_name}</h3>
+                                <p className="text-slate-400 text-sm mt-1">
+                                  Device: {deployment.device_name || deployment.device_id}
+                                </p>
+                                <div className="flex items-center gap-4 mt-3">
+                                  <span className="text-xs text-slate-500">
+                                    <i className="fas fa-cube mr-1"></i>Type: {deployment.model_type}
+                                  </span>
+                                  <span className="text-xs text-slate-500">
+                                    <i className="fas fa-clock mr-1"></i>{deployment.created_at ? new Date(deployment.created_at).toLocaleString() : 'Unknown'}
+                                  </span>
+                                  <span className={`text-xs px-2 py-1 rounded-full font-medium ${
+                                    deployment.status === 'delivered' ? 'bg-green-500/20 text-green-400' :
+                                    deployment.status === 'pending' ? 'bg-yellow-500/20 text-yellow-400' :
+                                    deployment.status === 'declined' ? 'bg-red-500/20 text-red-400' :
+                                    'bg-slate-500/20 text-slate-400'
+                                  }`}>
+                                    {deployment.status}
+                                  </span>
+                                </div>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-3">
+                              {deployment.status === 'pending' && (
+                                <button 
+                                  onClick={() => handleCancelDeployment(deployment.deployment_id)}
+                                  className="btn btn-secondary btn-sm"
+                                >
+                                  <X className="w-4 h-4 mr-1" />Cancel
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="card text-center py-16">
+                      <div className="max-w-md mx-auto">
+                        <div className="w-20 h-20 bg-slate-800 rounded-full flex items-center justify-center mx-auto mb-6">
+                          <Rocket className="w-10 h-10 text-slate-600" />
+                        </div>
+                        <h3 className="text-xl font-semibold text-white mb-2">No Deployments Yet</h3>
+                        <p className="text-slate-400 mb-6">
+                          Deploy trained models to devices to see them here.
+                        </p>
+                        <button 
+                          onClick={() => setActiveTab('models')}
+                          className="btn btn-primary"
+                        >
+                          Go to Trained Models
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
