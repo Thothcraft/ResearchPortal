@@ -13,22 +13,26 @@ export default function AuthPage() {
     password: ''
   });
   const [customError, setCustomError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const router = useRouter();
   const { login, isLoading, error, isAuthenticated } = useAuth();
 
-  // Redirect if already authenticated
+  // Redirect if already authenticated (but prevent infinite loops)
   useEffect(() => {
-    if (isAuthenticated && typeof window !== 'undefined') {
+    if (isAuthenticated && typeof window !== 'undefined' && !isSubmitting) {
+      // Check if we're not already on the correct page
+      const currentPath = window.location.pathname;
       const user = JSON.parse(localStorage.getItem('user') || '{}');
+      
       if (user.username) {
-        if (user.role === 1) {
-          window.location.href = '/admin';
-        } else {
-          window.location.href = '/home';
+        const targetPath = user.role === 1 ? '/admin' : '/home';
+        if (currentPath !== targetPath) {
+          console.log(`Redirecting from ${currentPath} to ${targetPath}`);
+          window.location.href = targetPath;
         }
       }
     }
-  }, [isAuthenticated]);
+  }, [isAuthenticated, isSubmitting]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -55,7 +59,12 @@ export default function AuthPage() {
       return;
     }
 
-    await login(formData.username, formData.password);
+    setIsSubmitting(true);
+    const success = await login(formData.username, formData.password);
+    if (!success) {
+      setIsSubmitting(false);
+    }
+    // If successful, the redirect will happen and page will reload
   };
 
   return (
@@ -160,9 +169,30 @@ export default function AuthPage() {
 
             <button
               type="submit"
-              className="w-full flex justify-center py-2 px-4 border border-transparent rounded-lg shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 transition-colors"
+              disabled={isSubmitting}
+              className="w-full flex justify-center py-2 px-4 border border-transparent rounded-lg shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             >
-              Sign in
+              {isSubmitting ? (
+                <div className="flex items-center">
+                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+                  Signing in...
+                </div>
+              ) : (
+                'Sign in'
+              )}
+            </button>
+            
+            {/* Debug button - remove in production */}
+            <button
+              type="button"
+              onClick={() => {
+                localStorage.removeItem('auth_token');
+                localStorage.removeItem('user');
+                window.location.reload();
+              }}
+              className="w-full mt-2 text-xs text-gray-500 hover:text-red-500"
+            >
+              Clear localStorage & Reload
             </button>
           </form>
         </div>
