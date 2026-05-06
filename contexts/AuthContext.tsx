@@ -38,6 +38,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       try {
         const userData = JSON.parse(userStr);
         setUser(userData);
+        
+        // Check if we need to redirect based on current path
+        const currentPath = window.location.pathname;
+        if (currentPath === '/auth' || currentPath === '/') {
+          // User is logged in but on auth page, redirect appropriately
+          const redirectUrl = userData.role === 1 ? '/admin' : '/home';
+          window.location.href = redirectUrl;
+        }
       } catch (e) {
         console.error('Failed to parse user data:', e);
         localStorage.removeItem('auth_token');
@@ -122,17 +130,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       
       setUser(userData);
       
-      // Role-based redirect with a small delay to ensure state is updated
+      // Role-based redirect
       console.log('Checking role for redirect:', data.role);
-      setTimeout(() => {
-        if (data.role === 1) {
-          console.log('Redirecting to admin');
-          router.push('/admin');
-        } else {
-          console.log('Redirecting to home');
-          router.push('/home');
-        }
-      }, 100);
+      const redirectUrl = data.role === 1 ? '/admin' : '/home';
+      console.log(`Redirecting to ${redirectUrl}`);
+      
+      // Use window.location for reliable redirect
+      window.location.href = redirectUrl;
       return true;
     } catch (error) {
       console.error('Login error:', error);
