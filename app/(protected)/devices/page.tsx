@@ -200,7 +200,7 @@ function DeviceCard({
   const fetchDeployedModels = useCallback(async () => {
     setLoadingModels(true);
     try {
-      const data = await get(`/models/deployments`);
+      const data = await get(`/datasets/models/deployments`);
       if (data?.deployments) {
         // Filter deployments for this specific device
         const deviceDeployments = data.deployments.filter((d: any) => d.device_id === device.device_uuid);

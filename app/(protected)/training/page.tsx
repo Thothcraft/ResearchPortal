@@ -1130,7 +1130,7 @@ export default function TrainingPage() {
   const loadDeployments = async () => {
     try {
       setLoadingStates(prev => ({ ...prev, deployments: true }));
-      const res = await get('/models/deployments');
+      const res = await get('/datasets/models/deployments');
       if (res?.deployments) {
         setDeployments(res.deployments);
       }
@@ -1145,7 +1145,7 @@ export default function TrainingPage() {
     if (!confirm('Are you sure you want to cancel this deployment?')) return;
     
     try {
-      const res = await del(`/models/deployments/${deploymentId}`);
+      const res = await del(`/datasets/models/deployments/${deploymentId}`);
       if (res?.success) {
         toast.success('Deployment cancelled', 'The deployment has been cancelled successfully.');
         loadDeployments(); // Refresh deployments list
