@@ -8,10 +8,12 @@ import { useAuth } from '../../contexts/AuthContext';
 
 export default function AuthPage() {
   const [showPassword, setShowPassword] = useState(false);
+  const [loginMode, setLoginMode] = useState<'user' | 'admin'>('user');
   const [formData, setFormData] = useState({
     username: '',
     password: ''
   });
+  const [customError, setCustomError] = useState<string | null>(null);
   const router = useRouter();
   const { login, isLoading, error, isAuthenticated } = useAuth();
 
@@ -35,6 +37,20 @@ export default function AuthPage() {
     }
     
     if (!formData.password || formData.password.length < 6) {
+      return;
+    }
+
+    // Clear previous custom error
+    setCustomError(null);
+    
+    // Validate credentials match the selected mode
+    if (loginMode === 'admin' && formData.username !== 'admin') {
+      setCustomError('Invalid credentials for admin mode. Use "admin" as username.');
+      return;
+    }
+    
+    if (loginMode === 'user' && formData.username === 'admin') {
+      setCustomError('Invalid credentials for user mode. Admin cannot login in user mode.');
       return;
     }
 
@@ -74,16 +90,58 @@ export default function AuthPage() {
               <p className="text-gray-500 mt-2">
                 Sign in to access your research portal
               </p>
+              
+              {/* Role Selector */}
+              <div className="mt-6">
+                <label className="text-sm font-medium text-gray-700 mb-2 block">Login Mode</label>
+                <div className="inline-flex rounded-lg border border-gray-200 bg-gray-100 p-1">
+                  <button
+                    type="button"
+                    onClick={() => setLoginMode('user')}
+                    className={`px-4 py-2 text-sm font-medium rounded-md transition-all ${
+                      loginMode === 'user'
+                        ? 'bg-white text-indigo-600 shadow-sm'
+                        : 'text-gray-600 hover:text-gray-800'
+                    }`}
+                  >
+                    User
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setLoginMode('admin')}
+                    className={`px-4 py-2 text-sm font-medium rounded-md transition-all ${
+                      loginMode === 'admin'
+                        ? 'bg-white text-indigo-600 shadow-sm'
+                        : 'text-gray-600 hover:text-gray-800'
+                    }`}
+                  >
+                    Admin
+                  </button>
+                </div>
+              </div>
+
+              {/* Credentials Display */}
               <div className="mt-4 p-3 bg-indigo-50 rounded-lg border border-indigo-200">
-                <p className="text-sm font-medium text-indigo-800">Admin Access</p>
-                <p className="text-xs text-indigo-600 mt-1">Username: <span className="font-mono">admin</span></p>
-                <p className="text-xs text-indigo-600">Password: <span className="font-mono">password</span></p>
+                <p className="text-sm font-medium text-indigo-800">
+                  {loginMode === 'admin' ? 'Admin Credentials' : 'User Credentials'}
+                </p>
+                {loginMode === 'admin' ? (
+                  <>
+                    <p className="text-xs text-indigo-600 mt-1">Username: <span className="font-mono">admin</span></p>
+                    <p className="text-xs text-indigo-600">Password: <span className="font-mono">password</span></p>
+                  </>
+                ) : (
+                  <>
+                    <p className="text-xs text-indigo-600 mt-1">Username: <span className="font-mono">gad</span></p>
+                    <p className="text-xs text-indigo-600">Password: <span className="font-mono">password</span></p>
+                  </>
+                )}
               </div>
             </div>
 
-            {error && (
+            {(error || customError) && (
               <div className="mb-6 p-3 bg-red-50 text-red-700 text-sm rounded-lg border border-red-200">
-                {typeof error === 'string' ? error : 'An error occurred during login'}
+                {customError || (typeof error === 'string' ? error : 'An error occurred during login')}
               </div>
             )}
 
@@ -103,7 +161,7 @@ export default function AuthPage() {
                     required
                     minLength={3}
                     className="block w-full pl-10 pr-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-                    placeholder="Enter your username"
+                    placeholder={loginMode === 'admin' ? 'admin' : 'gad'}
                     value={formData.username}
                     onChange={(e) => setFormData({...formData, username: e.target.value})}
                   />
@@ -125,7 +183,7 @@ export default function AuthPage() {
                     required
                     minLength={6}
                     className="block w-full pl-10 pr-10 py-2 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-                    placeholder="Enter your password"
+                    placeholder="password"
                     value={formData.password}
                     onChange={(e) => setFormData({...formData, password: e.target.value})}
                   />
