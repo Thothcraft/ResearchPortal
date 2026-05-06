@@ -9,12 +9,24 @@ export default function Home() {
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    const token = localStorage.getItem('auth_token');
-    if (token) {
-      router.push('/home');
-    } else {
+    // Safety timeout to prevent infinite loading
+    const timeoutId = setTimeout(() => {
+      setIsLoading(false);
+    }, 3000);
+
+    try {
+      const token = localStorage.getItem('auth_token');
+      if (token) {
+        router.push('/home');
+      } else {
+        setIsLoading(false);
+      }
+    } catch (error) {
+      console.error('Error accessing localStorage:', error);
       setIsLoading(false);
     }
+
+    return () => clearTimeout(timeoutId);
   }, [router]);
 
   if (isLoading) {
