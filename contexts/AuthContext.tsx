@@ -67,6 +67,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       const data = await response.json().catch(() => ({}));
       console.log('Login response:', { status: response.status, data });
+      
+      // Temporary workaround for production backend missing role field
+      if (data.access_token && !data.role) {
+        // Try to decode JWT to get role
+        try {
+          const tokenParts = data.access_token.split('.');
+          if (tokenParts.length === 3) {
+            const payload = JSON.parse(atob(tokenParts[1]));
+            data.role = payload.role;
+            console.log('Extracted role from token:', data.role);
+          }
+        } catch (e) {
+          console.warn('Could not extract role from token:', e);
+          // Default to user role
+          data.role = 0;
+        }
+      }
 
       if (!response.ok) {
         let errorMessage = 'Invalid username or password';
@@ -89,11 +106,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const userData = {
         username,
         token: data.access_token,
-        role: data.role,
+        role: data.role || 0,  // Default to user role if not provided
         plan: data.plan || null,
         org_name: data.org_name || null,
         userId: data.user_id,
       };
+
+      console.log('User data prepared:', userData);
 
       // Store token and user data
       localStorage.setItem('auth_token', data.access_token);
@@ -102,9 +121,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setUser(userData);
       
       // Role-based redirect
+      console.log('Checking role for redirect:', data.role);
       if (data.role === 1) {
+        console.log('Redirecting to admin');
         router.push('/admin');
       } else {
+        console.log('Redirecting to home');
         router.push('/home');
       }
       return true;
