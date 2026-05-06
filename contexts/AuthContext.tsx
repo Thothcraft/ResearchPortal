@@ -38,14 +38,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       try {
         const userData = JSON.parse(userStr);
         setUser(userData);
-        
-        // Check if we need to redirect based on current path
-        const currentPath = window.location.pathname;
-        if (currentPath === '/auth' || currentPath === '/') {
-          // User is logged in but on auth page, redirect appropriately
-          const redirectUrl = userData.role === 1 ? '/admin' : '/home';
-          window.location.href = redirectUrl;
-        }
       } catch (e) {
         console.error('Failed to parse user data:', e);
         localStorage.removeItem('auth_token');
