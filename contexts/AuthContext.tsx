@@ -126,13 +126,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       
       setUser(userData);
       
-      // Role-based redirect
-      console.log('Checking role for redirect:', data.role);
-      const redirectUrl = data.role === 1 ? '/admin' : '/home';
-      console.log(`Redirecting to ${redirectUrl}`);
-      
-      // Use window.location for reliable redirect
-      window.location.href = redirectUrl;
       return true;
     } catch (error: any) {
       console.error('Login error:', error);

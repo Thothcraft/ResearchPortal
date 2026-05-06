@@ -17,22 +17,14 @@ export default function AuthPage() {
   const router = useRouter();
   const { login, isLoading, error, isAuthenticated } = useAuth();
 
-  // Redirect if already authenticated (but prevent infinite loops)
+  // Redirect if already authenticated
   useEffect(() => {
-    if (isAuthenticated && typeof window !== 'undefined' && !isSubmitting) {
-      // Check if we're not already on the correct page
-      const currentPath = window.location.pathname;
+    if (isAuthenticated && !isSubmitting) {
       const user = JSON.parse(localStorage.getItem('user') || '{}');
-      
-      if (user.username) {
-        const targetPath = user.role === 1 ? '/admin' : '/home';
-        if (currentPath !== targetPath) {
-          console.log(`Redirecting from ${currentPath} to ${targetPath}`);
-          window.location.href = targetPath;
-        }
-      }
+      const redirectUrl = user.role === 1 ? '/admin' : '/home';
+      router.push(redirectUrl);
     }
-  }, [isAuthenticated, isSubmitting]);
+  }, [isAuthenticated, isSubmitting, router]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -61,10 +53,15 @@ export default function AuthPage() {
 
     setIsSubmitting(true);
     const success = await login(formData.username, formData.password);
-    if (!success) {
+    
+    if (success) {
+      // Redirect based on user role
+      const user = JSON.parse(localStorage.getItem('user') || '{}');
+      const redirectUrl = user.role === 1 ? '/admin' : '/home';
+      router.push(redirectUrl);
+    } else {
       setIsSubmitting(false);
     }
-    // If successful, the redirect will happen and page will reload
   };
 
   return (
