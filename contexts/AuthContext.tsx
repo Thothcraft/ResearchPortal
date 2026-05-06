@@ -120,15 +120,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       
       setUser(userData);
       
-      // Role-based redirect
+      // Role-based redirect with a small delay to ensure state is updated
       console.log('Checking role for redirect:', data.role);
-      if (data.role === 1) {
-        console.log('Redirecting to admin');
-        router.push('/admin');
-      } else {
-        console.log('Redirecting to home');
-        router.push('/home');
-      }
+      setTimeout(() => {
+        if (data.role === 1) {
+          console.log('Redirecting to admin');
+          router.push('/admin');
+        } else {
+          console.log('Redirecting to home');
+          router.push('/home');
+        }
+      }, 100);
       return true;
     } catch (error) {
       console.error('Login error:', error);

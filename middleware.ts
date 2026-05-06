@@ -31,6 +31,11 @@ export function middleware(request: NextRequest) {
   const token = request.cookies.get('auth_token')?.value || 
                 request.headers.get('authorization')?.replace('Bearer ', '');
   
+  // Allow access to auth page even with token (to allow logout)
+  if (pathname === '/auth') {
+    return NextResponse.next();
+  }
+  
   if (!token && (isProtectedRoute || isAdminRoute || isOrgRoute)) {
     // Redirect to auth if no token and trying to access protected route
     return NextResponse.redirect(new URL('/auth', request.url));
