@@ -27,22 +27,21 @@ export function middleware(request: NextRequest) {
     return NextResponse.next();
   }
   
-  // Get token from cookie or localStorage (via header)
-  const token = request.cookies.get('auth_token')?.value || 
-                request.headers.get('authorization')?.replace('Bearer ', '');
-  
   // Allow access to auth page even with token (to allow logout)
   if (pathname === '/auth') {
     return NextResponse.next();
   }
   
-  if (!token && (isProtectedRoute || isAdminRoute || isOrgRoute)) {
-    // Redirect to auth if no token and trying to access protected route
-    return NextResponse.redirect(new URL('/auth', request.url));
+  // Allow access to root path
+  if (pathname === '/') {
+    return NextResponse.next();
   }
   
-  // For role-specific routes, we'll check on the page level
-  // since we can't access the JWT payload easily in middleware
+  // Skip middleware for protected routes - let client-side auth handle it
+  // since we use localStorage for token storage
+  if (isProtectedRoute || isAdminRoute || isOrgRoute) {
+    return NextResponse.next();
+  }
   
   return NextResponse.next();
 }

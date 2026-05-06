@@ -54,13 +54,13 @@ export default function AuthPage() {
     setIsSubmitting(true);
     const success = await login(formData.username, formData.password);
     
+    setIsSubmitting(false);
+    
     if (success) {
       // Redirect based on user role
       const user = JSON.parse(localStorage.getItem('user') || '{}');
       const redirectUrl = user.role === 1 ? '/admin' : '/home';
       router.push(redirectUrl);
-    } else {
-      setIsSubmitting(false);
     }
   };
 
