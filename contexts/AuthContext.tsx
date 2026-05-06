@@ -126,9 +126,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (data.role === 1) {
           console.log('Redirecting to admin');
           router.push('/admin');
+          // Fallback if router.push doesn't work
+          setTimeout(() => {
+            if (window.location.pathname !== '/admin') {
+              window.location.href = '/admin';
+            }
+          }, 500);
         } else {
           console.log('Redirecting to home');
           router.push('/home');
+          // Fallback if router.push doesn't work
+          setTimeout(() => {
+            if (window.location.pathname !== '/home') {
+              window.location.href = '/home';
+            }
+          }, 500);
         }
       }, 100);
       return true;

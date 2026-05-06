@@ -17,17 +17,20 @@ export default function AuthPage() {
   const router = useRouter();
   const { login, isLoading, error, isAuthenticated } = useAuth();
 
-  // Redirect if already authenticated
+  // Redirect if already authenticated (but not after login to avoid double redirect)
   useEffect(() => {
-    if (isAuthenticated) {
+    if (isAuthenticated && !isLoading) {
       const user = JSON.parse(localStorage.getItem('user') || '{}');
-      if (user.role === 1) {
-        router.push('/admin');
-      } else {
-        router.push('/home');
+      // Only redirect if we're not in the middle of a login attempt
+      if (user.username && (user.username === formData.username || formData.username === '')) {
+        if (user.role === 1) {
+          router.push('/admin');
+        } else {
+          router.push('/home');
+        }
       }
     }
-  }, [isAuthenticated, router]);
+  }, [isAuthenticated, isLoading, router, formData.username]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
