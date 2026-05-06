@@ -52,6 +52,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       console.log('Attempting login with:', { username });
       
+      // Create abort controller for timeout
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
+      
       const response = await fetch('/api/proxy/token', {
         method: 'POST',
         headers: {
@@ -62,7 +66,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           username,
           password
         }),
+        signal: controller.signal,
       });
+      
+      clearTimeout(timeoutId);
 
       const data = await response.json().catch(() => ({}));
       console.log('Login response:', { status: response.status, data });
@@ -127,9 +134,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // Use window.location for reliable redirect
       window.location.href = redirectUrl;
       return true;
-    } catch (error) {
+    } catch (error: any) {
       console.error('Login error:', error);
-      setError('An unexpected error occurred. Please try again.');
+      if (error.name === 'AbortError') {
+        setError('Login request timed out. Please check your connection and try again.');
+      } else {
+        setError('An unexpected error occurred. Please try again.');
+      }
       return false;
     }
   };

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 
 const BACKEND_BASE_URL =
   process.env.BACKEND_BASE_URL ||
+  process.env.NEXT_PUBLIC_BACKEND_URL ||
   'https://web-production-d7d37.up.railway.app';
 
 export const runtime = 'nodejs';
@@ -35,6 +36,7 @@ async function proxy(request: NextRequest, pathParts: string[]) {
   const targetUrl = buildTargetUrl(pathParts, request.url);
   
   console.log(`[Proxy] ${request.method} ${targetUrl}`);
+  console.log(`[Proxy] Backend URL: ${BACKEND_BASE_URL}`);
 
   const method = request.method.toUpperCase();
   const headers = filterHeaders(request.headers);
@@ -97,6 +99,21 @@ async function proxy(request: NextRequest, pathParts: string[]) {
               error: `Backend connection failed: ${error.message}`,
             },
             { status: 503 }
+          )
+        );
+      });
+
+      // Add timeout to prevent hanging
+      req.setTimeout(30000, () => {
+        console.error(`[Proxy] Request timeout after 30s`);
+        req.destroy();
+        resolve(
+          NextResponse.json(
+            {
+              success: false,
+              error: 'Backend request timeout',
+            },
+            { status: 504 }
           )
         );
       });
