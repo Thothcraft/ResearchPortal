@@ -90,8 +90,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         username,
         token: data.access_token,
         role: data.role,
-        plan: data.plan,
-        org_name: data.org_name,
+        plan: data.plan || null,
+        org_name: data.org_name || null,
         userId: data.user_id,
       };
 
