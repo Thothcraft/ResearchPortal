@@ -120,24 +120,7 @@ export default function AuthPage() {
                 </div>
               </div>
 
-              {/* Credentials Display */}
-              <div className="mt-4 p-3 bg-indigo-50 rounded-lg border border-indigo-200">
-                <p className="text-sm font-medium text-indigo-800">
-                  {loginMode === 'admin' ? 'Admin Credentials' : 'User Credentials'}
-                </p>
-                {loginMode === 'admin' ? (
-                  <>
-                    <p className="text-xs text-indigo-600 mt-1">Username: <span className="font-mono">admin</span></p>
-                    <p className="text-xs text-indigo-600">Password: <span className="font-mono">password</span></p>
-                  </>
-                ) : (
-                  <>
-                    <p className="text-xs text-indigo-600 mt-1">Username: <span className="font-mono">gad</span></p>
-                    <p className="text-xs text-indigo-600">Password: <span className="font-mono">password</span></p>
-                  </>
-                )}
-              </div>
-            </div>
+                          </div>
 
             {(error || customError) && (
               <div className="mb-6 p-3 bg-red-50 text-red-700 text-sm rounded-lg border border-red-200">
