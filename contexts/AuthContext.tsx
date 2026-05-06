@@ -28,6 +28,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const router = useRouter();
+  const [isInitialized, setIsInitialized] = useState(false);
 
   // Load user from localStorage on mount
   useEffect(() => {
@@ -46,6 +47,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     
     setIsLoading(false);
+    setIsInitialized(true);
   }, []);
 
   const login = async (username: string, password: string): Promise<boolean> => {
@@ -122,13 +124,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       
       setUser(userData);
       
-      // Role-based redirect
+      // Role-based redirect with delay
       console.log('Checking role for redirect:', data.role);
       const redirectUrl = data.role === 1 ? '/admin' : '/home';
       console.log(`Redirecting to ${redirectUrl}`);
       
-      // Use window.location for reliable redirect
-      window.location.href = redirectUrl;
+      // Use window.location for reliable redirect after a short delay
+      setTimeout(() => {
+        window.location.href = redirectUrl;
+      }, 100);
       return true;
     } catch (error) {
       console.error('Login error:', error);

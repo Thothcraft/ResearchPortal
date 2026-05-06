@@ -17,9 +17,9 @@ export default function AuthPage() {
   const router = useRouter();
   const { login, isLoading, error, isAuthenticated } = useAuth();
 
-  // Redirect if already authenticated and on auth page without recent login
+  // Redirect if already authenticated and on auth page
   useEffect(() => {
-    if (isAuthenticated && !isLoading && formData.username === '') {
+    if (isAuthenticated && !isLoading) {
       const user = JSON.parse(localStorage.getItem('user') || '{}');
       if (user.username) {
         if (user.role === 1) {
@@ -29,7 +29,7 @@ export default function AuthPage() {
         }
       }
     }
-  }, [isAuthenticated, isLoading, formData.username]);
+  }, [isAuthenticated, isLoading]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
