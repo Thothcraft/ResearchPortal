@@ -65,12 +65,15 @@ type DeviceFile = {
 };
 
 type DeployedModel = {
-  id: number;
+  id: number | string;
   name: string;
   architecture: string;
   accuracy: number | null;
   created_at: string;
   deployed_at?: string;
+  status?: string;
+  deployment_id?: string;
+  device_id?: string;
 };
 
 type CollectionStatus = {
@@ -600,7 +603,12 @@ export default function DevicesPage() {
         setDevices(data.devices);
       }
     } catch (err) {
-      toast.error('Loading Failed', err instanceof Error ? err.message : 'Failed to fetch devices');
+      const msg = err instanceof Error ? err.message : 'Failed to fetch devices';
+      const friendly = msg.includes('not running') || msg.includes('503') || msg.includes('Backend')
+        ? 'Backend server is unavailable. It may be starting up — please wait a moment and refresh.'
+        : msg;
+      setError(friendly);
+      toast.error('Loading Failed', friendly);
     } finally {
       setIsLoading(false);
     }

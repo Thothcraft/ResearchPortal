@@ -133,10 +133,11 @@ export default function DataPage() {
   
   // Upload state
   const [showUploadModal, setShowUploadModal] = useState(false);
-  const [uploadFile, setUploadFile] = useState<File | null>(null);
+  const [uploadFiles, setUploadFiles] = useState<File[]>([]);
   const [uploadLabel, setUploadLabel] = useState('');
   const [isUploading, setIsUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [uploadProgressMap, setUploadProgressMap] = useState<Record<string, 'pending' | 'uploading' | 'done' | 'error'>>({});
   
   // Folder state
   const [showFolderUploadModal, setShowFolderUploadModal] = useState(false);
@@ -659,77 +660,82 @@ export default function DataPage() {
   };
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const ext = file.name.split('.').pop()?.toLowerCase() || '';
-    if (!ALLOWED_EXTENSIONS.has(ext)) {
-      setUploadError(`Unsupported file type ".${ext}". Allowed types: Image, Audio, CSI (CSV), Video, FMCW (bin/dat/npy)`);
+    const files = Array.from(e.target.files || []);
+    if (files.length === 0) return;
+    const invalid = files.filter(f => !ALLOWED_EXTENSIONS.has(f.name.split('.').pop()?.toLowerCase() || ''));
+    if (invalid.length > 0) {
+      setUploadError(`Unsupported file type(s): ${invalid.map(f => f.name).join(', ')}`);
       e.target.value = '';
       return;
     }
-    setUploadFile(file);
+    setUploadFiles(files);
+    setUploadProgressMap(Object.fromEntries(files.map(f => [f.name, 'pending' as const])));
     setUploadError(null);
   };
 
   const handleUpload = async () => {
-    if (!uploadFile) return;
+    if (uploadFiles.length === 0) return;
     
     setIsUploading(true);
     setUploadError(null);
     
-    try {
-      const token = localStorage.getItem('auth_token');
-      const apiUrl = '/api/proxy';
-      
-      // Use FormData for efficient file upload (handles large files without memory issues)
-      const formData = new FormData();
-      formData.append('file', uploadFile);
-      
-      // Extract label from filename (without extension)
-      const filenameWithoutExt = uploadFile.name.replace(/\.[^.]+$/, '');
-      const labels = uploadLabel.trim() 
-        ? [filenameWithoutExt, uploadLabel.trim()] 
-        : [filenameWithoutExt];
-      
-      formData.append('labels', JSON.stringify(labels));
-      
-      const response = await fetch(`${apiUrl}/file/upload-multipart`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-        },
-        body: formData,
-      });
-      
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.detail || `Upload failed: ${response.status}`);
+    const token = localStorage.getItem('auth_token');
+    const apiUrl = '/api/proxy';
+    let failedCount = 0;
+    
+    for (const file of uploadFiles) {
+      setUploadProgressMap(prev => ({ ...prev, [file.name]: 'uploading' }));
+      try {
+        const formData = new FormData();
+        formData.append('file', file);
+        const filenameWithoutExt = file.name.replace(/\.[^.]+$/, '');
+        const labels = uploadLabel.trim()
+          ? [filenameWithoutExt, uploadLabel.trim()]
+          : [filenameWithoutExt];
+        formData.append('labels', JSON.stringify(labels));
+        
+        const response = await fetch(`${apiUrl}/file/upload-multipart`, {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${token}` },
+          body: formData,
+        });
+        
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(errorData.detail || `Upload failed: ${response.status}`);
+        }
+        
+        setUploadProgressMap(prev => ({ ...prev, [file.name]: 'done' }));
+      } catch (err) {
+        failedCount++;
+        const message = err instanceof Error ? err.message : 'Unknown error';
+        setUploadProgressMap(prev => ({ ...prev, [file.name]: 'error' }));
+        setUploadError(`"${file.name}": ${message}`);
       }
-      
-      const result = await response.json();
-      
-      toast.success('Upload Complete', `"${uploadFile.name}" uploaded successfully`);
-      setShowUploadModal(false);
-      setUploadFile(null);
-      setUploadLabel('');
-      
-      // Refresh file list
+    }
+    
+    const successCount = uploadFiles.length - failedCount;
+    if (successCount > 0) {
+      toast.success('Upload Complete', `${successCount} file(s) uploaded successfully`);
       clearCache('/file');
       refetchCloudFiles();
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Unknown error';
-      setUploadError(message);
-      toast.error('Upload Failed', message);
-    } finally {
-      setIsUploading(false);
     }
+    if (failedCount === 0) {
+      setShowUploadModal(false);
+      setUploadFiles([]);
+      setUploadLabel('');
+      setUploadProgressMap({});
+    }
+    
+    setIsUploading(false);
   };
 
   const resetUploadModal = () => {
     setShowUploadModal(false);
-    setUploadFile(null);
+    setUploadFiles([]);
     setUploadLabel('');
     setUploadError(null);
+    setUploadProgressMap({});
   };
 
   const isLoading = devicesLoading || cloudFilesLoading || deviceFilesLoading;
@@ -1121,7 +1127,7 @@ export default function DataPage() {
             <div className="flex items-center justify-between p-4 border-b border-slate-700">
               <div className="flex items-center gap-3">
                 <Upload className="w-5 h-5 text-green-400" />
-                <h3 className="text-lg font-semibold text-white">Upload Data File</h3>
+                <h3 className="text-lg font-semibold text-white">Upload Data Files</h3>
               </div>
               <button
                 onClick={resetUploadModal}
@@ -1148,39 +1154,43 @@ export default function DataPage() {
               {/* File input */}
               <div>
                 <label className="block text-sm font-medium text-slate-300 mb-2">
-                  Select File
+                  Select Files <span className="text-slate-500 font-normal">(supports multiple)</span>
                 </label>
                 <input
                   type="file"
+                  multiple
                   accept={TYPE_ACCEPT_STRING}
                   onChange={handleFileSelect}
                   className="w-full px-4 py-3 bg-slate-900 border border-slate-700 rounded-lg text-white file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:bg-indigo-600 file:text-white file:cursor-pointer hover:file:bg-indigo-700"
                 />
               </div>
 
-              {/* File info display */}
-              {uploadFile && (
-                <div className="bg-slate-900/50 rounded-lg p-4 border border-slate-700">
-                  <div className="flex items-center gap-3">
-                    {(() => {
-                      const type = detectFileType(uploadFile.name);
-                      const Icon = FILE_TYPE_ICONS[type];
-                      const info = getFileTypeDisplayInfo(type);
-                      return (
-                        <>
-                          <div className={`p-2 rounded-lg ${info.bgColor}`}>
-                            <Icon className={`w-5 h-5 ${info.color}`} />
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <p className="text-white font-medium truncate">{uploadFile.name}</p>
-                            <p className="text-sm text-slate-400">
-                              {formatFileSize(uploadFile.size)} • Detected type: <span className={info.color}>{info.label}</span>
-                            </p>
-                          </div>
-                        </>
-                      );
-                    })()}
-                  </div>
+              {/* File list display */}
+              {uploadFiles.length > 0 && (
+                <div className="bg-slate-900/50 rounded-lg border border-slate-700 divide-y divide-slate-700/50 max-h-48 overflow-y-auto">
+                  {uploadFiles.map(file => {
+                    const type = detectFileType(file.name);
+                    const Icon = FILE_TYPE_ICONS[type];
+                    const info = getFileTypeDisplayInfo(type);
+                    const progress = uploadProgressMap[file.name];
+                    return (
+                      <div key={file.name} className="flex items-center gap-3 p-3">
+                        <div className={`p-1.5 rounded-lg ${info.bgColor} flex-shrink-0`}>
+                          <Icon className={`w-4 h-4 ${info.color}`} />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-white text-sm truncate">{file.name}</p>
+                          <p className="text-xs text-slate-500">{formatFileSize(file.size)}</p>
+                        </div>
+                        <div className="flex-shrink-0">
+                          {progress === 'uploading' && <Loader2 className="w-4 h-4 text-indigo-400 animate-spin" />}
+                          {progress === 'done' && <span className="text-xs text-green-400 font-medium">Done</span>}
+                          {progress === 'error' && <span className="text-xs text-red-400 font-medium">Error</span>}
+                          {progress === 'pending' && <span className="text-xs text-slate-500">Pending</span>}
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               )}
 
@@ -1218,7 +1228,7 @@ export default function DataPage() {
                 </button>
                 <button
                   onClick={handleUpload}
-                  disabled={!uploadFile || isUploading}
+                  disabled={uploadFiles.length === 0 || isUploading}
                   className="flex-1 flex items-center justify-center gap-2 px-4 py-3 bg-green-600 hover:bg-green-700 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {isUploading ? (
@@ -1229,7 +1239,7 @@ export default function DataPage() {
                   ) : (
                     <>
                       <Upload className="w-4 h-4" />
-                      Upload
+                      Upload{uploadFiles.length > 1 ? ` (${uploadFiles.length})` : ''}
                     </>
                   )}
                 </button>

@@ -15,23 +15,39 @@ import {
   ChevronLeft,
   ChevronRight,
   Workflow,
+  Users,
+  BookOpen,
+  Shield,
 } from 'lucide-react';
 import { useState } from 'react';
-
-const navItems = [
-  { name: 'Home', href: '/home', icon: Home, description: 'Statistics & Overview' },
-  { name: 'Devices', href: '/devices', icon: Monitor, description: 'Online/Offline Devices' },
-  { name: 'Data', href: '/data', icon: Database, description: 'Data Files' },
-  { name: 'Processing', href: '/processing', icon: Workflow, description: 'Data Pipelines' },
-  { name: 'Training', href: '/training', icon: Brain, description: 'Model Training' },
-  { name: 'Chatbot', href: '/chatbot', icon: MessageCircle, description: 'AI Assistant' },
-  { name: 'Settings', href: '/settings', icon: Settings, description: 'Preferences' },
-];
 
 export default function Sidebar() {
   const pathname = usePathname();
   const { logout, user } = useAuth();
   const [collapsed, setCollapsed] = useState(false);
+
+  // Base items for all users
+  const baseItems = [
+    { name: 'Home', href: '/home', icon: Home, description: 'Statistics & Overview' },
+    { name: 'Devices', href: '/devices', icon: Monitor, description: 'Online/Offline Devices' },
+    { name: 'Data', href: '/data', icon: Database, description: 'Data Files' },
+    { name: 'Processing', href: '/processing', icon: Workflow, description: 'Data Pipelines' },
+    { name: 'Training', href: '/training', icon: Brain, description: 'Model Training' },
+    { name: 'Chatbot', href: '/chatbot', icon: MessageCircle, description: 'AI Assistant' },
+  ];
+
+  // Role-specific items
+  const roleItems: { name: string; href: string; icon: any; description: string }[] = [];
+  if (user?.role === 1) {
+    roleItems.push({ name: 'Admin', href: '/admin', icon: Shield, description: 'Admin Dashboard' });
+  } else if (user?.role === 2) {
+    roleItems.push(
+      { name: 'Members', href: '/members', icon: Users, description: 'Organization Members' },
+      { name: 'Labs', href: '/labs', icon: BookOpen, description: 'Practice Labs' }
+    );
+  }
+
+  const navItems = [...baseItems, ...roleItems, { name: 'Settings', href: '/settings', icon: Settings, description: 'Preferences' }];
 
   return (
     <aside
@@ -128,7 +144,9 @@ export default function Sidebar() {
         {!collapsed && user && (
           <div className="mb-3 px-2">
             <p className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>{user.username}</p>
-            <p className="text-xs" style={{ color: 'var(--text-secondary)' }}>Researcher</p>
+            <p className="text-xs" style={{ color: 'var(--text-secondary)' }}>
+              {user?.role === 1 ? 'Admin' : user?.role === 2 ? 'Organization' : user?.plan || 'Free'}
+            </p>
           </div>
         )}
         <button

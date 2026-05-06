@@ -6,6 +6,10 @@ import { useRouter } from 'next/navigation';
 type User = {
   username: string;
   token: string;
+  role?: number;  // 0=user, 1=admin, 2=organization
+  plan?: string;
+  org_name?: string;
+  userId?: number;
 } | null;
 
 type AuthContextType = {
@@ -85,6 +89,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const userData = {
         username,
         token: data.access_token,
+        role: data.role,
+        plan: data.plan,
+        org_name: data.org_name,
+        userId: data.user_id,
       };
 
       // Store token and user data
@@ -92,6 +100,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       localStorage.setItem('user', JSON.stringify(userData));
       
       setUser(userData);
+      
+      // Role-based redirect
+      if (data.role === 1) {
+        router.push('/admin');
+      } else {
+        router.push('/home');
+      }
       return true;
     } catch (error) {
       console.error('Login error:', error);

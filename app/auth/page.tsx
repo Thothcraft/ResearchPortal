@@ -18,7 +18,12 @@ export default function AuthPage() {
   // Redirect if already authenticated
   useEffect(() => {
     if (isAuthenticated) {
-      router.push('/devices');
+      const user = JSON.parse(localStorage.getItem('user') || '{}');
+      if (user.role === 1) {
+        router.push('/admin');
+      } else {
+        router.push('/home');
+      }
     }
   }, [isAuthenticated, router]);
 
@@ -68,6 +73,9 @@ export default function AuthPage() {
               </h1>
               <p className="text-gray-500 mt-2">
                 Sign in to access your research portal
+              </p>
+              <p className="text-xs text-gray-400 mt-1">
+                Admins: use admin/password
               </p>
             </div>
 

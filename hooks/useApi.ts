@@ -1,6 +1,8 @@
 import { useAuth } from '@/contexts/AuthContext';
 import { useCallback, useRef } from 'react';
 
+export type ApiError = Error & { status?: number };
+
 export const useApi = () => {
   const { user } = useAuth();
   const apiBaseUrl = '/api/proxy';
@@ -36,7 +38,7 @@ export const useApi = () => {
       }
 
       const errorData = await response.json().catch(() => ({}));
-      throw new Error(errorData.detail || `HTTP error! Status: ${response.status}`);
+      throw new Error(errorData.detail || errorData.error || `HTTP error! Status: ${response.status}`);
     }
 
     return response.json();

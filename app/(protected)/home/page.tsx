@@ -183,7 +183,7 @@ export default function HomePage() {
     },
     {
       title: 'Best Accuracy',
-      value: stats.bestAccuracy ? `${(stats.bestAccuracy * 100).toFixed(1)}%` : 'N/A',
+      value: stats.bestAccuracy ? `${stats.bestAccuracy.toFixed(1)}%` : 'N/A',
       icon: TrendingUp,
       color: 'from-teal-500 to-teal-600',
       bgColor: 'bg-teal-500/10',
