@@ -14,6 +14,9 @@ import {
   Save,
   Check,
   Languages,
+  CreditCard,
+  Crown,
+  Zap,
 } from 'lucide-react';
 
 export default function SettingsPage() {
@@ -258,6 +261,71 @@ export default function SettingsPage() {
               <option value={365}>1 year</option>
             </select>
           </div>
+        </div>
+      </div>
+
+      {/* Subscription Plan */}
+      <div className="bg-slate-800/50 backdrop-blur-sm rounded-xl border border-slate-700 p-6">
+        <div className="flex items-center gap-3 mb-6">
+          <Crown className="w-5 h-5 text-yellow-400" />
+          <h2 className="text-xl font-semibold text-white">Subscription Plan</h2>
+        </div>
+        
+        <div className="space-y-4">
+          <div className="flex items-center justify-between p-4 bg-slate-900/50 rounded-lg border border-slate-700">
+            <div>
+              <h3 className="text-lg font-medium text-white capitalize">{user?.plan || 'Free'}</h3>
+              <p className="text-sm text-slate-400">
+                {user?.plan === 'free' && 'Basic features with limited access'}
+                {user?.plan === 'researcher' && 'Advanced features for individual researchers'}
+                {user?.plan === 'organization' && 'Full features for teams and organizations'}
+              </p>
+            </div>
+            <div className="text-right">
+              <p className="text-2xl font-bold text-white">
+                {user?.plan === 'free' && '$0'}
+                {user?.plan === 'researcher' && '$29'}
+                {user?.plan === 'organization' && '$99'}
+              </p>
+              <p className="text-sm text-slate-400">/month</p>
+            </div>
+          </div>
+
+          {user?.plan !== 'organization' && (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {user?.plan === 'free' && (
+                <>
+                  <button className="p-4 bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-700 hover:to-indigo-800 rounded-lg border border-indigo-500 text-white transition-all">
+                    <Zap className="w-6 h-6 mb-2" />
+                    <h4 className="font-semibold">Upgrade to Researcher</h4>
+                    <p className="text-sm opacity-90">$29/month</p>
+                    <p className="text-xs mt-2 opacity-75">Advanced research tools</p>
+                  </button>
+                  <button className="p-4 bg-gradient-to-r from-purple-600 to-purple-700 hover:from-purple-700 hover:to-purple-800 rounded-lg border border-purple-500 text-white transition-all">
+                    <Crown className="w-6 h-6 mb-2" />
+                    <h4 className="font-semibold">Upgrade to Organization</h4>
+                    <p className="text-sm opacity-90">$99/month</p>
+                    <p className="text-xs mt-2 opacity-75">Full team features</p>
+                  </button>
+                </>
+              )}
+              {user?.plan === 'researcher' && (
+                <button className="p-4 bg-gradient-to-r from-purple-600 to-purple-700 hover:from-purple-700 hover:to-purple-800 rounded-lg border border-purple-500 text-white transition-all md:col-span-2">
+                  <Crown className="w-6 h-6 mb-2" />
+                  <h4 className="font-semibold">Upgrade to Organization</h4>
+                  <p className="text-sm opacity-90">$99/month</p>
+                  <p className="text-xs mt-2 opacity-75">Full team features & labs</p>
+                </button>
+              )}
+            </div>
+          )}
+
+          {user?.plan !== 'free' && (
+            <button className="w-full p-3 bg-slate-700 hover:bg-slate-600 rounded-lg text-slate-300 transition-colors flex items-center justify-center gap-2">
+              <CreditCard className="w-4 h-4" />
+              Manage Billing
+            </button>
+          )}
         </div>
       </div>
 

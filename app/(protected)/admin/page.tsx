@@ -60,9 +60,20 @@ export default function AdminDashboard() {
     org_name: '',
   });
 
+  // Check if user is admin
+  if (user && user.role !== 1) {
+    return (
+      <div className="p-8 text-center">
+        <h1 className="text-2xl font-bold text-red-500 mb-4">Access Denied</h1>
+        <p className="text-slate-400">Admin access required to view this page.</p>
+      </div>
+    );
+  }
+
   useEffect(() => {
-    if (user?.role !== 1) return;
-    loadAll();
+    if (user?.role === 1) {
+      loadAll();
+    }
   }, [user]);
 
   const loadAll = async () => {

@@ -89,6 +89,16 @@ export default function LabsPage() {
     setAnswers({});
   };
 
+  // Check if user is organization member or admin
+  if (user && user.role !== 2 && user.role !== 1) {
+    return (
+      <div className="p-8 text-center">
+        <h1 className="text-2xl font-bold text-red-500 mb-4">Access Denied</h1>
+        <p className="text-slate-400">Organization membership required to view labs.</p>
+      </div>
+    );
+  }
+
   if (loading) {
     return (
       <div className="p-8 flex items-center justify-center">

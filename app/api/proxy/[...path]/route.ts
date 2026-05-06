@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 const BACKEND_BASE_URL =
   process.env.BACKEND_BASE_URL ||
   (process.env.NODE_ENV === 'development'
-    ? 'http://127.0.0.1:8000'
+    ? 'http://127.0.0.1:7050'
     : 'https://web-production-d7d37.up.railway.app');
 
 export const runtime = 'nodejs';

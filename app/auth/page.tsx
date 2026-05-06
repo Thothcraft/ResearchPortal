@@ -74,9 +74,11 @@ export default function AuthPage() {
               <p className="text-gray-500 mt-2">
                 Sign in to access your research portal
               </p>
-              <p className="text-xs text-gray-400 mt-1">
-                Admins: use admin/password
-              </p>
+              <div className="mt-4 p-3 bg-indigo-50 rounded-lg border border-indigo-200">
+                <p className="text-sm font-medium text-indigo-800">Admin Access</p>
+                <p className="text-xs text-indigo-600 mt-1">Username: <span className="font-mono">admin</span></p>
+                <p className="text-xs text-indigo-600">Password: <span className="font-mono">password</span></p>
+              </div>
             </div>
 
             {error && (
