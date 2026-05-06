@@ -1145,7 +1145,7 @@ export default function TrainingPage() {
     if (!confirm('Are you sure you want to cancel this deployment?')) return;
     
     try {
-      const res = await delete(`/models/deployments/${deploymentId}`);
+      const res = await del(`/models/deployments/${deploymentId}`);
       if (res?.success) {
         toast.success('Deployment cancelled', 'The deployment has been cancelled successfully.');
         loadDeployments(); // Refresh deployments list
