@@ -15,6 +15,7 @@ type User = {
 type AuthContextType = {
   user: User;
   login: (username: string, password: string) => Promise<boolean>;
+  register: (username: string, password: string) => Promise<{ success: boolean; message: string }>;
   logout: () => void;
   isAuthenticated: boolean;
   isLoading: boolean;
@@ -48,14 +49,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const login = async (username: string, password: string): Promise<boolean> => {
     setError(null);
-    
+
     try {
       console.log('Attempting login with:', { username });
+<<<<<<< HEAD
       
       // Create abort controller for timeout
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
       
+=======
+
+>>>>>>> 366169a (Add user registration to ResearchPortal auth page)
       const response = await fetch('/api/proxy/token', {
         method: 'POST',
         headers: {
@@ -103,12 +108,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setError(errorMessage);
         return false;
       }
-      
+
       if (!data.access_token) {
         setError('No access token received');
         return false;
       }
-      
+
       const userData = {
         username,
         token: data.access_token,
@@ -123,7 +128,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // Store token and user data
       localStorage.setItem('auth_token', data.access_token);
       localStorage.setItem('user', JSON.stringify(userData));
-      
+
       setUser(userData);
       
       return true;
@@ -135,6 +140,52 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setError('An unexpected error occurred. Please try again.');
       }
       return false;
+    }
+  };
+
+  const register = async (username: string, password: string): Promise<{ success: boolean; message: string }> => {
+    setIsLoading(true);
+    setError(null);
+
+    try {
+      console.log('Attempting registration with:', { username });
+
+      const response = await fetch('/api/proxy/register', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
+        body: JSON.stringify({
+          username,
+          password
+        }),
+      });
+
+      const data = await response.json().catch(() => ({}));
+      console.log('Registration response:', { status: response.status, data });
+
+      if (!response.ok) {
+        let errorMessage = 'Registration failed';
+        if (data && typeof data.detail === 'string') {
+          errorMessage = data.detail;
+        } else if (data && Array.isArray(data.detail)) {
+          errorMessage = data.detail.map((err: any) => err.msg || JSON.stringify(err)).join(', ');
+        } else if (data && data.message) {
+          errorMessage = data.message;
+        }
+        setError(errorMessage);
+        return { success: false, message: errorMessage };
+      }
+
+      return { success: true, message: data.message || 'Registration successful' };
+    } catch (error) {
+      console.error('Registration error:', error);
+      const errorMessage = 'An unexpected error occurred. Please try again.';
+      setError(errorMessage);
+      return { success: false, message: errorMessage };
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -150,6 +201,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       value={{
         user,
         login,
+        register,
         logout,
         isAuthenticated: !!user,
         isLoading,
