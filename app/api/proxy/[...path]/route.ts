@@ -8,12 +8,19 @@ const BACKEND_BASE_URL =
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-function buildTargetUrl(pathParts: string[], requestUrl: string): string {
+function buildTargetUrl(pathParts: string[], requestUrl: string, forceApiPrefix = false): string {
   const url = new URL(requestUrl);
   const joinedPath = pathParts.map((p) => encodeURIComponent(p)).join('/');
-  const target = new URL(`${BACKEND_BASE_URL.replace(/\/$/, '')}/${joinedPath}`);
-  target.search = url.search;
-  return target.toString();
+  const backendUrl = new URL(BACKEND_BASE_URL);
+  const basePath = backendUrl.pathname.replace(/\/$/, '');
+  const shouldPrefixApi =
+    forceApiPrefix &&
+    !basePath.endsWith('/api') &&
+    !joinedPath.startsWith('api/');
+
+  backendUrl.pathname = `${basePath}${shouldPrefixApi ? '/api' : ''}/${joinedPath}`.replace(/\/{2,}/g, '/');
+  backendUrl.search = url.search;
+  return backendUrl.toString();
 }
 
 function filterHeaders(headers: Headers): Headers {
@@ -33,9 +40,14 @@ function filterHeaders(headers: Headers): Headers {
   return out;
 }
 
-async function proxy(request: NextRequest, pathParts: string[]) {
-  const targetUrl = buildTargetUrl(pathParts, request.url);
-  
+async function proxy(
+  request: NextRequest,
+  pathParts: string[],
+  forceApiPrefix = false,
+  bodyOverride?: string
+) {
+  const targetUrl = buildTargetUrl(pathParts, request.url, forceApiPrefix);
+
   console.log(`[Proxy] ${request.method} ${targetUrl}`);
   console.log(`[Proxy] Backend URL: ${BACKEND_BASE_URL}`);
 
@@ -43,92 +55,84 @@ async function proxy(request: NextRequest, pathParts: string[]) {
   const headers = filterHeaders(request.headers);
 
   try {
-    // Get body as text for POST/PUT requests
-    let body: string | undefined = undefined;
-    if (method !== 'GET' && method !== 'HEAD' && method !== 'OPTIONS') {
-      body = await request.text();
-      console.log(`[Proxy] Body length: ${body?.length || 0}`);
+    const body =
+      bodyOverride !== undefined
+        ? bodyOverride
+        : method !== 'GET' && method !== 'HEAD' && method !== 'OPTIONS'
+          ? await request.text()
+          : undefined;
+
+    if (body !== undefined) {
+      console.log(`[Proxy] Body length: ${body.length}`);
     }
 
-    // Use Node.js https module for more reliable requests
     const https = require('https');
     const http = require('http');
     const url = new URL(targetUrl);
     const isHttps = url.protocol === 'https:';
-    
+
     const options = {
       hostname: url.hostname,
       port: url.port || (isHttps ? 443 : 80),
       path: url.pathname + url.search,
-      method: method,
+      method,
       headers: Object.fromEntries(headers),
     };
 
-    return new Promise((resolve) => {
+    const response = await new Promise<{ statusCode?: number; headers: Record<string, string | string[] | undefined>; body: Buffer }>((resolve, reject) => {
       const lib = isHttps ? https : http;
-      
       const req = lib.request(options, (res: any) => {
-        const responseHeaders = new Headers();
-        
-        // Copy headers
-        Object.entries(res.headers).forEach(([key, value]) => {
-          const lower = key.toLowerCase();
-          if (lower !== 'transfer-encoding' && lower !== 'content-encoding') {
-            responseHeaders.set(key, value as string);
-          }
-        });
-
         const chunks: Buffer[] = [];
         res.on('data', (chunk: Buffer) => chunks.push(chunk));
         res.on('end', () => {
-          const responseBody = Buffer.concat(chunks);
-          resolve(
-            new NextResponse(responseBody, {
-              status: res.statusCode,
-              headers: responseHeaders,
-            })
-          );
+          resolve({
+            statusCode: res.statusCode,
+            headers: res.headers,
+            body: Buffer.concat(chunks),
+          });
         });
       });
 
-      req.on('error', (error: any) => {
-        console.error(`[Proxy] Request failed:`, error);
-        resolve(
-          NextResponse.json(
-            {
-              success: false,
-              error: `Backend connection failed: ${error.message}`,
-            },
-            { status: 503 }
-          )
-        );
-      });
-
-      // Add timeout to prevent hanging
+      req.on('error', reject);
       req.setTimeout(30000, () => {
-        console.error(`[Proxy] Request timeout after 30s`);
-        req.destroy();
-        resolve(
-          NextResponse.json(
-            {
-              success: false,
-              error: 'Backend request timeout',
-            },
-            { status: 504 }
-          )
-        );
+        req.destroy(new Error('Backend request timeout'));
       });
 
-      // Write body if exists
       if (body) {
         req.write(body);
       }
-      
+
       req.end();
+    });
+
+    const responseHeaders = new Headers();
+    Object.entries(response.headers).forEach(([key, value]) => {
+      const lower = key.toLowerCase();
+      if (lower !== 'transfer-encoding' && lower !== 'content-encoding') {
+        if (Array.isArray(value)) {
+          responseHeaders.set(key, value.join(', '));
+        } else if (value !== undefined) {
+          responseHeaders.set(key, value);
+        }
+      }
+    });
+
+    if (
+      !forceApiPrefix &&
+      (response.statusCode === 404 || response.statusCode === 405) &&
+      !new URL(targetUrl).pathname.startsWith('/api/')
+    ) {
+      console.warn(`[Proxy] Retrying ${method} ${targetUrl} with /api prefix`);
+      return proxy(request, pathParts, true, body);
+    }
+
+    return new NextResponse(response.body, {
+      status: response.statusCode,
+      headers: responseHeaders,
     });
   } catch (error: any) {
     console.error(`[Proxy Error] ${method} ${targetUrl}:`, error);
-    
+
     return NextResponse.json(
       {
         success: false,
