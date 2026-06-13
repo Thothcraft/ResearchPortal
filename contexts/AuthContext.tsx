@@ -52,15 +52,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     try {
       console.log('Attempting login with:', { username });
-<<<<<<< HEAD
-      
       // Create abort controller for timeout
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
-      
-=======
-
->>>>>>> 366169a (Add user registration to ResearchPortal auth page)
       const response = await fetch('/api/proxy/token', {
         method: 'POST',
         headers: {

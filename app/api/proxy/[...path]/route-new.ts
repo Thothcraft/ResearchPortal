@@ -7,6 +7,7 @@ const BACKEND_BASE_URL =
     : 'https://web-production-d7d37.up.railway.app');
 
 export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
 
 function buildTargetUrl(pathParts: string[], requestUrl: string): string {
   const url = new URL(requestUrl);

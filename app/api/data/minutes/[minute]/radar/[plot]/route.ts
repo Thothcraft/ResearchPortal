@@ -5,6 +5,9 @@ import path from 'path';
 import { execFileSync } from 'child_process';
 import { getMinuteDetail } from '@/lib/minutes';
 
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
+
 const PLOT_KINDS = new Set(['range-doppler', 'azimuth-range', 'azimuth-doppler']);
 
 export async function GET(

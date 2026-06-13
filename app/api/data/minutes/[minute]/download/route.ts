@@ -5,6 +5,9 @@ import path from 'path';
 import { execFileSync } from 'child_process';
 import { getMinuteDetail } from '@/lib/minutes';
 
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
+
 export async function GET(
   request: NextRequest,
   { params }: { params: { minute: string } }
