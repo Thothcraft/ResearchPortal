@@ -1,71 +1,23 @@
 import { NextRequest, NextResponse } from 'next/server';
-import fs from 'fs';
-import { execFileSync } from 'child_process';
 
 const BACKEND_BASE_URL =
   process.env.BACKEND_BASE_URL ||
   process.env.NEXT_PUBLIC_BACKEND_URL ||
+  process.env.NEXT_PUBLIC_API_URL ||
   'https://web-production-d7d37.up.railway.app';
-const LOCAL_THOTH_DATA = '/home/pi/Desktop/data';
+const NORMALIZED_BACKEND_BASE_URL = BACKEND_BASE_URL.replace(/\/$/, '');
+const API_BASE_URL = NORMALIZED_BACKEND_BASE_URL.endsWith('/api')
+  ? NORMALIZED_BACKEND_BASE_URL
+  : `${NORMALIZED_BACKEND_BASE_URL}/api`;
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-function buildLocalThothDevices() {
-  const hasCollector = fs.existsSync('/etc/systemd/system/thoth-collector.service');
-  const collectorActive = (() => {
-    try {
-      return execFileSync('systemctl', ['is-active', 'thoth-collector.service'], { encoding: 'utf8' }).trim() === 'active';
-    } catch {
-      return false;
-    }
-  })();
-  const thothOnline = collectorActive || hasCollector;
-  const minutes = fs.existsSync(LOCAL_THOTH_DATA)
-    ? fs.readdirSync(LOCAL_THOTH_DATA).filter((item) => /^\d{8}_\d{4}$/.test(item))
-    : [];
-  const latestMinute = minutes.sort().at(-1) || null;
-
-  return [
-    {
-      device_id: 'thoth-local',
-      device_name: 'Thoth',
-      device_type: 'raspberry_pi',
-      online: thothOnline,
-      approved: true,
-      battery_level: null,
-      last_seen: new Date().toISOString(),
-      ip_address: 'thoth.local',
-      mac_address: null,
-      device_uuid: 'thoth-local',
-      user_id: 0,
-      hardware_info: {
-        device_type: 'raspberry_pi',
-        is_raspberry_pi: true,
-        raspberry_pi_model: 'Thoth RPi',
-        hostname: 'thoth',
-        sensors: [
-          { sensor_type: 'radar', name: 'DreamHat Radar', available: true, device_path: '/dev/spidev0.0' },
-          { sensor_type: 'camera', name: 'USB Camera', available: true, device_path: '/dev/video0' },
-          { sensor_type: 'wifi_csi', name: 'ESP32 CSI', available: true, device_path: '/dev/ttyACM0' },
-        ],
-        latest_minute: latestMinute,
-      },
-    },
-  ];
-}
-
-function buildTargetUrl(pathParts: string[], requestUrl: string, forceApiPrefix = false): string {
+function buildTargetUrl(pathParts: string[], requestUrl: string): string {
   const url = new URL(requestUrl);
   const joinedPath = pathParts.map((p) => encodeURIComponent(p)).join('/');
-  const backendUrl = new URL(BACKEND_BASE_URL);
-  const basePath = backendUrl.pathname.replace(/\/$/, '');
-  const shouldPrefixApi =
-    forceApiPrefix &&
-    !basePath.endsWith('/api') &&
-    !joinedPath.startsWith('api/');
-
-  backendUrl.pathname = `${basePath}${shouldPrefixApi ? '/api' : ''}/${joinedPath}`.replace(/\/{2,}/g, '/');
+  const backendUrl = new URL(API_BASE_URL);
+  backendUrl.pathname = `${backendUrl.pathname.replace(/\/$/, '')}/${joinedPath}`.replace(/\/{2,}/g, '/');
   backendUrl.search = url.search;
   return backendUrl.toString();
 }
@@ -90,20 +42,12 @@ function filterHeaders(headers: Headers): Headers {
 async function proxy(
   request: NextRequest,
   pathParts: string[],
-  forceApiPrefix = false,
   bodyOverride?: string
 ) {
-  const normalized = pathParts.join('/');
-  if (normalized === 'device/list' || normalized === 'api/device/list') {
-    return NextResponse.json({
-      devices: buildLocalThothDevices(),
-    });
-  }
-
-  const targetUrl = buildTargetUrl(pathParts, request.url, forceApiPrefix);
+  const targetUrl = buildTargetUrl(pathParts, request.url);
 
   console.log(`[Proxy] ${request.method} ${targetUrl}`);
-  console.log(`[Proxy] Backend URL: ${BACKEND_BASE_URL}`);
+  console.log(`[Proxy] Backend URL: ${API_BASE_URL}`);
 
   const method = request.method.toUpperCase();
   const headers = filterHeaders(request.headers);
@@ -170,15 +114,6 @@ async function proxy(
         }
       }
     });
-
-    if (
-      !forceApiPrefix &&
-      (response.statusCode === 404 || response.statusCode === 405) &&
-      !new URL(targetUrl).pathname.startsWith('/api/')
-    ) {
-      console.warn(`[Proxy] Retrying ${method} ${targetUrl} with /api prefix`);
-      return proxy(request, pathParts, true, body);
-    }
 
     return new NextResponse(response.body, {
       status: response.statusCode,

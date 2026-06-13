@@ -420,8 +420,8 @@ export default function DevicesPage() {
     setError(null);
     try {
       const [deviceRes, minuteRes, localRes, deployRes] = await Promise.all([
-        get('/device/list?include_offline=true'),
-        fetch('/api/data/minutes', { cache: 'no-store' }).then((res) => res.json()),
+        get('/device/list?include_offline=true').catch(() => ({ devices: [] })),
+        fetch('/api/data/minutes', { cache: 'no-store' }).then((res) => res.json()).catch(() => ({ minutes: [] })),
         fetch('/api/local/thoth/status', { cache: 'no-store' }).then((res) => res.json()).catch(() => null),
         get('/datasets/models/deployments').catch(() => ({ deployments: [] })),
       ]);
