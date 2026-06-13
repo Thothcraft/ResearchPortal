@@ -317,6 +317,14 @@ export default function DataPage() {
     }
   }, [loadMinuteDetail, selectedMinute]);
 
+  useEffect(() => {
+    if (!selectedSummary || selectedSummary.state !== 'collecting') return;
+    const timer = window.setInterval(() => {
+      loadMinuteDetail(selectedSummary.minute);
+    }, 5000);
+    return () => window.clearInterval(timer);
+  }, [loadMinuteDetail, selectedSummary?.minute, selectedSummary?.state]);
+
   const deviceOptions = useMemo(() => {
     const seen = new Map<string, string>();
     for (const minute of minutes) {
