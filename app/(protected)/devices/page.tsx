@@ -146,6 +146,22 @@ function getDeviceIdentity(device: Device) {
   return { key, label, aliases };
 }
 
+function isThothLikeDevice(device: Device) {
+  const identity = getDeviceIdentity(device);
+  const hw = device.hardware_info || {};
+  const values = [
+    identity.key,
+    device.device_id,
+    device.device_uuid,
+    device.device_name,
+    hw.hostname,
+    hw.device_type,
+  ]
+    .filter(Boolean)
+    .map(normalize);
+  return values.some((value) => value === 'thoth' || value === 'thoth-local' || value.includes('thoth'));
+}
+
 function getMinuteIdentity(minute: MinuteSummary) {
   const manifest = minute.manifest || {};
   const aliases = [
@@ -415,10 +431,7 @@ export default function DevicesPage() {
       const mergedDevices = localDevice
         ? [
             localDevice,
-            ...remoteDevices.filter((device) => {
-              const id = normalize(device.device_uuid || device.device_id || device.device_name);
-              return id !== 'thoth-local' && id !== 'thoth' && !id.includes('thoth');
-            }),
+            ...remoteDevices.filter((device) => !isThothLikeDevice(device)),
           ]
         : remoteDevices;
 
