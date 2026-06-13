@@ -1,17 +1,20 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import {
   CalendarDays,
   ChevronDown,
   ChevronUp,
   Clock3,
   Download,
+  Eye,
   HardDrive,
   Radar,
   RefreshCw,
   Search,
   TriangleAlert,
+  UploadCloud,
   Video,
   Wifi,
 } from 'lucide-react';
@@ -21,7 +24,10 @@ type MinuteSummary = {
   path: string;
   modified: string;
   created: string;
+  deviceKey: string;
+  deviceLabel: string;
   completed: boolean;
+  uploaded: boolean;
   state: 'ready' | 'collecting';
   files: {
     video: boolean;
@@ -70,8 +76,7 @@ function parseCsiAverageSeries(text: string, limit = 180): number[] {
       const row = JSON.parse(line);
       const raw = String(row.line || row.raw || '');
       if (!raw.startsWith('CSI_DATA,')) continue;
-      const parts = raw.split(',');
-      const values = parts.slice(3).map((value) => Number(value)).filter((value) => Number.isFinite(value));
+      const values = raw.split(',').slice(3).map((value) => Number(value)).filter((value) => Number.isFinite(value));
       if (!values.length) continue;
       const mean = values.reduce((sum, value) => sum + Math.abs(value), 0) / values.length;
       series.push(mean);
@@ -99,7 +104,6 @@ function CsiChart({ points }: { points: number[] }) {
   const max = Math.max(...points);
   const span = max - min || 1;
   const step = points.length > 1 ? (width - padding * 2) / (points.length - 1) : 0;
-
   const polyline = points
     .map((value, index) => {
       const x = padding + index * step;
@@ -107,11 +111,6 @@ function CsiChart({ points }: { points: number[] }) {
       return `${x},${y}`;
     })
     .join(' ');
-
-  const gridLines = [0.25, 0.5, 0.75].map((ratio) => {
-    const y = padding + ratio * (height - padding * 2);
-    return <line key={ratio} x1={padding} x2={width - padding} y1={y} y2={y} stroke="rgba(148,163,184,0.18)" strokeDasharray="4 6" />;
-  });
 
   return (
     <div className="rounded-xl border border-slate-200 bg-slate-950/95 p-4 text-white">
@@ -127,13 +126,7 @@ function CsiChart({ points }: { points: number[] }) {
       </div>
       <svg viewBox={`0 0 ${width} ${height}`} className="h-[220px] w-full">
         <rect x="0" y="0" width={width} height={height} rx="16" fill="rgba(15,23,42,0.96)" />
-        {gridLines}
         <polyline fill="none" stroke="#60a5fa" strokeWidth="2.5" points={polyline} />
-        {points.slice(-1).map((value, index) => {
-          const x = padding + (points.length > 1 ? (points.length - 1) * step : 0);
-          const y = height - padding - ((value - min) / span) * (height - padding * 2);
-          return <circle key={index} cx={x} cy={y} r="4" fill="#93c5fd" />;
-        })}
       </svg>
     </div>
   );
@@ -141,27 +134,36 @@ function CsiChart({ points }: { points: number[] }) {
 
 function FileBadge({ label, ok }: { label: string; ok: boolean }) {
   return (
-    <span
-      className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium ${
-        ok ? 'bg-emerald-500/10 text-emerald-700' : 'bg-slate-100 text-slate-400'
-      }`}
-    >
+    <span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium ${ok ? 'bg-emerald-500/10 text-emerald-700' : 'bg-slate-100 text-slate-400'}`}>
       <span className={`h-1.5 w-1.5 rounded-full ${ok ? 'bg-emerald-500' : 'bg-slate-400'}`} />
       {label}
     </span>
   );
 }
 
+function normalize(value: unknown): string {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
 export default function DataPage() {
+  const searchParams = useSearchParams();
   const [minutes, setMinutes] = useState<MinuteSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
+  const [deviceFilter, setDeviceFilter] = useState('all');
+  const [uploadFilter, setUploadFilter] = useState<'all' | 'uploaded' | 'local'>('all');
+  const [startMinute, setStartMinute] = useState('');
+  const [endMinute, setEndMinute] = useState('');
   const [selectedMinute, setSelectedMinute] = useState<string | null>(null);
   const [detail, setDetail] = useState<MinuteDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [csiSeries, setCsiSeries] = useState<number[]>([]);
-  const [csiLoading, setCsiLoading] = useState(false);
+  const [uploadingMinute, setUploadingMinute] = useState<string | null>(null);
 
   const loadMinutes = useCallback(async () => {
     setLoading(true);
@@ -175,18 +177,13 @@ export default function DataPage() {
 
       const list = Array.isArray(payload.minutes) ? payload.minutes : [];
       setMinutes(list);
-      setSelectedMinute((current) => {
-        if (current && list.some((minute: MinuteSummary) => minute.minute === current)) {
-          return current;
-        }
-        return list[0]?.minute || null;
-      });
+      setSelectedMinute((current) => current && list.some((minute: MinuteSummary) => minute.minute === current) ? current : (searchParams.get('minute') || list[0]?.minute || null));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load minute folders');
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [searchParams]);
 
   const loadMinuteDetail = useCallback(async (minute: string) => {
     setDetailLoading(true);
@@ -203,28 +200,40 @@ export default function DataPage() {
       setDetail(minuteDetail);
 
       if (minuteDetail.files.csi && minuteDetail.filePaths.csi_serial) {
-        setCsiLoading(true);
-        try {
-          const csiResponse = await fetch(`/api/data/minutes/${minute}/file/csi_serial`, { cache: 'no-store' });
-          const csiText = await csiResponse.text();
-          if (csiResponse.ok) {
-            setCsiSeries(parseCsiAverageSeries(csiText));
-          }
-        } finally {
-          setCsiLoading(false);
+        const csiResponse = await fetch(`/api/data/minutes/${minute}/file/csi_serial`, { cache: 'no-store' });
+        const csiText = await csiResponse.text();
+        if (csiResponse.ok) {
+          setCsiSeries(parseCsiAverageSeries(csiText));
         }
       }
-    } catch (err) {
+    } catch {
       setDetail(null);
     } finally {
       setDetailLoading(false);
     }
   }, []);
 
+  const uploadMinute = useCallback(async (minute: string) => {
+    setUploadingMinute(minute);
+    try {
+      const response = await fetch(`/api/data/minutes/${minute}/upload`, { method: 'POST' });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload?.error || 'Upload failed');
+      }
+      await loadMinutes();
+      if (selectedMinute === minute) {
+        await loadMinuteDetail(minute);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Upload failed');
+    } finally {
+      setUploadingMinute(null);
+    }
+  }, [loadMinuteDetail, loadMinutes, selectedMinute]);
+
   useEffect(() => {
     loadMinutes();
-    const timer = window.setInterval(loadMinutes, 15000);
-    return () => window.clearInterval(timer);
   }, [loadMinutes]);
 
   useEffect(() => {
@@ -236,43 +245,54 @@ export default function DataPage() {
     }
   }, [loadMinuteDetail, selectedMinute]);
 
+  const deviceOptions = useMemo(() => {
+    const seen = new Map<string, string>();
+    for (const minute of minutes) {
+      const key = minute.deviceKey || normalize(minute.deviceLabel);
+      if (!seen.has(key)) seen.set(key, minute.deviceLabel || minute.deviceKey || 'Unknown device');
+    }
+    return Array.from(seen.entries()).map(([value, label]) => ({ value, label }));
+  }, [minutes]);
+
   const filteredMinutes = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return minutes;
+    const start = startMinute.trim();
+    const end = endMinute.trim();
     return minutes.filter((minute) => {
-      return (
-        minute.minute.toLowerCase().includes(q) ||
-        (minute.state || '').toLowerCase().includes(q) ||
-        minute.files.video.toString().includes(q) ||
-        minute.files.radar.toString().includes(q) ||
-        minute.files.csi.toString().includes(q)
-      );
+      if (q && !(minute.minute.toLowerCase().includes(q) || minute.deviceLabel.toLowerCase().includes(q))) return false;
+      if (deviceFilter !== 'all' && normalize(minute.deviceKey || minute.deviceLabel) !== deviceFilter) return false;
+      if (uploadFilter === 'uploaded' && !minute.uploaded) return false;
+      if (uploadFilter === 'local' && minute.uploaded) return false;
+      if (start && minute.minute < start) return false;
+      if (end && minute.minute > end) return false;
+      return true;
     });
-  }, [minutes, query]);
+  }, [minutes, query, deviceFilter, uploadFilter, startMinute, endMinute]);
 
-  const totals = useMemo(() => {
-    return {
-      total: minutes.length,
-      ready: minutes.filter((minute) => minute.completed).length,
-      collecting: minutes.filter((minute) => !minute.completed).length,
-    };
-  }, [minutes]);
+  const totals = useMemo(() => ({
+    total: minutes.length,
+    uploaded: minutes.filter((minute) => minute.uploaded).length,
+    local: minutes.filter((minute) => !minute.uploaded).length,
+    ready: minutes.filter((minute) => minute.completed).length,
+  }), [minutes]);
 
   const selectedSummary = useMemo(
     () => minutes.find((minute) => minute.minute === selectedMinute) || null,
     [minutes, selectedMinute]
   );
 
+  const groupedDeviceCount = deviceOptions.length;
+
   return (
     <div className="space-y-6">
       <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
           <div className="max-w-3xl">
-            <div className="text-xs uppercase tracking-[0.22em] text-slate-500">Thoth minute browser</div>
-            <h1 className="mt-1 text-3xl font-semibold text-slate-950">Synchronized minute captures</h1>
+            <div className="text-xs uppercase tracking-[0.22em] text-slate-500">Minute data</div>
+            <h1 className="mt-1 text-3xl font-semibold text-slate-950">All minute folders</h1>
             <p className="mt-2 text-sm leading-6 text-slate-600">
               Only timestamped folders from <code className="rounded bg-slate-100 px-1.5 py-0.5 text-slate-900">/home/pi/Desktop/data</code> are shown.
-              Each card expands to the synchronized camera, radar, and CSI views.
+              Filter by device, time range, and cloud sync status.
             </p>
           </div>
 
@@ -287,11 +307,7 @@ export default function DataPage() {
             </button>
             <a
               href={selectedMinute ? `/api/data/minutes/${selectedMinute}/download` : '#'}
-              className={`inline-flex items-center gap-2 rounded-xl px-3.5 py-2 text-sm font-medium ${
-                selectedMinute
-                  ? 'bg-indigo-600 text-white hover:bg-indigo-500'
-                  : 'pointer-events-none bg-slate-200 text-slate-500'
-              }`}
+              className={`inline-flex items-center gap-2 rounded-xl px-3.5 py-2 text-sm font-medium ${selectedMinute ? 'bg-indigo-600 text-white hover:bg-indigo-500' : 'pointer-events-none bg-slate-200 text-slate-500'}`}
             >
               <Download className="h-4 w-4" />
               Download selected
@@ -299,28 +315,65 @@ export default function DataPage() {
           </div>
         </div>
 
-        <div className="mt-5 grid gap-3 sm:grid-cols-3">
+        <div className="mt-5 grid gap-3 sm:grid-cols-4">
           <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
             <div className="text-xs uppercase tracking-wide text-slate-500">Total folders</div>
             <div className="mt-1 text-2xl font-semibold text-slate-950">{totals.total}</div>
           </div>
           <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-            <div className="text-xs uppercase tracking-wide text-slate-500">Ready</div>
-            <div className="mt-1 text-2xl font-semibold text-emerald-700">{totals.ready}</div>
+            <div className="text-xs uppercase tracking-wide text-slate-500">Uploaded</div>
+            <div className="mt-1 text-2xl font-semibold text-blue-700">{totals.uploaded}</div>
           </div>
           <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-            <div className="text-xs uppercase tracking-wide text-slate-500">Collecting</div>
-            <div className="mt-1 text-2xl font-semibold text-amber-700">{totals.collecting}</div>
+            <div className="text-xs uppercase tracking-wide text-slate-500">Local</div>
+            <div className="mt-1 text-2xl font-semibold text-amber-700">{totals.local}</div>
+          </div>
+          <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+            <div className="text-xs uppercase tracking-wide text-slate-500">Devices</div>
+            <div className="mt-1 text-2xl font-semibold text-slate-950">{groupedDeviceCount}</div>
           </div>
         </div>
 
-        <div className="mt-5 flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-3">
-          <Search className="h-4 w-4 text-slate-400" />
+        <div className="mt-5 grid gap-3 lg:grid-cols-4">
+          <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-3 lg:col-span-2">
+            <Search className="h-4 w-4 text-slate-400" />
+            <input
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Search minute or device"
+              className="w-full bg-transparent text-sm text-slate-900 outline-none placeholder:text-slate-400"
+            />
+          </div>
+          <select
+            value={deviceFilter}
+            onChange={(event) => setDeviceFilter(event.target.value)}
+            className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none"
+          >
+            <option value="all">All devices</option>
+            {deviceOptions.map((device) => (
+              <option key={device.value} value={device.value}>{device.label}</option>
+            ))}
+          </select>
+          <select
+            value={uploadFilter}
+            onChange={(event) => setUploadFilter(event.target.value as 'all' | 'uploaded' | 'local')}
+            className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none"
+          >
+            <option value="all">All sync states</option>
+            <option value="uploaded">Uploaded</option>
+            <option value="local">Local only</option>
+          </select>
           <input
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder="Search minute timestamp or state"
-            className="w-full bg-transparent text-sm text-slate-900 outline-none placeholder:text-slate-400"
+            value={startMinute}
+            onChange={(event) => setStartMinute(event.target.value)}
+            placeholder="Start minute YYYYMMDD_HHMM"
+            className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none placeholder:text-slate-400"
+          />
+          <input
+            value={endMinute}
+            onChange={(event) => setEndMinute(event.target.value)}
+            placeholder="End minute YYYYMMDD_HHMM"
+            className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none placeholder:text-slate-400"
           />
         </div>
 
@@ -334,16 +387,14 @@ export default function DataPage() {
 
       <section className="grid gap-4 lg:grid-cols-2 2xl:grid-cols-3">
         {loading && minutes.length === 0 ? (
-          <div className="rounded-2xl border border-slate-200 bg-white p-8 text-sm text-slate-500">Loading minute folders...</div>
+          <div className="rounded-2xl border border-slate-200 bg-white p-8 text-sm text-slate-500 shadow-sm">Loading minute folders...</div>
         ) : (
           filteredMinutes.map((minute) => {
             const active = minute.minute === selectedMinute;
             return (
               <article
                 key={minute.minute}
-                className={`rounded-2xl border bg-white p-5 shadow-sm transition ${
-                  active ? 'border-indigo-300 ring-2 ring-indigo-100' : 'border-slate-200 hover:border-slate-300'
-                }`}
+                className={`rounded-2xl border bg-white p-5 shadow-sm transition ${active ? 'border-indigo-300 ring-2 ring-indigo-100' : 'border-slate-200 hover:border-slate-300'}`}
               >
                 <button
                   type="button"
@@ -356,6 +407,7 @@ export default function DataPage() {
                       Minute folder
                     </div>
                     <h2 className="mt-2 truncate text-xl font-semibold text-slate-950">{minute.minute}</h2>
+                    <div className="mt-1 text-sm text-slate-600">{minute.deviceLabel}</div>
                     <div className="mt-2 flex flex-wrap gap-2">
                       <FileBadge label="Video" ok={minute.files.video} />
                       <FileBadge label="Radar" ok={minute.files.radar} />
@@ -363,11 +415,11 @@ export default function DataPage() {
                     </div>
                   </div>
                   <div className="flex flex-col items-end gap-2">
-                    <span
-                      className={`inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-medium ${
-                        minute.completed ? 'bg-emerald-500/10 text-emerald-700' : 'bg-amber-500/10 text-amber-700'
-                      }`}
-                    >
+                    <span className={`inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-medium ${minute.uploaded ? 'bg-blue-500/10 text-blue-700' : 'bg-amber-500/10 text-amber-700'}`}>
+                      <CloudIcon uploaded={minute.uploaded} />
+                      {minute.uploaded ? 'Uploaded' : 'Local'}
+                    </span>
+                    <span className={`inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-medium ${minute.completed ? 'bg-emerald-500/10 text-emerald-700' : 'bg-amber-500/10 text-amber-700'}`}>
                       <span className={`h-2 w-2 rounded-full ${minute.completed ? 'bg-emerald-500' : 'bg-amber-500'}`} />
                       {minute.completed ? 'Ready' : 'Collecting'}
                     </span>
@@ -392,21 +444,53 @@ export default function DataPage() {
                   </div>
                 </div>
 
-                {active && (
+                <div className="mt-4 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedMinute(minute.minute)}
+                    className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3.5 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                  >
+                    <Eye className="h-4 w-4" />
+                    View
+                  </button>
+                  <a href={`/api/data/minutes/${minute.minute}/download`} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3.5 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
+                    <Download className="h-4 w-4" />
+                    Download
+                  </a>
+                  {!minute.uploaded && (
+                    <button
+                      type="button"
+                      onClick={() => uploadMinute(minute.minute)}
+                      disabled={uploadingMinute === minute.minute}
+                      className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-3.5 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-60"
+                    >
+                      <UploadCloud className="h-4 w-4" />
+                      {uploadingMinute === minute.minute ? 'Uploading...' : 'Upload'}
+                    </button>
+                  )}
+                </div>
+
+                {active && detail && (
                   <div className="mt-4 border-t border-slate-200 pt-4">
-                    <div className="flex flex-wrap gap-3">
-                      <a href={`/api/data/minutes/${minute.minute}/download`} className="inline-flex items-center gap-2 rounded-xl bg-slate-950 px-3.5 py-2 text-sm font-medium text-white hover:bg-slate-800">
-                        <Download className="h-4 w-4" />
-                        Download minute
-                      </a>
-                      <button
-                        type="button"
-                        onClick={() => setSelectedMinute(minute.minute)}
-                        className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3.5 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
-                      >
-                        <RefreshCw className="h-4 w-4" />
-                        Reload details
-                      </button>
+                    <div className="grid gap-3 sm:grid-cols-3">
+                      <div className="rounded-xl bg-slate-50 p-3">
+                        <div className="text-xs uppercase tracking-wide text-slate-500">Device</div>
+                        <div className="mt-1 text-sm font-medium text-slate-900">{detail.deviceLabel}</div>
+                      </div>
+                      <div className="rounded-xl bg-slate-50 p-3">
+                        <div className="text-xs uppercase tracking-wide text-slate-500">Radar</div>
+                        <div className="mt-1 flex items-center gap-2 text-sm font-medium text-slate-900">
+                          <Radar className="h-4 w-4 text-slate-500" />
+                          {detail.files.radar ? 'Available' : 'Missing'}
+                        </div>
+                      </div>
+                      <div className="rounded-xl bg-slate-50 p-3">
+                        <div className="text-xs uppercase tracking-wide text-slate-500">CSI</div>
+                        <div className="mt-1 flex items-center gap-2 text-sm font-medium text-slate-900">
+                          <Wifi className="h-4 w-4 text-slate-500" />
+                          {detail.files.csi ? 'Available' : 'Missing'}
+                        </div>
+                      </div>
                     </div>
                   </div>
                 )}
@@ -415,7 +499,7 @@ export default function DataPage() {
           })
         )}
         {!loading && filteredMinutes.length === 0 && (
-          <div className="rounded-2xl border border-slate-200 bg-white p-8 text-sm text-slate-500">No minute folders matched the current filter.</div>
+          <div className="rounded-2xl border border-slate-200 bg-white p-8 text-sm text-slate-500 shadow-sm">No minute folders matched the current filters.</div>
         )}
       </section>
 
@@ -427,9 +511,7 @@ export default function DataPage() {
               <h2 className="mt-1 text-2xl font-semibold text-slate-950">{selectedSummary?.minute || 'No minute selected'}</h2>
               {selectedSummary && (
                 <p className="mt-1 text-sm text-slate-600">
-                  {selectedSummary.completed ? 'Completed capture' : 'Currently collecting'} ·
-                  {' '}
-                  {formatStamp(selectedSummary.manifest?.capture_finished || selectedSummary.modified)}
+                  {selectedSummary.deviceLabel} · {selectedSummary.uploaded ? 'uploaded' : 'local'} · {formatStamp(selectedSummary.manifest?.capture_finished || selectedSummary.modified)}
                 </p>
               )}
             </div>
@@ -507,11 +589,9 @@ export default function DataPage() {
               <div className="rounded-xl border border-slate-200 bg-white p-4">
                 <div className="mb-3">
                   <div className="text-sm font-semibold text-slate-950">CSI amplitude graph</div>
-                  <div className="text-xs text-slate-500">
-                    Average amplitude across subcarriers, derived from the ESP32 receiver stream.
-                  </div>
+                  <div className="text-xs text-slate-500">Average amplitude across subcarriers, derived from the ESP32 receiver stream.</div>
                 </div>
-                {csiLoading ? <div className="rounded-xl border border-slate-200 bg-slate-50 p-6 text-sm text-slate-500">Loading CSI series...</div> : <CsiChart points={csiSeries} />}
+                <CsiChart points={csiSeries} />
               </div>
             </div>
           ) : null}
@@ -519,7 +599,7 @@ export default function DataPage() {
 
         <aside className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
           <div className="text-xs uppercase tracking-[0.18em] text-slate-500">Minute details</div>
-          <div className="mt-1 text-lg font-semibold text-slate-950">What is on disk</div>
+          <div className="mt-1 text-lg font-semibold text-slate-950">Manifest and files</div>
 
           {detail ? (
             <div className="mt-4 space-y-3 text-sm text-slate-600">
@@ -527,11 +607,8 @@ export default function DataPage() {
                 <div className="text-xs uppercase tracking-wide text-slate-500">Files present</div>
                 <div className="mt-3 space-y-2">
                   <FileBadge label="Manifest" ok={detail.files.manifest} />
-                  <div />
                   <FileBadge label="Video MP4" ok={detail.files.video} />
-                  <div />
                   <FileBadge label="Radar BIN" ok={detail.files.radar} />
-                  <div />
                   <FileBadge label="CSI CSV/JSONL" ok={detail.files.csi} />
                 </div>
               </div>
@@ -562,4 +639,8 @@ export default function DataPage() {
       </section>
     </div>
   );
+}
+
+function CloudIcon({ uploaded }: { uploaded: boolean }) {
+  return uploaded ? <span className="h-2 w-2 rounded-full bg-blue-500" /> : <span className="h-2 w-2 rounded-full bg-amber-500" />;
 }

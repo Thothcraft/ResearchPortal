@@ -16,8 +16,11 @@ export type MinuteSummary = {
   path: string;
   modified: string;
   created: string;
+  deviceKey: string;
+  deviceLabel: string;
   completed: boolean;
   state: 'ready' | 'collecting';
+  uploaded: boolean;
   files: MinuteFiles;
   sizes: Record<string, number>;
   manifest?: any;
@@ -46,6 +49,40 @@ function readJsonPreview(filePath: string | null): any {
   }
 }
 
+function normalizeDeviceValue(value: unknown): string {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+function extractDeviceInfo(manifest: any, minuteDir: string): { deviceKey: string; deviceLabel: string; uploaded: boolean } {
+  const candidates = [
+    manifest?.device_name,
+    manifest?.device_id,
+    manifest?.host,
+    manifest?.outputs?.video?.device,
+    manifest?.outputs?.radar?.device,
+    manifest?.outputs?.wifi?.device,
+  ].filter(Boolean);
+  const deviceLabel = String(candidates[0] || manifest?.host || path.basename(minuteDir) || 'unknown');
+  const deviceKey = normalizeDeviceValue(candidates[0] || manifest?.host || manifest?.device_id || deviceLabel);
+  const uploaded = Boolean(
+    manifest?.uploaded_at ||
+    manifest?.cloud_uploaded_at ||
+    manifest?.upload?.uploaded_at ||
+    manifest?.upload?.status === 'uploaded' ||
+    manifest?.cloud?.uploaded ||
+    manifest?.outputs?.video?.cloud_file_id ||
+    manifest?.outputs?.radar?.cloud_file_id ||
+    manifest?.outputs?.wifi?.cloud_file_id ||
+    fs.existsSync(path.join(minuteDir, 'cloud_upload.json')) ||
+    fs.existsSync(path.join(minuteDir, '.uploaded'))
+  );
+  return { deviceKey, deviceLabel, uploaded };
+}
+
 function getMinutePaths(minuteDir: string) {
   const names = fs.existsSync(minuteDir) ? fs.readdirSync(minuteDir) : [];
   const radar = names.find((name) => name.startsWith('mmw_radar_raw_') && name.endsWith('.bin')) || null;
@@ -70,14 +107,18 @@ export function listMinuteSummaries(): MinuteSummary[] {
     const stat = fs.statSync(minuteDir);
     const paths = getMinutePaths(minuteDir);
     const manifest = readJsonPreview(paths.manifest);
+    const deviceInfo = extractDeviceInfo(manifest, minuteDir);
     const completed = Boolean(manifest?.capture_finished);
     minutes.push({
       minute: item,
       path: minuteDir,
       modified: stat.mtime.toISOString(),
       created: stat.birthtime.toISOString(),
+      deviceKey: deviceInfo.deviceKey,
+      deviceLabel: deviceInfo.deviceLabel,
       completed,
       state: completed ? 'ready' : 'collecting',
+      uploaded: deviceInfo.uploaded,
       files: {
         video: !!paths.video,
         radar: !!paths.radar,
@@ -111,14 +152,18 @@ export function getMinuteDetail(minute: string): MinuteDetail | null {
   const stat = fs.statSync(minuteDir);
   const paths = getMinutePaths(minuteDir);
   const manifest = readJsonPreview(paths.manifest);
+  const deviceInfo = extractDeviceInfo(manifest, minuteDir);
   const completed = Boolean(manifest?.capture_finished);
   const summary = getMinuteSummary(minute) || {
     minute,
     path: minuteDir,
     modified: stat.mtime.toISOString(),
     created: stat.birthtime.toISOString(),
+    deviceKey: deviceInfo.deviceKey,
+    deviceLabel: deviceInfo.deviceLabel,
     completed,
     state: completed ? 'ready' : 'collecting',
+    uploaded: deviceInfo.uploaded,
     files: {
       video: !!paths.video,
       radar: !!paths.radar,
