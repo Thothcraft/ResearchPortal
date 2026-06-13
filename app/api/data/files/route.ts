@@ -2,47 +2,49 @@ import { NextResponse } from 'next/server';
 import fs from 'fs';
 import path from 'path';
 
+const DATA_DIR = '/home/pi/Desktop/data';
+const MINUTE_RE = /^\d{8}_\d{4}$/;
+
 export async function GET() {
   try {
-    // Path to thoth/data directory (relative to ResearchPortal)
-    const dataDir = path.join(process.cwd(), '..', 'thoth', 'data');
-    
-    console.log('Looking for data files in:', dataDir);
-    console.log('Directory exists:', fs.existsSync(dataDir));
-    
-    const files: { name: string; size: number; modified: string }[] = [];
-    
-    if (fs.existsSync(dataDir)) {
-      const items = fs.readdirSync(dataDir);
-      console.log('Found items:', items);
-      
+    const files: {
+      name: string;
+      size: number;
+      modified: string;
+      files?: Record<string, boolean>;
+      type?: string;
+    }[] = [];
+
+    if (fs.existsSync(DATA_DIR)) {
+      const items = fs.readdirSync(DATA_DIR);
       for (const item of items) {
-        const itemPath = path.join(dataDir, item);
+        const itemPath = path.join(DATA_DIR, item);
         const stat = fs.statSync(itemPath);
-        
-        if (stat.isFile()) {
-          // Only include files with recognized prefixes
-          const nameLower = item.toLowerCase();
-          if (['imu_', 'csi_', 'mfcw_', 'img_', 'vid_'].some(prefix => nameLower.startsWith(prefix))) {
-            files.push({
-              name: item,
-              size: stat.size,
-              modified: stat.mtime.toISOString(),
-            });
-          }
-        }
+
+        if (!stat.isDirectory() || !MINUTE_RE.test(item)) continue;
+
+        const names = new Set(fs.readdirSync(itemPath));
+        files.push({
+          name: item,
+          size: stat.size,
+          modified: stat.mtime.toISOString(),
+          type: 'minute-folder',
+          files: {
+            video: names.has('usb_camera.mp4'),
+            radar: Array.from(names).some(name => name.startsWith('mmw_radar_raw_') && name.endsWith('.bin')),
+            csi: names.has('wifi_csi_raw.csv') || names.has('wifi_csi_timestamped.csv') || names.has('wifi_csi_serial_all.jsonl'),
+            manifest: names.has('manifest.json'),
+          },
+        });
       }
-    } else {
-      console.log('Data directory does not exist');
+      files.sort((a, b) => (b.modified || '').localeCompare(a.modified || ''));
     }
-    
-    console.log('Returning files:', files.length);
-    
+
     return NextResponse.json({
       success: true,
       files,
       count: files.length,
-      dataDir, // Include for debugging
+      dataDir: DATA_DIR,
     });
   } catch (error) {
     console.error('Error listing data files:', error);

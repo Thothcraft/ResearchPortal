@@ -18,6 +18,7 @@ import {
   Users,
   BookOpen,
   Shield,
+  Calendar,
 } from 'lucide-react';
 import { useState } from 'react';
 
@@ -31,6 +32,7 @@ export default function Sidebar() {
     { name: 'Home', href: '/home', icon: Home, description: 'Statistics & Overview' },
     { name: 'Devices', href: '/devices', icon: Monitor, description: 'Online/Offline Devices' },
     { name: 'Data', href: '/data', icon: Database, description: 'Data Files' },
+    { name: 'Minutes', href: '/minutes', icon: Calendar, description: 'Thoth Minute Captures' },
     { name: 'Processing', href: '/processing', icon: Workflow, description: 'Data Pipelines' },
     { name: 'Training', href: '/training', icon: Brain, description: 'Model Training' },
     { name: 'Chatbot', href: '/chatbot', icon: MessageCircle, description: 'AI Assistant' },

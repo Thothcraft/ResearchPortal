@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import fs from 'fs';
 import path from 'path';
 
+const DATA_DIR = '/home/pi/Desktop/data';
+
 export async function GET(
   request: NextRequest,
   { params }: { params: { filename: string } }
@@ -9,13 +11,11 @@ export async function GET(
   try {
     const filename = decodeURIComponent(params.filename);
     
-    // Path to thoth/data directory (relative to ResearchPortal)
-    const dataDir = path.join(process.cwd(), '..', 'thoth', 'data');
-    const filePath = path.join(dataDir, filename);
+    const filePath = path.join(DATA_DIR, filename);
     
     // Security check - ensure the file is within the data directory
     const resolvedPath = path.resolve(filePath);
-    const resolvedDataDir = path.resolve(dataDir);
+    const resolvedDataDir = path.resolve(DATA_DIR);
     
     if (!resolvedPath.startsWith(resolvedDataDir)) {
       return NextResponse.json(
