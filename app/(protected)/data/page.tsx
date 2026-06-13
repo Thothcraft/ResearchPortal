@@ -68,23 +68,89 @@ function formatStamp(value?: string | null): string {
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
 }
 
-function parseCsiAverageSeries(text: string, limit = 180): number[] {
-  const series: number[] = [];
-  for (const line of text.split('\n')) {
-    if (!line.trim()) continue;
-    try {
-      const row = JSON.parse(line);
-      const raw = String(row.line || row.raw || '');
-      if (!raw.startsWith('CSI_DATA,')) continue;
-      const values = raw.split(',').slice(3).map((value) => Number(value)).filter((value) => Number.isFinite(value));
-      if (!values.length) continue;
-      const mean = values.reduce((sum, value) => sum + Math.abs(value), 0) / values.length;
-      series.push(mean);
-    } catch {
+function splitCsvLine(line: string): string[] {
+  const cells: string[] = [];
+  let current = '';
+  let inQuotes = false;
+
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index];
+    if (char === '"') {
+      if (inQuotes && line[index + 1] === '"') {
+        current += '"';
+        index += 1;
+      } else {
+        inQuotes = !inQuotes;
+      }
       continue;
     }
+    if (char === ',' && !inQuotes) {
+      cells.push(current);
+      current = '';
+      continue;
+    }
+    current += char;
+  }
+
+  cells.push(current);
+  return cells;
+}
+
+function parseCsiAverageSeries(text: string, limit = 180): number[] {
+  const series: number[] = [];
+  const lines = text.split('\n').map((line) => line.trim()).filter(Boolean);
+  if (!lines.length) return series;
+
+  const firstLine = lines[0];
+  if (firstLine.startsWith('{')) {
+    for (const line of lines) {
+      try {
+        const row = JSON.parse(line);
+        const raw = String(row.line || row.raw || row.raw_csi_line || '');
+        if (!raw.startsWith('CSI_DATA,')) continue;
+        const rawCells = splitCsvLine(raw);
+        const values = parseCsiValues(rawCells[rawCells.length - 1]);
+        if (values) series.push(values);
+      } catch {
+        continue;
+      }
+    }
+    return series.slice(-limit);
+  }
+
+  const header = splitCsvLine(lines[0]);
+  const dataIndex = header.indexOf('data');
+  if (dataIndex < 0) return series;
+
+  for (const line of lines.slice(1)) {
+    if (!line.startsWith('CSI_DATA,')) continue;
+    const row = splitCsvLine(line);
+    const dataCell = row[dataIndex];
+    const mean = parseCsiValues(dataCell);
+    if (mean !== null) series.push(mean);
   }
   return series.slice(-limit);
+}
+
+function parseCsiValues(cell: string | undefined): number | null {
+  if (!cell) return null;
+  const cleaned = cell.trim().replace(/^\[/, '').replace(/\]$/, '');
+  if (!cleaned) return null;
+
+  const values = cleaned
+    .split(',')
+    .map((value) => Number(value))
+    .filter((value) => Number.isFinite(value));
+  if (values.length < 2) return null;
+
+  const magnitudes: number[] = [];
+  for (let index = 0; index + 1 < values.length; index += 2) {
+    const imag = values[index];
+    const real = values[index + 1];
+    magnitudes.push(Math.sqrt((real * real) + (imag * imag)));
+  }
+  if (!magnitudes.length) return null;
+  return magnitudes.reduce((sum, value) => sum + value, 0) / magnitudes.length;
 }
 
 function CsiChart({ points }: { points: number[] }) {
@@ -199,8 +265,14 @@ export default function DataPage() {
       const minuteDetail = payload.minute as MinuteDetail;
       setDetail(minuteDetail);
 
-      if (minuteDetail.files.csi && minuteDetail.filePaths.csi_serial) {
-        const csiResponse = await fetch(`/api/data/minutes/${minute}/file/csi_serial`, { cache: 'no-store' });
+      const csiPath = minuteDetail.filePaths.csi_csv || minuteDetail.filePaths.csi_timestamped || minuteDetail.filePaths.csi_serial;
+      if (minuteDetail.files.csi && csiPath) {
+        const csiKind = minuteDetail.filePaths.csi_csv
+          ? 'csi_csv'
+          : minuteDetail.filePaths.csi_timestamped
+            ? 'csi_timestamped'
+            : 'csi_serial';
+        const csiResponse = await fetch(`/api/data/minutes/${minute}/file/${csiKind}`, { cache: 'no-store' });
         const csiText = await csiResponse.text();
         if (csiResponse.ok) {
           setCsiSeries(parseCsiAverageSeries(csiText));

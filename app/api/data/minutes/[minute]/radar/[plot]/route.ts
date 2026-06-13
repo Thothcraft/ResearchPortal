@@ -9,6 +9,8 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 const PLOT_KINDS = new Set(['range-doppler', 'azimuth-range', 'azimuth-doppler']);
+const VENV_PYTHON = '/home/pi/thoth/venv/bin/python';
+const PYTHON = process.env.THOTH_PYTHON || (fs.existsSync(VENV_PYTHON) ? VENV_PYTHON : 'python3');
 
 export async function GET(
   request: NextRequest,
@@ -43,7 +45,7 @@ export async function GET(
 
     if (!outExists || outMtime < radarMtime || outMtime < scriptMtime) {
       fs.mkdirSync(cacheDir, { recursive: true });
-      execFileSync('python3', [scriptPath, radarPath, plot, outPath], {
+      execFileSync(PYTHON, [scriptPath, radarPath, plot, outPath], {
         stdio: 'pipe',
       });
     }
