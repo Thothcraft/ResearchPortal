@@ -1,1452 +1,565 @@
 'use client';
 
-import { useState, useEffect, useMemo, useCallback } from 'react';
-import { useCachedApi, useCachedData, clearCache } from '@/hooks/useCachedApi';
-import { useToast, parseApiError } from '@/contexts/ToastContext';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  detectFileType,
-  isValidDataFile,
-  extractDateFromFilename,
-  getFileTypeDisplayInfo,
-  formatFileSize,
-  DataFileType,
-} from '@/utils/fileDetection';
-import { FileListSkeleton, StatCardsSkeleton } from '@/components/LoadingSkeleton';
-import FolderUploadModal from '@/components/FolderUploadModal';
-import {
-  Database,
-  FileText,
-  Film,
-  Image,
-  Activity,
-  Wifi,
-  Radio,
+  CalendarDays,
+  ChevronDown,
+  ChevronUp,
+  Clock3,
   Download,
+  HardDrive,
+  Radar,
   RefreshCw,
   Search,
-  Calendar,
-  HardDrive,
-  Cloud,
-  CloudOff,
-  Loader2,
-  Server,
-  Upload,
-  Trash2,
-  Folder,
-  FolderOpen,
-  FolderPlus,
-  FolderUp,
-  Eye,
-  X,
-  ChevronLeft,
-  ChevronRight,
-  Filter,
-  SortAsc,
-  SortDesc,
-  Music,
-  MoreVertical,
-  Plus,
-  ArrowLeft,
-  Tag,
-  Tags,
+  TriangleAlert,
+  Video,
+  Wifi,
 } from 'lucide-react';
 
-// Constants
-const PAGE_SIZE = 20;
-const CACHE_TTL = 60000; // 1 minute
-
-type Device = {
-  id: string;
-  name: string;
-  status: 'online' | 'offline';
-  ip_address?: string;
-};
-
-type DataFolder = {
-  id: number;
-  name: string;
-  parent_id: number | null;
+type MinuteSummary = {
+  minute: string;
   path: string;
-  created_at: string;
-  updated_at: string;
-  file_count: number;
-  subfolder_count: number;
-  size_bytes: number;
-  description?: string;
+  modified: string;
+  created: string;
+  completed: boolean;
+  state: 'ready' | 'collecting';
+  files: {
+    video: boolean;
+    radar: boolean;
+    csi: boolean;
+    manifest: boolean;
+  };
+  sizes: Record<string, number>;
+  manifest?: any;
 };
 
-type DataFile = {
-  id?: number;
-  name: string;
-  type: DataFileType | 'other';
-  size: number;
-  timestamp: string;
-  extension: string;
-  deviceId: string;
-  deviceName: string;
-  deviceOnline: boolean;
-  onCloud: boolean;
-  cloudFileId?: number;
-  isValid: boolean;
-  folderId?: number;
-  labels?: string[];
+type MinuteDetail = MinuteSummary & {
+  filePaths: Record<string, string | null>;
+  previews: Record<string, string>;
 };
 
-const FILE_TYPE_ICONS: Record<DataFileType | 'other', typeof Database> = {
-  image: Image,
-  audio: Music,
-  csi: Wifi,
-  video: Film,
-  fmcw: Radio,
-  other: FileText,
-};
+const RADAR_PLOTS = [
+  { key: 'range-doppler', label: 'Range-Doppler', description: 'Energy across range and velocity bins.' },
+  { key: 'azimuth-range', label: 'Azimuth-Range', description: 'Angular spread across range bins.' },
+  { key: 'azimuth-doppler', label: 'Azimuth-Doppler', description: 'Motion-aware angle view.' },
+] as const;
 
-const ALLOWED_EXTENSIONS = new Set([
-  'jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'tiff', 'heic',
-  'wav', 'mp3', 'm4a', 'flac', 'ogg', 'aac',
-  'csv',
-  'mp4', 'avi', 'mov', 'mkv', 'webm', 'm4v',
-  'bin', 'dat', 'npy',
-]);
+function humanBytes(bytes: number): string {
+  if (!bytes) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB'];
+  let value = bytes;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  return `${value.toFixed(value >= 10 || unit === 0 ? 0 : 1)} ${units[unit]}`;
+}
 
-const TYPE_ACCEPT_STRING =
-  'image/jpeg,image/png,image/gif,image/bmp,image/webp,image/tiff,image/heic,' +
-  'audio/wav,audio/mpeg,audio/mp4,audio/flac,audio/ogg,audio/aac,' +
-  'video/mp4,video/x-msvideo,video/quicktime,video/x-matroska,video/webm,' +
-  '.csv,.bin,.dat,.npy';
+function formatStamp(value?: string | null): string {
+  if (!value) return 'N/A';
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+}
+
+function parseCsiAverageSeries(text: string, limit = 180): number[] {
+  const series: number[] = [];
+  for (const line of text.split('\n')) {
+    if (!line.trim()) continue;
+    try {
+      const row = JSON.parse(line);
+      const raw = String(row.line || row.raw || '');
+      if (!raw.startsWith('CSI_DATA,')) continue;
+      const parts = raw.split(',');
+      const values = parts.slice(3).map((value) => Number(value)).filter((value) => Number.isFinite(value));
+      if (!values.length) continue;
+      const mean = values.reduce((sum, value) => sum + Math.abs(value), 0) / values.length;
+      series.push(mean);
+    } catch {
+      continue;
+    }
+  }
+  return series.slice(-limit);
+}
+
+function CsiChart({ points }: { points: number[] }) {
+  const width = 960;
+  const height = 220;
+  const padding = 18;
+
+  if (!points.length) {
+    return (
+      <div className="flex h-[220px] items-center justify-center rounded-xl border border-slate-200 bg-slate-50 text-sm text-slate-500">
+        CSI graph will appear here when the ESP32 serial log is available.
+      </div>
+    );
+  }
+
+  const min = Math.min(...points);
+  const max = Math.max(...points);
+  const span = max - min || 1;
+  const step = points.length > 1 ? (width - padding * 2) / (points.length - 1) : 0;
+
+  const polyline = points
+    .map((value, index) => {
+      const x = padding + index * step;
+      const y = height - padding - ((value - min) / span) * (height - padding * 2);
+      return `${x},${y}`;
+    })
+    .join(' ');
+
+  const gridLines = [0.25, 0.5, 0.75].map((ratio) => {
+    const y = padding + ratio * (height - padding * 2);
+    return <line key={ratio} x1={padding} x2={width - padding} y1={y} y2={y} stroke="rgba(148,163,184,0.18)" strokeDasharray="4 6" />;
+  });
+
+  return (
+    <div className="rounded-xl border border-slate-200 bg-slate-950/95 p-4 text-white">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <div>
+          <div className="text-sm font-medium text-slate-100">Average subcarrier amplitude</div>
+          <div className="text-xs text-slate-400">{points.length} packets rendered from the minute&apos;s CSI log</div>
+        </div>
+        <div className="text-right text-xs text-slate-400">
+          <div>min {min.toFixed(1)}</div>
+          <div>max {max.toFixed(1)}</div>
+        </div>
+      </div>
+      <svg viewBox={`0 0 ${width} ${height}`} className="h-[220px] w-full">
+        <rect x="0" y="0" width={width} height={height} rx="16" fill="rgba(15,23,42,0.96)" />
+        {gridLines}
+        <polyline fill="none" stroke="#60a5fa" strokeWidth="2.5" points={polyline} />
+        {points.slice(-1).map((value, index) => {
+          const x = padding + (points.length > 1 ? (points.length - 1) * step : 0);
+          const y = height - padding - ((value - min) / span) * (height - padding * 2);
+          return <circle key={index} cx={x} cy={y} r="4" fill="#93c5fd" />;
+        })}
+      </svg>
+    </div>
+  );
+}
+
+function FileBadge({ label, ok }: { label: string; ok: boolean }) {
+  return (
+    <span
+      className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium ${
+        ok ? 'bg-emerald-500/10 text-emerald-700' : 'bg-slate-100 text-slate-400'
+      }`}
+    >
+      <span className={`h-1.5 w-1.5 rounded-full ${ok ? 'bg-emerald-500' : 'bg-slate-400'}`} />
+      {label}
+    </span>
+  );
+}
 
 export default function DataPage() {
-  // Pagination state
-  const [currentPage, setCurrentPage] = useState(1);
-  const [sortBy, setSortBy] = useState<'name' | 'date' | 'size' | 'type'>('date');
-  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
-  
-  // Filter state
-  const [searchQuery, setSearchQuery] = useState('');
-  const [filterType, setFilterType] = useState<DataFileType | 'other' | 'all'>('all');
-  const [showValidOnly, setShowValidOnly] = useState(true);
-  
-  // UI state
-  const [previewFile, setPreviewFile] = useState<DataFile | null>(null);
-  const [previewContent, setPreviewContent] = useState<string | null>(null);
-  const [isLoadingPreview, setIsLoadingPreview] = useState(false);
-  
-  // Upload state
-  const [showUploadModal, setShowUploadModal] = useState(false);
-  const [uploadFiles, setUploadFiles] = useState<File[]>([]);
-  const [uploadLabel, setUploadLabel] = useState('');
-  const [isUploading, setIsUploading] = useState(false);
-  const [uploadError, setUploadError] = useState<string | null>(null);
-  const [uploadProgressMap, setUploadProgressMap] = useState<Record<string, 'pending' | 'uploading' | 'done' | 'error'>>({});
-  
-  // Folder state
-  const [showFolderUploadModal, setShowFolderUploadModal] = useState(false);
-  const [folders, setFolders] = useState<DataFolder[]>([]);
-  const [allFolders, setAllFolders] = useState<DataFolder[]>([]);  // For folder name lookups
-  const [currentFolderId, setCurrentFolderId] = useState<number | null>(null);
-  const [foldersLoading, setFoldersLoading] = useState(false);
-  const [showCreateFolderModal, setShowCreateFolderModal] = useState(false);
-  const [newFolderName, setNewFolderName] = useState('');
-  const [deletingFolderId, setDeletingFolderId] = useState<number | null>(null);
-  
-  // Label management state
-  const [showLabelModal, setShowLabelModal] = useState(false);
-  const [labelFile, setLabelFile] = useState<DataFile | null>(null);
-  const [fileLabels, setFileLabels] = useState<string[]>([]);
-  const [newLabel, setNewLabel] = useState('');
-  const [isLoadingLabels, setIsLoadingLabels] = useState(false);
-  const [isSavingLabels, setIsSavingLabels] = useState(false);
-  
-  const { get, post } = useCachedApi();
-  const toast = useToast();
+  const [minutes, setMinutes] = useState<MinuteSummary[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [query, setQuery] = useState('');
+  const [selectedMinute, setSelectedMinute] = useState<string | null>(null);
+  const [detail, setDetail] = useState<MinuteDetail | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [csiSeries, setCsiSeries] = useState<number[]>([]);
+  const [csiLoading, setCsiLoading] = useState(false);
 
-  // Fetch devices with caching
-  const { 
-    data: devicesData, 
-    isLoading: devicesLoading,
-    refetch: refetchDevices 
-  } = useCachedData<{ devices: any[] }>('/device/list?include_offline=true', {
-    cacheTTL: CACHE_TTL,
-    refreshInterval: 30000, // Refresh every 30s
-  });
+  const loadMinutes = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await fetch('/api/data/minutes', { cache: 'no-store' });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload?.error || 'Failed to load minute folders');
+      }
 
-  // Fetch cloud files with caching
-  const {
-    data: cloudFilesData,
-    isLoading: cloudFilesLoading,
-    refetch: refetchCloudFiles
-  } = useCachedData<{ files: any[] }>('/file/files?limit=200', {
-    cacheTTL: CACHE_TTL,
-  });
-
-  // Process devices
-  const devices = useMemo(() => {
-    if (!devicesData?.devices) return [];
-    return devicesData.devices.map((d: any) => ({
-      id: d.device_uuid || d.device_id,
-      name: d.device_name || d.name,
-      status: d.online ? 'online' : 'offline',
-      ip_address: d.ip_address,
-    }));
-  }, [devicesData]);
-
-  // Fetch device files (only for online devices to reduce load)
-  const [deviceFiles, setDeviceFiles] = useState<DataFile[]>([]);
-  const [deviceFilesLoading, setDeviceFilesLoading] = useState(false);
-
-  const fetchDeviceFiles = useCallback(async () => {
-    if (devices.length === 0) return;
-    
-    setDeviceFilesLoading(true);
-    const allFiles: DataFile[] = [];
-    
-    // Only fetch from online devices for performance
-    const onlineDevices = devices.filter(d => d.status === 'online');
-    
-    await Promise.all(
-      onlineDevices.map(async (device) => {
-        try {
-          const data = await get(`/device/${device.id}/files`, { cacheTTL: CACHE_TTL });
-          if (data?.files) {
-            data.files.forEach((f: any) => {
-              const type = detectFileType(f.filename);
-              const isValid = isValidDataFile(f.filename);
-              const timestamp = extractDateFromFilename(f.filename) || '';
-              
-              allFiles.push({
-                id: f.id,
-                name: f.filename,
-                type,
-                size: f.size || 0,
-                timestamp,
-                extension: f.filename.split('.').pop() || '',
-                deviceId: device.id,
-                deviceName: device.name,
-                deviceOnline: true,
-                onCloud: f.on_cloud || false,
-                cloudFileId: f.cloud_file_id,
-                isValid,
-              });
-            });
-          }
-        } catch (e) {
-          console.log(`Could not fetch files for device ${device.id}`);
+      const list = Array.isArray(payload.minutes) ? payload.minutes : [];
+      setMinutes(list);
+      setSelectedMinute((current) => {
+        if (current && list.some((minute: MinuteSummary) => minute.minute === current)) {
+          return current;
         }
-      })
-    );
-    
-    setDeviceFiles(allFiles);
-    setDeviceFilesLoading(false);
-  }, [devices, get]);
-
-  // Fetch device files when devices change
-  useEffect(() => {
-    if (devices.length > 0) {
-      fetchDeviceFiles();
-    }
-  }, [devices.length, fetchDeviceFiles]);
-
-  // Fetch folders
-  const fetchFolders = useCallback(async () => {
-    setFoldersLoading(true);
-    try {
-      const token = localStorage.getItem('auth_token');
-      const apiUrl = '/api/proxy';
-      
-      const parentParam = currentFolderId ? `?parent_id=${currentFolderId}` : '?parent_id=-1';
-      const response = await fetch(`${apiUrl}/folders/${parentParam}`, {
-        headers: { 'Authorization': `Bearer ${token}` }
+        return list[0]?.minute || null;
       });
-      
-      if (response.ok) {
-        const data = await response.json();
-        setFolders(data || []);
-      } else {
-        setFolders([]);
-      }
-    } catch (error) {
-      console.error('Error fetching folders:', error);
-      setFolders([]);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load minute folders');
     } finally {
-      setFoldersLoading(false);
-    }
-  }, [currentFolderId]);
-
-  // Fetch folders on mount and when currentFolderId changes
-  useEffect(() => {
-    fetchFolders();
-  }, [fetchFolders]);
-
-  // Fetch all folders for name lookups
-  const fetchAllFolders = useCallback(async () => {
-    try {
-      const token = localStorage.getItem('auth_token');
-      const apiUrl = '/api/proxy';
-      
-      const response = await fetch(`${apiUrl}/folders/?all=true`, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      
-      if (response.ok) {
-        const data = await response.json();
-        setAllFolders(data || []);
-      }
-    } catch (error) {
-      console.error('Error fetching all folders:', error);
+      setLoading(false);
     }
   }, []);
 
-  // Fetch all folders on mount
-  useEffect(() => {
-    fetchAllFolders();
-  }, [fetchAllFolders]);
-
-  // Create folder handler
-  const handleCreateFolder = async () => {
-    if (!newFolderName.trim()) return;
-    
+  const loadMinuteDetail = useCallback(async (minute: string) => {
+    setDetailLoading(true);
+    setDetail(null);
+    setCsiSeries([]);
     try {
-      const token = localStorage.getItem('auth_token');
-      const apiUrl = '/api/proxy';
-      
-      const response = await fetch(`${apiUrl}/folders/`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          name: newFolderName.trim(),
-          parent_id: currentFolderId,
-        }),
-      });
-      
-      if (response.ok) {
-        toast.success('Folder Created', `Folder "${newFolderName}" created successfully`);
-        setNewFolderName('');
-        setShowCreateFolderModal(false);
-        fetchFolders();
-        fetchAllFolders();
-      } else {
-        const error = await response.json().catch(() => ({}));
-        toast.error('Error', error.detail || 'Failed to create folder');
+      const response = await fetch(`/api/data/minutes/${minute}`, { cache: 'no-store' });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload?.error || 'Failed to load minute details');
       }
-    } catch (error) {
-      toast.error('Error', 'Failed to create folder');
-    }
-  };
 
-  // Folder upload complete handler
-  const handleFolderUploadComplete = (folderId: number, folderName: string) => {
-    toast.success('Upload Complete', `Folder "${folderName}" uploaded successfully`);
-    setShowFolderUploadModal(false);
-    fetchFolders();
-    fetchAllFolders();
-    clearCache('/file');
-    refetchCloudFiles();
-  };
+      const minuteDetail = payload.minute as MinuteDetail;
+      setDetail(minuteDetail);
 
-  // Delete folder handler
-  const handleDeleteFolder = async (folder: DataFolder, force: boolean = false) => {
-    if (!force && (folder.file_count > 0 || folder.subfolder_count > 0)) {
-      const confirmMsg = `Folder "${folder.name}" contains ${folder.file_count} files and ${folder.subfolder_count} subfolders. Delete anyway? (Files will be moved to root)`;
-      if (!confirm(confirmMsg)) return;
-      force = true;
-    } else if (!force) {
-      if (!confirm(`Delete folder "${folder.name}"?`)) return;
-    }
-    
-    setDeletingFolderId(folder.id);
-    try {
-      const token = localStorage.getItem('auth_token');
-      const apiUrl = '/api/proxy';
-      
-      const response = await fetch(`${apiUrl}/folders/${folder.id}?force=${force}`, {
-        method: 'DELETE',
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      
-      if (response.ok) {
-        toast.success('Folder Deleted', `"${folder.name}" has been deleted`);
-        fetchFolders();
-        fetchAllFolders();
-      } else {
-        const error = await response.json().catch(() => ({}));
-        toast.error('Delete Failed', error.detail || 'Failed to delete folder');
-      }
-    } catch (error) {
-      toast.error('Error', 'Failed to delete folder');
-    } finally {
-      setDeletingFolderId(null);
-    }
-  };
-
-  // Label management handlers
-  const handleOpenLabelModal = async (file: DataFile) => {
-    if (!file.cloudFileId) {
-      toast.warning('Not Available', 'File must be on cloud to manage labels');
-      return;
-    }
-    
-    setLabelFile(file);
-    setShowLabelModal(true);
-    setIsLoadingLabels(true);
-    setFileLabels([]);
-    setNewLabel('');
-    
-    try {
-      const token = localStorage.getItem('auth_token');
-      const apiUrl = '/api/proxy';
-      
-      const response = await fetch(`${apiUrl}/file/${file.cloudFileId}/metadata`, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      
-      if (response.ok) {
-        const data = await response.json();
-        setFileLabels(data.labels || []);
-      }
-    } catch (error) {
-      console.error('Error fetching labels:', error);
-    } finally {
-      setIsLoadingLabels(false);
-    }
-  };
-
-  const handleAddLabel = () => {
-    const label = newLabel.trim();
-    if (!label) return;
-    if (fileLabels.includes(label)) {
-      toast.warning('Duplicate', 'This label already exists');
-      return;
-    }
-    setFileLabels([...fileLabels, label]);
-    setNewLabel('');
-  };
-
-  const handleRemoveLabel = (label: string) => {
-    setFileLabels(fileLabels.filter(l => l !== label));
-  };
-
-  const handleSaveLabels = async () => {
-    if (!labelFile?.cloudFileId) return;
-    
-    setIsSavingLabels(true);
-    try {
-      const token = localStorage.getItem('auth_token');
-      const apiUrl = '/api/proxy';
-      
-      const response = await fetch(`${apiUrl}/file/${labelFile.cloudFileId}/metadata`, {
-        method: 'PUT',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          labels: fileLabels,
-          primary_label: fileLabels[0] || '',
-        }),
-      });
-      
-      if (response.ok) {
-        toast.success('Labels Saved', 'File labels updated successfully');
-        setShowLabelModal(false);
-        setLabelFile(null);
-        clearCache('/file');
-        refetchCloudFiles();
-      } else {
-        const error = await response.json().catch(() => ({}));
-        toast.error('Save Failed', error.detail || 'Failed to save labels');
-      }
-    } catch (error) {
-      toast.error('Error', 'Failed to save labels');
-    } finally {
-      setIsSavingLabels(false);
-    }
-  };
-
-  // Process cloud files
-  const cloudFiles = useMemo(() => {
-    if (!cloudFilesData?.files) return [];
-    
-    const seenIds = new Set(deviceFiles.map(f => f.cloudFileId).filter(Boolean));
-    
-    return cloudFilesData.files
-      .filter((f: any) => !seenIds.has(f.file_id))
-      .map((f: any) => {
-        const type = detectFileType(f.filename);
-        const isValid = isValidDataFile(f.filename);
-        const timestamp = extractDateFromFilename(f.filename) || f.uploaded_at?.split('T')[0] || '';
-        
-        return {
-          id: undefined,
-          name: f.filename,
-          type,
-          size: f.size || 0,
-          timestamp,
-          extension: f.filename.split('.').pop() || '',
-          deviceId: 'cloud',
-          deviceName: 'Cloud Upload',
-          deviceOnline: true,
-          onCloud: true,
-          cloudFileId: f.file_id,
-          isValid,
-          folderId: f.folder_id,
-          labels: f.labels || [],
-        } as DataFile;
-      });
-  }, [cloudFilesData, deviceFiles]);
-
-  // Combine all files
-  const allFiles = useMemo(() => {
-    return [...deviceFiles, ...cloudFiles];
-  }, [deviceFiles, cloudFiles]);
-
-  // Filter and sort files
-  const filteredFiles = useMemo(() => {
-    let result = allFiles;
-    
-    // Filter by validity
-    if (showValidOnly) {
-      result = result.filter(f => f.isValid);
-    }
-    
-    // Filter by search
-    if (searchQuery) {
-      const query = searchQuery.toLowerCase();
-      result = result.filter(f => 
-        f.name.toLowerCase().includes(query) ||
-        f.deviceName.toLowerCase().includes(query)
-      );
-    }
-    
-    // Filter by type
-    if (filterType !== 'all') {
-      result = result.filter(f => f.type === filterType);
-    }
-    
-    // Sort
-    result.sort((a, b) => {
-      let cmp = 0;
-      switch (sortBy) {
-        case 'name':
-          cmp = a.name.localeCompare(b.name);
-          break;
-        case 'date':
-          cmp = (a.timestamp || '').localeCompare(b.timestamp || '');
-          break;
-        case 'size':
-          cmp = a.size - b.size;
-          break;
-        case 'type':
-          cmp = a.type.localeCompare(b.type);
-          break;
-      }
-      return sortOrder === 'asc' ? cmp : -cmp;
-    });
-    
-    return result;
-  }, [allFiles, searchQuery, filterType, showValidOnly, sortBy, sortOrder]);
-
-  // Paginate
-  const paginatedFiles = useMemo(() => {
-    const start = (currentPage - 1) * PAGE_SIZE;
-    return filteredFiles.slice(start, start + PAGE_SIZE);
-  }, [filteredFiles, currentPage]);
-
-  const totalPages = Math.ceil(filteredFiles.length / PAGE_SIZE);
-
-  // File type counts
-  const typeCounts = useMemo(() => {
-    const counts: Record<string, number> = { all: allFiles.length };
-    allFiles.forEach(f => {
-      counts[f.type] = (counts[f.type] || 0) + 1;
-    });
-    return counts;
-  }, [allFiles]);
-
-  // Handlers
-  const handleRefresh = async () => {
-    clearCache('/device');
-    clearCache('/file');
-    await Promise.all([refetchDevices(), refetchCloudFiles()]);
-    await fetchDeviceFiles();
-  };
-
-  const handlePreview = async (file: DataFile) => {
-    if (!file.onCloud || !file.cloudFileId) {
-      toast.warning('Not Available', 'File must be uploaded to cloud for preview');
-      return;
-    }
-    
-    setPreviewFile(file);
-    setPreviewContent(null);
-    setIsLoadingPreview(true);
-    
-    try {
-      const token = localStorage.getItem('auth_token');
-      const apiUrl = '/api/proxy';
-      const fileUrl = `${apiUrl}/file/${file.cloudFileId}?download=false`;
-      
-      const response = await fetch(fileUrl, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      
-      if (!response.ok) throw new Error('Failed to load file');
-      
-      if (['image', 'video', 'audio'].includes(file.type)) {
-        const blob = await response.blob();
-        setPreviewContent(URL.createObjectURL(blob));
-      } else {
-        const text = await response.text();
-        setPreviewContent(text.substring(0, 5000) + (text.length > 5000 ? '\n\n... (truncated)' : ''));
-      }
-    } catch (err) {
-      setPreviewContent('Failed to load preview');
-    } finally {
-      setIsLoadingPreview(false);
-    }
-  };
-
-  const handleDelete = async (file: DataFile) => {
-    if (!file.cloudFileId) return;
-    if (!confirm(`Delete "${file.name}" from cloud?`)) return;
-    
-    try {
-      const token = localStorage.getItem('auth_token');
-      const apiUrl = '/api/proxy';
-      
-      const response = await fetch(`${apiUrl}/file/${file.cloudFileId}`, {
-        method: 'DELETE',
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      
-      if (!response.ok) throw new Error('Delete failed');
-      
-      toast.success('Deleted', `"${file.name}" removed from cloud`);
-      clearCache('/file');
-      refetchCloudFiles();
-    } catch (err) {
-      toast.error('Delete Failed', err instanceof Error ? err.message : 'Unknown error');
-    }
-  };
-
-  const handleDownload = async (file: DataFile) => {
-    if (!file.cloudFileId) {
-      toast.warning('Not Available', 'File must be on cloud to download');
-      return;
-    }
-    
-    try {
-      const token = localStorage.getItem('auth_token');
-      const apiUrl = '/api/proxy';
-      
-      const response = await fetch(`${apiUrl}/file/${file.cloudFileId}?download=true`, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      
-      if (!response.ok) throw new Error('Download failed');
-      
-      const blob = await response.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = file.name;
-      a.click();
-      URL.revokeObjectURL(url);
-    } catch (err) {
-      toast.error('Download Failed', err instanceof Error ? err.message : 'Unknown error');
-    }
-  };
-
-  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files || []);
-    if (files.length === 0) return;
-    const invalid = files.filter(f => !ALLOWED_EXTENSIONS.has(f.name.split('.').pop()?.toLowerCase() || ''));
-    if (invalid.length > 0) {
-      setUploadError(`Unsupported file type(s): ${invalid.map(f => f.name).join(', ')}`);
-      e.target.value = '';
-      return;
-    }
-    setUploadFiles(files);
-    setUploadProgressMap(Object.fromEntries(files.map(f => [f.name, 'pending' as const])));
-    setUploadError(null);
-  };
-
-  const handleUpload = async () => {
-    if (uploadFiles.length === 0) return;
-    
-    setIsUploading(true);
-    setUploadError(null);
-    
-    const token = localStorage.getItem('auth_token');
-    const apiUrl = '/api/proxy';
-    let failedCount = 0;
-    
-    for (const file of uploadFiles) {
-      setUploadProgressMap(prev => ({ ...prev, [file.name]: 'uploading' }));
-      try {
-        const formData = new FormData();
-        formData.append('file', file);
-        const filenameWithoutExt = file.name.replace(/\.[^.]+$/, '');
-        const labels = uploadLabel.trim()
-          ? [filenameWithoutExt, uploadLabel.trim()]
-          : [filenameWithoutExt];
-        formData.append('labels', JSON.stringify(labels));
-        
-        const response = await fetch(`${apiUrl}/file/upload-multipart`, {
-          method: 'POST',
-          headers: { 'Authorization': `Bearer ${token}` },
-          body: formData,
-        });
-        
-        if (!response.ok) {
-          const errorData = await response.json().catch(() => ({}));
-          throw new Error(errorData.detail || `Upload failed: ${response.status}`);
+      if (minuteDetail.files.csi && minuteDetail.filePaths.csi_serial) {
+        setCsiLoading(true);
+        try {
+          const csiResponse = await fetch(`/api/data/minutes/${minute}/file/csi_serial`, { cache: 'no-store' });
+          const csiText = await csiResponse.text();
+          if (csiResponse.ok) {
+            setCsiSeries(parseCsiAverageSeries(csiText));
+          }
+        } finally {
+          setCsiLoading(false);
         }
-        
-        setUploadProgressMap(prev => ({ ...prev, [file.name]: 'done' }));
-      } catch (err) {
-        failedCount++;
-        const message = err instanceof Error ? err.message : 'Unknown error';
-        setUploadProgressMap(prev => ({ ...prev, [file.name]: 'error' }));
-        setUploadError(`"${file.name}": ${message}`);
       }
+    } catch (err) {
+      setDetail(null);
+    } finally {
+      setDetailLoading(false);
     }
-    
-    const successCount = uploadFiles.length - failedCount;
-    if (successCount > 0) {
-      toast.success('Upload Complete', `${successCount} file(s) uploaded successfully`);
-      clearCache('/file');
-      refetchCloudFiles();
-    }
-    if (failedCount === 0) {
-      setShowUploadModal(false);
-      setUploadFiles([]);
-      setUploadLabel('');
-      setUploadProgressMap({});
-    }
-    
-    setIsUploading(false);
-  };
+  }, []);
 
-  const resetUploadModal = () => {
-    setShowUploadModal(false);
-    setUploadFiles([]);
-    setUploadLabel('');
-    setUploadError(null);
-    setUploadProgressMap({});
-  };
+  useEffect(() => {
+    loadMinutes();
+    const timer = window.setInterval(loadMinutes, 15000);
+    return () => window.clearInterval(timer);
+  }, [loadMinutes]);
 
-  const isLoading = devicesLoading || cloudFilesLoading || deviceFilesLoading;
+  useEffect(() => {
+    if (selectedMinute) {
+      loadMinuteDetail(selectedMinute);
+    } else {
+      setDetail(null);
+      setCsiSeries([]);
+    }
+  }, [loadMinuteDetail, selectedMinute]);
+
+  const filteredMinutes = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return minutes;
+    return minutes.filter((minute) => {
+      return (
+        minute.minute.toLowerCase().includes(q) ||
+        (minute.state || '').toLowerCase().includes(q) ||
+        minute.files.video.toString().includes(q) ||
+        minute.files.radar.toString().includes(q) ||
+        minute.files.csi.toString().includes(q)
+      );
+    });
+  }, [minutes, query]);
+
+  const totals = useMemo(() => {
+    return {
+      total: minutes.length,
+      ready: minutes.filter((minute) => minute.completed).length,
+      collecting: minutes.filter((minute) => !minute.completed).length,
+    };
+  }, [minutes]);
+
+  const selectedSummary = useMemo(
+    () => minutes.find((minute) => minute.minute === selectedMinute) || null,
+    [minutes, selectedMinute]
+  );
 
   return (
-    <div className="p-8">
-      {/* Header */}
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h1 className="text-3xl font-bold text-white mb-2">Data Files</h1>
-          <p className="text-slate-400">
-            {filteredFiles.length} files • {folders.length} folders • {showValidOnly ? 'Valid format only' : 'All files'}
-          </p>
-        </div>
-        <div className="flex items-center gap-3">
-          <label className="flex items-center gap-2 text-sm text-slate-400">
-            <input
-              type="checkbox"
-              checked={showValidOnly}
-              onChange={(e) => setShowValidOnly(e.target.checked)}
-              className="rounded border-slate-600 bg-slate-700 text-indigo-500 focus:ring-indigo-500"
-            />
-            Valid format only
-          </label>
-          <button
-            onClick={() => setShowFolderUploadModal(true)}
-            className="flex items-center gap-2 px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg transition-colors"
-          >
-            <FolderUp className="w-4 h-4" />
-            Upload Folder
-          </button>
-          <button
-            onClick={() => setShowUploadModal(true)}
-            className="flex items-center gap-2 px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg transition-colors"
-          >
-            <Upload className="w-4 h-4" />
-            Upload File
-          </button>
-          <button
-            onClick={handleRefresh}
-            disabled={isLoading}
-            className="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg transition-colors disabled:opacity-50"
-          >
-            <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
-            Refresh
-          </button>
-        </div>
-      </div>
+    <div className="space-y-6">
+      <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+          <div className="max-w-3xl">
+            <div className="text-xs uppercase tracking-[0.22em] text-slate-500">Thoth minute browser</div>
+            <h1 className="mt-1 text-3xl font-semibold text-slate-950">Synchronized minute captures</h1>
+            <p className="mt-2 text-sm leading-6 text-slate-600">
+              Only timestamped folders from <code className="rounded bg-slate-100 px-1.5 py-0.5 text-slate-900">/home/pi/Desktop/data</code> are shown.
+              Each card expands to the synchronized camera, radar, and CSI views.
+            </p>
+          </div>
 
-      {/* Folders Section */}
-      <div className="mb-6">
-        <div className="flex items-center justify-between mb-4">
-          <div className="flex items-center gap-3">
-            <Folder className="w-5 h-5 text-yellow-400" />
-            <h2 className="text-lg font-semibold text-white">Folders</h2>
-            {currentFolderId && (
-              <button
-                onClick={() => setCurrentFolderId(null)}
-                className="flex items-center gap-1 ml-2 text-sm text-indigo-400 hover:text-indigo-300"
-              >
-                <ArrowLeft className="w-4 h-4" />
-                Back to root
-              </button>
-            )}
-          </div>
-          <button
-            onClick={() => setShowCreateFolderModal(true)}
-            className="flex items-center gap-2 px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-white rounded-lg text-sm transition-colors"
-          >
-            <FolderPlus className="w-4 h-4" />
-            New Folder
-          </button>
-        </div>
-        
-        {foldersLoading ? (
-          <div className="flex items-center justify-center py-8">
-            <Loader2 className="w-6 h-6 text-indigo-400 animate-spin" />
-          </div>
-        ) : folders.length > 0 ? (
-          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3 mb-4">
-            {folders.map(folder => (
-              <div
-                key={folder.id}
-                className="relative flex items-center gap-3 p-4 bg-slate-800/50 border border-slate-700 rounded-xl cursor-pointer hover:border-indigo-500/50 hover:bg-slate-800 transition-all group"
-              >
-                <div 
-                  className="flex items-center gap-3 flex-1 min-w-0"
-                  onClick={() => setCurrentFolderId(folder.id)}
-                >
-                  <FolderOpen className="w-10 h-10 text-yellow-400 group-hover:text-yellow-300 flex-shrink-0" />
-                  <div className="text-left min-w-0">
-                    <p className="text-white font-medium text-sm truncate">{folder.name}</p>
-                    <p className="text-slate-500 text-xs">{folder.file_count} files</p>
-                    <p className="text-slate-600 text-xs">{formatFileSize(folder.size_bytes)}</p>
-                  </div>
-                </div>
-                <button
-                  onClick={(e) => { e.stopPropagation(); handleDeleteFolder(folder); }}
-                  disabled={deletingFolderId === folder.id}
-                  className="absolute top-2 right-2 p-1.5 rounded-lg opacity-0 group-hover:opacity-100 hover:bg-red-500/20 text-slate-400 hover:text-red-400 transition-all disabled:opacity-50"
-                  title="Delete folder"
-                >
-                  {deletingFolderId === folder.id ? (
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                  ) : (
-                    <Trash2 className="w-4 h-4" />
-                  )}
-                </button>
-              </div>
-            ))}
-          </div>
-        ) : (
-          <div className="text-center py-6 bg-slate-800/30 rounded-xl border border-slate-700/50 mb-4">
-            <Folder className="w-10 h-10 text-slate-600 mx-auto mb-2" />
-            <p className="text-slate-500 text-sm">No folders yet</p>
+          <div className="flex flex-wrap gap-2">
             <button
-              onClick={() => setShowFolderUploadModal(true)}
-              className="mt-2 text-indigo-400 hover:text-indigo-300 text-sm"
+              type="button"
+              onClick={loadMinutes}
+              className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100"
             >
-              Upload a folder to get started
+              <RefreshCw className="h-4 w-4" />
+              Refresh
             </button>
-          </div>
-        )}
-      </div>
-
-      {/* Type Filters */}
-      <div className="grid grid-cols-3 md:grid-cols-5 lg:grid-cols-9 gap-3 mb-6">
-        <button
-          onClick={() => { setFilterType('all'); setCurrentPage(1); }}
-          className={`p-3 rounded-xl border transition-all ${
-            filterType === 'all'
-              ? 'bg-indigo-600 border-indigo-500 text-white'
-              : 'bg-slate-800/50 border-slate-700 text-slate-300 hover:border-slate-600'
-          }`}
-        >
-          <Database className="w-5 h-5 mx-auto mb-1" />
-          <div className="text-xs font-medium">All</div>
-          <div className="text-lg font-bold">{typeCounts.all || 0}</div>
-        </button>
-        {(['image', 'audio', 'csi', 'video', 'fmcw', 'other'] as (DataFileType | 'other')[]).map(type => {
-          const Icon = FILE_TYPE_ICONS[type];
-          const info = getFileTypeDisplayInfo(type);
-          return (
-            <button
-              key={type}
-              onClick={() => { setFilterType(type); setCurrentPage(1); }}
-              className={`p-3 rounded-xl border transition-all ${
-                filterType === type
-                  ? 'bg-indigo-600 border-indigo-500 text-white'
-                  : 'bg-slate-800/50 border-slate-700 text-slate-300 hover:border-slate-600'
+            <a
+              href={selectedMinute ? `/api/data/minutes/${selectedMinute}/download` : '#'}
+              className={`inline-flex items-center gap-2 rounded-xl px-3.5 py-2 text-sm font-medium ${
+                selectedMinute
+                  ? 'bg-indigo-600 text-white hover:bg-indigo-500'
+                  : 'pointer-events-none bg-slate-200 text-slate-500'
               }`}
             >
-              <Icon className={`w-5 h-5 mx-auto mb-1 ${filterType === type ? '' : info.color}`} />
-              <div className="text-xs font-medium">{info.label}</div>
-              <div className="text-lg font-bold">{typeCounts[type] || 0}</div>
-            </button>
-          );
-        })}
-      </div>
+              <Download className="h-4 w-4" />
+              Download selected
+            </a>
+          </div>
+        </div>
 
-      {/* Search and Sort */}
-      <div className="flex flex-col md:flex-row gap-4 mb-6">
-        <div className="relative flex-1">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-500" />
+        <div className="mt-5 grid gap-3 sm:grid-cols-3">
+          <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+            <div className="text-xs uppercase tracking-wide text-slate-500">Total folders</div>
+            <div className="mt-1 text-2xl font-semibold text-slate-950">{totals.total}</div>
+          </div>
+          <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+            <div className="text-xs uppercase tracking-wide text-slate-500">Ready</div>
+            <div className="mt-1 text-2xl font-semibold text-emerald-700">{totals.ready}</div>
+          </div>
+          <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+            <div className="text-xs uppercase tracking-wide text-slate-500">Collecting</div>
+            <div className="mt-1 text-2xl font-semibold text-amber-700">{totals.collecting}</div>
+          </div>
+        </div>
+
+        <div className="mt-5 flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-3">
+          <Search className="h-4 w-4 text-slate-400" />
           <input
-            type="text"
-            placeholder="Search files..."
-            value={searchQuery}
-            onChange={(e) => { setSearchQuery(e.target.value); setCurrentPage(1); }}
-            className="w-full pl-10 pr-4 py-3 bg-slate-800/50 border border-slate-700 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Search minute timestamp or state"
+            className="w-full bg-transparent text-sm text-slate-900 outline-none placeholder:text-slate-400"
           />
         </div>
-        <div className="flex gap-2">
-          <select
-            value={sortBy}
-            onChange={(e) => setSortBy(e.target.value as any)}
-            className="px-4 py-3 bg-slate-800/50 border border-slate-700 rounded-lg text-white focus:outline-none focus:border-indigo-500"
-          >
-            <option value="date">Sort by Date</option>
-            <option value="name">Sort by Name</option>
-            <option value="size">Sort by Size</option>
-            <option value="type">Sort by Type</option>
-          </select>
-          <button
-            onClick={() => setSortOrder(o => o === 'asc' ? 'desc' : 'asc')}
-            className="px-4 py-3 bg-slate-800/50 border border-slate-700 rounded-lg text-white hover:border-slate-600 transition-colors"
-          >
-            {sortOrder === 'asc' ? <SortAsc className="w-5 h-5" /> : <SortDesc className="w-5 h-5" />}
-          </button>
-        </div>
-      </div>
 
-      {/* Loading State */}
-      {isLoading && allFiles.length === 0 ? (
-        <FileListSkeleton count={8} />
-      ) : filteredFiles.length === 0 ? (
-        <div className="text-center py-12 bg-slate-800/50 rounded-xl border border-slate-700">
-          <Database className="w-12 h-12 text-slate-500 mx-auto mb-4" />
-          <p className="text-slate-400">No data files found</p>
-          <p className="text-slate-500 text-sm mt-1">
-            Upload files or folders to get started
-          </p>
-        </div>
-      ) : (
-        <>
-          {/* File List */}
-          <div className="space-y-3 mb-6">
-            {paginatedFiles.map((file, index) => {
-              const Icon = FILE_TYPE_ICONS[file.type];
-              const info = getFileTypeDisplayInfo(file.type);
-              
-              return (
-                <div
-                  key={`${file.name}-${file.deviceId}-${index}`}
-                  className="flex items-center gap-4 p-4 bg-slate-800/50 rounded-xl border border-slate-700 hover:border-slate-600 transition-all"
+        {error && (
+          <div className="mt-4 flex items-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+            <TriangleAlert className="h-4 w-4" />
+            {error}
+          </div>
+        )}
+      </section>
+
+      <section className="grid gap-4 lg:grid-cols-2 2xl:grid-cols-3">
+        {loading && minutes.length === 0 ? (
+          <div className="rounded-2xl border border-slate-200 bg-white p-8 text-sm text-slate-500">Loading minute folders...</div>
+        ) : (
+          filteredMinutes.map((minute) => {
+            const active = minute.minute === selectedMinute;
+            return (
+              <article
+                key={minute.minute}
+                className={`rounded-2xl border bg-white p-5 shadow-sm transition ${
+                  active ? 'border-indigo-300 ring-2 ring-indigo-100' : 'border-slate-200 hover:border-slate-300'
+                }`}
+              >
+                <button
+                  type="button"
+                  onClick={() => setSelectedMinute(minute.minute)}
+                  className="flex w-full items-start justify-between gap-4 text-left"
                 >
-                  <div className={`p-3 rounded-lg ${info.bgColor}`}>
-                    <Icon className={`w-6 h-6 ${info.color}`} />
-                  </div>
-                  
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <h3 className="text-white font-medium truncate" title={file.name}>
-                        {file.name}
-                      </h3>
-                      {file.folderId && (
-                        <span className="flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-yellow-500/10 text-yellow-400">
-                          <Folder className="w-3 h-3" />
-                          {allFolders.find(f => f.id === file.folderId)?.name || 'Folder'}
-                        </span>
-                      )}
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 text-xs uppercase tracking-[0.18em] text-slate-500">
+                      <CalendarDays className="h-4 w-4" />
+                      Minute folder
                     </div>
-                    <div className="flex items-center gap-4 text-sm text-slate-400 mt-1">
-                      <span className="flex items-center gap-1">
-                        <Server className="w-3 h-3" />
-                        {file.deviceName}
-                      </span>
-                      {file.timestamp && (
-                        <span className="flex items-center gap-1">
-                          <Calendar className="w-3 h-3" />
-                          {file.timestamp}
-                        </span>
-                      )}
-                      <span className="flex items-center gap-1">
-                        <HardDrive className="w-3 h-3" />
-                        {formatFileSize(file.size)}
-                      </span>
+                    <h2 className="mt-2 truncate text-xl font-semibold text-slate-950">{minute.minute}</h2>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      <FileBadge label="Video" ok={minute.files.video} />
+                      <FileBadge label="Radar" ok={minute.files.radar} />
+                      <FileBadge label="CSI" ok={minute.files.csi} />
                     </div>
-                    {file.labels && file.labels.length > 0 && (
-                      <div className="flex items-center gap-1 mt-1.5 flex-wrap">
-                        <Tag className="w-3 h-3 text-slate-500" />
-                        {file.labels.slice(0, 3).map((label, i) => (
-                          <span key={i} className="px-1.5 py-0.5 rounded text-xs bg-indigo-500/20 text-indigo-300">
-                            {label}
-                          </span>
-                        ))}
-                        {file.labels.length > 3 && (
-                          <span className="text-xs text-slate-500">+{file.labels.length - 3} more</span>
-                        )}
-                      </div>
-                    )}
                   </div>
-                  
-                  <div className="flex items-center gap-2">
-                    {file.onCloud ? (
-                      <span className="flex items-center gap-1 px-2 py-1 rounded text-xs font-medium bg-green-500/10 text-green-400">
-                        <Cloud className="w-3 h-3" />
-                        Cloud
-                      </span>
-                    ) : (
-                      <span className="flex items-center gap-1 px-2 py-1 rounded text-xs font-medium bg-slate-500/10 text-slate-400">
-                        <CloudOff className="w-3 h-3" />
-                        Local
-                      </span>
-                    )}
-                    
-                    {file.onCloud && (
-                      <>
-                        <button
-                          onClick={() => handlePreview(file)}
-                          className="p-2 rounded-lg hover:bg-slate-700 text-slate-400 hover:text-white transition-colors"
-                          title="Preview"
-                        >
-                          <Eye className="w-4 h-4" />
-                        </button>
-                        <button
-                          onClick={() => handleOpenLabelModal(file)}
-                          className="p-2 rounded-lg hover:bg-slate-700 text-slate-400 hover:text-indigo-400 transition-colors"
-                          title="Manage Labels"
-                        >
-                          <Tags className="w-4 h-4" />
-                        </button>
-                        <button
-                          onClick={() => handleDownload(file)}
-                          className="p-2 rounded-lg hover:bg-slate-700 text-slate-400 hover:text-white transition-colors"
-                          title="Download"
-                        >
-                          <Download className="w-4 h-4" />
-                        </button>
-                        <button
-                          onClick={() => handleDelete(file)}
-                          className="p-2 rounded-lg hover:bg-red-500/20 text-slate-400 hover:text-red-400 transition-colors"
-                          title="Delete"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </>
-                    )}
+                  <div className="flex flex-col items-end gap-2">
+                    <span
+                      className={`inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-medium ${
+                        minute.completed ? 'bg-emerald-500/10 text-emerald-700' : 'bg-amber-500/10 text-amber-700'
+                      }`}
+                    >
+                      <span className={`h-2 w-2 rounded-full ${minute.completed ? 'bg-emerald-500' : 'bg-amber-500'}`} />
+                      {minute.completed ? 'Ready' : 'Collecting'}
+                    </span>
+                    {active ? <ChevronUp className="h-5 w-5 text-slate-500" /> : <ChevronDown className="h-5 w-5 text-slate-500" />}
+                  </div>
+                </button>
+
+                <div className="mt-4 grid gap-3 text-sm text-slate-600 sm:grid-cols-2">
+                  <div className="rounded-xl bg-slate-50 p-3">
+                    <div className="text-xs uppercase tracking-wide text-slate-500">Updated</div>
+                    <div className="mt-1 flex items-center gap-2">
+                      <Clock3 className="h-4 w-4 text-slate-400" />
+                      <span>{formatStamp(minute.manifest?.capture_finished || minute.modified)}</span>
+                    </div>
+                  </div>
+                  <div className="rounded-xl bg-slate-50 p-3">
+                    <div className="text-xs uppercase tracking-wide text-slate-500">Size</div>
+                    <div className="mt-1 flex items-center gap-2">
+                      <HardDrive className="h-4 w-4 text-slate-400" />
+                      <span>{humanBytes((minute.sizes.video || 0) + (minute.sizes.radar || 0) + (minute.sizes.csi_timestamped || 0) + (minute.sizes.csi_serial || 0))}</span>
+                    </div>
                   </div>
                 </div>
-              );
-            })}
-          </div>
 
-          {/* Pagination */}
-          {totalPages > 1 && (
-            <div className="flex items-center justify-between">
-              <p className="text-slate-400 text-sm">
-                Showing {(currentPage - 1) * PAGE_SIZE + 1} - {Math.min(currentPage * PAGE_SIZE, filteredFiles.length)} of {filteredFiles.length}
-              </p>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-                  disabled={currentPage === 1}
-                  className="p-2 rounded-lg bg-slate-800 border border-slate-700 text-slate-400 hover:text-white disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                >
-                  <ChevronLeft className="w-5 h-5" />
-                </button>
-                <span className="px-4 py-2 text-white">
-                  Page {currentPage} of {totalPages}
-                </span>
-                <button
-                  onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
-                  disabled={currentPage === totalPages}
-                  className="p-2 rounded-lg bg-slate-800 border border-slate-700 text-slate-400 hover:text-white disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                >
-                  <ChevronRight className="w-5 h-5" />
-                </button>
-              </div>
-            </div>
-          )}
-        </>
-      )}
-
-      {/* Preview Modal */}
-      {previewFile && (
-        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
-          <div className="bg-slate-800 rounded-xl w-full max-w-4xl max-h-[90vh] overflow-hidden border border-slate-700">
-            <div className="flex items-center justify-between p-4 border-b border-slate-700">
-              <div className="flex items-center gap-3">
-                <Eye className="w-5 h-5 text-indigo-400" />
-                <h3 className="text-lg font-semibold text-white truncate">{previewFile.name}</h3>
-              </div>
-              <button
-                onClick={() => { setPreviewFile(null); setPreviewContent(null); }}
-                className="p-2 hover:bg-slate-700 rounded-lg transition-colors"
-              >
-                <X className="w-5 h-5 text-slate-400" />
-              </button>
-            </div>
-            <div className="p-4 overflow-auto max-h-[calc(90vh-80px)]">
-              {isLoadingPreview ? (
-                <div className="flex items-center justify-center py-12">
-                  <Loader2 className="w-8 h-8 text-indigo-400 animate-spin" />
-                </div>
-              ) : previewFile.type === 'image' && previewContent ? (
-                <img src={previewContent} alt={previewFile.name} className="max-w-full h-auto mx-auto rounded-lg" />
-              ) : ['video', 'timelapse'].includes(previewFile.type) && previewContent ? (
-                <video src={previewContent} controls className="max-w-full h-auto mx-auto rounded-lg" />
-              ) : previewFile.type === 'audio' && previewContent ? (
-                <div className="flex flex-col items-center py-8">
-                  <Music className="w-16 h-16 text-blue-400 mb-4" />
-                  <audio src={previewContent} controls className="w-full max-w-md" />
-                </div>
-              ) : (
-                <pre className="bg-slate-900 p-4 rounded-lg text-sm text-slate-300 overflow-x-auto whitespace-pre-wrap font-mono">
-                  {previewContent || 'No preview available'}
-                </pre>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Upload Modal */}
-      {showUploadModal && (
-        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
-          <div className="bg-slate-800 rounded-xl w-full max-w-lg overflow-hidden border border-slate-700">
-            <div className="flex items-center justify-between p-4 border-b border-slate-700">
-              <div className="flex items-center gap-3">
-                <Upload className="w-5 h-5 text-green-400" />
-                <h3 className="text-lg font-semibold text-white">Upload Data Files</h3>
-              </div>
-              <button
-                onClick={resetUploadModal}
-                className="p-2 hover:bg-slate-700 rounded-lg transition-colors"
-              >
-                <X className="w-5 h-5 text-slate-400" />
-              </button>
-            </div>
-            
-            <div className="p-6 space-y-6">
-              {/* File info guide */}
-              <div className="bg-slate-900/50 rounded-lg p-4 border border-slate-700">
-                <h4 className="text-sm font-medium text-slate-300 mb-2">Supported File Types</h4>
-                <div className="text-xs text-slate-500 space-y-1">
-                  <p><strong className="text-slate-400">CSV:</strong> .csv (CSI data, general data)</p>
-                  <p><strong className="text-slate-400">JSON:</strong> .json, .jsonl (IMU, sensor data)</p>
-                  <p><strong className="text-slate-400">Media:</strong> .jpg, .png, .mp4, .wav, etc.</p>
-                </div>
-                <p className="text-xs text-slate-400 mt-2">
-                  The filename (without extension) will be used as the file's label.
-                </p>
-              </div>
-
-              {/* File input */}
-              <div>
-                <label className="block text-sm font-medium text-slate-300 mb-2">
-                  Select Files <span className="text-slate-500 font-normal">(supports multiple)</span>
-                </label>
-                <input
-                  type="file"
-                  multiple
-                  accept={TYPE_ACCEPT_STRING}
-                  onChange={handleFileSelect}
-                  className="w-full px-4 py-3 bg-slate-900 border border-slate-700 rounded-lg text-white file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:bg-indigo-600 file:text-white file:cursor-pointer hover:file:bg-indigo-700"
-                />
-              </div>
-
-              {/* File list display */}
-              {uploadFiles.length > 0 && (
-                <div className="bg-slate-900/50 rounded-lg border border-slate-700 divide-y divide-slate-700/50 max-h-48 overflow-y-auto">
-                  {uploadFiles.map(file => {
-                    const type = detectFileType(file.name);
-                    const Icon = FILE_TYPE_ICONS[type];
-                    const info = getFileTypeDisplayInfo(type);
-                    const progress = uploadProgressMap[file.name];
-                    return (
-                      <div key={file.name} className="flex items-center gap-3 p-3">
-                        <div className={`p-1.5 rounded-lg ${info.bgColor} flex-shrink-0`}>
-                          <Icon className={`w-4 h-4 ${info.color}`} />
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <p className="text-white text-sm truncate">{file.name}</p>
-                          <p className="text-xs text-slate-500">{formatFileSize(file.size)}</p>
-                        </div>
-                        <div className="flex-shrink-0">
-                          {progress === 'uploading' && <Loader2 className="w-4 h-4 text-indigo-400 animate-spin" />}
-                          {progress === 'done' && <span className="text-xs text-green-400 font-medium">Done</span>}
-                          {progress === 'error' && <span className="text-xs text-red-400 font-medium">Error</span>}
-                          {progress === 'pending' && <span className="text-xs text-slate-500">Pending</span>}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-
-              {/* Optional label */}
-              <div>
-                <label className="block text-sm font-medium text-slate-300 mb-2">
-                  Additional Label (optional)
-                </label>
-                <input
-                  type="text"
-                  value={uploadLabel}
-                  onChange={(e) => setUploadLabel(e.target.value)}
-                  placeholder="e.g., walking, sitting, gesture1"
-                  className="w-full px-4 py-3 bg-slate-900 border border-slate-700 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
-                />
-                <p className="text-xs text-slate-500 mt-1">
-                  File will have both filename and this label (if provided)
-                </p>
-              </div>
-
-              {/* Error display */}
-              {uploadError && (
-                <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-4">
-                  <p className="text-red-400 text-sm whitespace-pre-line">{uploadError}</p>
-                </div>
-              )}
-
-              {/* Actions */}
-              <div className="flex gap-3 pt-2">
-                <button
-                  onClick={resetUploadModal}
-                  className="flex-1 px-4 py-3 bg-slate-700 hover:bg-slate-600 text-white rounded-lg transition-colors"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={handleUpload}
-                  disabled={uploadFiles.length === 0 || isUploading}
-                  className="flex-1 flex items-center justify-center gap-2 px-4 py-3 bg-green-600 hover:bg-green-700 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {isUploading ? (
-                    <>
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                      Uploading...
-                    </>
-                  ) : (
-                    <>
-                      <Upload className="w-4 h-4" />
-                      Upload{uploadFiles.length > 1 ? ` (${uploadFiles.length})` : ''}
-                    </>
-                  )}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Folder Upload Modal */}
-      <FolderUploadModal
-        isOpen={showFolderUploadModal}
-        onClose={() => setShowFolderUploadModal(false)}
-        onUploadComplete={handleFolderUploadComplete}
-        parentFolderId={currentFolderId}
-      />
-
-      {/* Create Folder Modal */}
-      {showCreateFolderModal && (
-        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
-          <div className="bg-slate-800 rounded-xl w-full max-w-md border border-slate-700">
-            <div className="flex items-center justify-between p-4 border-b border-slate-700">
-              <div className="flex items-center gap-3">
-                <FolderPlus className="w-5 h-5 text-indigo-400" />
-                <h3 className="text-lg font-semibold text-white">Create New Folder</h3>
-              </div>
-              <button
-                onClick={() => { setShowCreateFolderModal(false); setNewFolderName(''); }}
-                className="p-2 hover:bg-slate-700 rounded-lg transition-colors"
-              >
-                <X className="w-5 h-5 text-slate-400" />
-              </button>
-            </div>
-            <div className="p-6">
-              <label className="block text-sm font-medium text-slate-300 mb-2">
-                Folder Name
-              </label>
-              <input
-                type="text"
-                value={newFolderName}
-                onChange={(e) => setNewFolderName(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter') handleCreateFolder(); }}
-                placeholder="Enter folder name..."
-                className="w-full px-4 py-3 bg-slate-900 border border-slate-700 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
-                autoFocus
-              />
-              <p className="text-xs text-slate-500 mt-2">
-                Folder name will be used as the default label for files uploaded to this folder.
-              </p>
-            </div>
-            <div className="flex gap-3 p-4 border-t border-slate-700">
-              <button
-                onClick={() => { setShowCreateFolderModal(false); setNewFolderName(''); }}
-                className="flex-1 px-4 py-3 bg-slate-700 hover:bg-slate-600 text-white rounded-lg transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleCreateFolder}
-                disabled={!newFolderName.trim()}
-                className="flex-1 flex items-center justify-center gap-2 px-4 py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                <FolderPlus className="w-4 h-4" />
-                Create Folder
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Label Management Modal */}
-      {showLabelModal && labelFile && (
-        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
-          <div className="bg-slate-800 rounded-xl w-full max-w-lg border border-slate-700">
-            <div className="flex items-center justify-between p-4 border-b border-slate-700">
-              <div className="flex items-center gap-3">
-                <Tags className="w-5 h-5 text-indigo-400" />
-                <div className="min-w-0">
-                  <h3 className="text-lg font-semibold text-white">Manage Labels</h3>
-                  <p className="text-sm text-slate-400 truncate">{labelFile.name}</p>
-                </div>
-              </div>
-              <button
-                onClick={() => { setShowLabelModal(false); setLabelFile(null); }}
-                className="p-2 hover:bg-slate-700 rounded-lg transition-colors"
-              >
-                <X className="w-5 h-5 text-slate-400" />
-              </button>
-            </div>
-            
-            <div className="p-6 space-y-4">
-              {isLoadingLabels ? (
-                <div className="flex items-center justify-center py-8">
-                  <Loader2 className="w-6 h-6 text-indigo-400 animate-spin" />
-                </div>
-              ) : (
-                <>
-                  {/* Current Labels */}
-                  <div>
-                    <label className="block text-sm font-medium text-slate-300 mb-2">
-                      Current Labels
-                    </label>
-                    {fileLabels.length > 0 ? (
-                      <div className="flex flex-wrap gap-2">
-                        {fileLabels.map((label, index) => (
-                          <span
-                            key={index}
-                            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-indigo-500/20 text-indigo-300 rounded-full text-sm"
-                          >
-                            <Tag className="w-3 h-3" />
-                            {label}
-                            <button
-                              onClick={() => handleRemoveLabel(label)}
-                              className="ml-1 p-0.5 hover:bg-indigo-500/30 rounded-full transition-colors"
-                              title="Remove label"
-                            >
-                              <X className="w-3 h-3" />
-                            </button>
-                          </span>
-                        ))}
-                      </div>
-                    ) : (
-                      <p className="text-slate-500 text-sm">No labels assigned</p>
-                    )}
-                  </div>
-
-                  {/* Add New Label */}
-                  <div>
-                    <label className="block text-sm font-medium text-slate-300 mb-2">
-                      Add New Label
-                    </label>
-                    <div className="flex gap-2">
-                      <input
-                        type="text"
-                        value={newLabel}
-                        onChange={(e) => setNewLabel(e.target.value)}
-                        onKeyDown={(e) => { if (e.key === 'Enter') handleAddLabel(); }}
-                        placeholder="e.g., walking, sitting, gesture1"
-                        className="flex-1 px-4 py-2.5 bg-slate-900 border border-slate-700 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
-                      />
+                {active && (
+                  <div className="mt-4 border-t border-slate-200 pt-4">
+                    <div className="flex flex-wrap gap-3">
+                      <a href={`/api/data/minutes/${minute.minute}/download`} className="inline-flex items-center gap-2 rounded-xl bg-slate-950 px-3.5 py-2 text-sm font-medium text-white hover:bg-slate-800">
+                        <Download className="h-4 w-4" />
+                        Download minute
+                      </a>
                       <button
-                        onClick={handleAddLabel}
-                        disabled={!newLabel.trim()}
-                        className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                        type="button"
+                        onClick={() => setSelectedMinute(minute.minute)}
+                        className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3.5 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
                       >
-                        <Plus className="w-5 h-5" />
+                        <RefreshCw className="h-4 w-4" />
+                        Reload details
                       </button>
                     </div>
-                    <p className="text-xs text-slate-500 mt-2">
-                      Labels help organize files for training datasets. The first label is used as the primary label.
-                    </p>
                   </div>
+                )}
+              </article>
+            );
+          })
+        )}
+        {!loading && filteredMinutes.length === 0 && (
+          <div className="rounded-2xl border border-slate-200 bg-white p-8 text-sm text-slate-500">No minute folders matched the current filter.</div>
+        )}
+      </section>
 
-                  {/* Quick Add Suggestions */}
-                  <div>
-                    <label className="block text-sm font-medium text-slate-300 mb-2">
-                      Quick Add
-                    </label>
-                    <div className="flex flex-wrap gap-2">
-                      {['walking', 'sitting', 'standing', 'running', 'gesture', 'empty', 'noise'].map(suggestion => (
-                        <button
-                          key={suggestion}
-                          onClick={() => {
-                            if (!fileLabels.includes(suggestion)) {
-                              setFileLabels([...fileLabels, suggestion]);
-                            }
-                          }}
-                          disabled={fileLabels.includes(suggestion)}
-                          className="px-3 py-1 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded-lg text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                        >
-                          + {suggestion}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                </>
+      <section className="grid gap-6 xl:grid-cols-[1.6fr_1fr]">
+        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <div className="text-xs uppercase tracking-[0.18em] text-slate-500">Selected minute</div>
+              <h2 className="mt-1 text-2xl font-semibold text-slate-950">{selectedSummary?.minute || 'No minute selected'}</h2>
+              {selectedSummary && (
+                <p className="mt-1 text-sm text-slate-600">
+                  {selectedSummary.completed ? 'Completed capture' : 'Currently collecting'} ·
+                  {' '}
+                  {formatStamp(selectedSummary.manifest?.capture_finished || selectedSummary.modified)}
+                </p>
               )}
             </div>
-
-            <div className="flex gap-3 p-4 border-t border-slate-700">
-              <button
-                onClick={() => { setShowLabelModal(false); setLabelFile(null); }}
-                className="flex-1 px-4 py-3 bg-slate-700 hover:bg-slate-600 text-white rounded-lg transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleSaveLabels}
-                disabled={isSavingLabels}
-                className="flex-1 flex items-center justify-center gap-2 px-4 py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg transition-colors disabled:opacity-50"
-              >
-                {isSavingLabels ? (
-                  <>
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    Saving...
-                  </>
-                ) : (
-                  <>
-                    <Tag className="w-4 h-4" />
-                    Save Labels
-                  </>
-                )}
-              </button>
-            </div>
+            {selectedSummary && (
+              <div className={`rounded-full px-3 py-1 text-xs font-medium ${selectedSummary.completed ? 'bg-emerald-500/10 text-emerald-700' : 'bg-amber-500/10 text-amber-700'}`}>
+                {selectedSummary.completed ? 'Ready' : 'Collecting'}
+              </div>
+            )}
           </div>
+
+          {!selectedSummary ? (
+            <div className="mt-6 rounded-xl border border-dashed border-slate-200 bg-slate-50 p-8 text-sm text-slate-500">
+              Pick a minute card to inspect the synchronized camera, radar, and CSI outputs.
+            </div>
+          ) : detailLoading && !detail ? (
+            <div className="mt-6 rounded-xl border border-slate-200 bg-slate-50 p-8 text-sm text-slate-500">Loading minute details...</div>
+          ) : detail ? (
+            <div className="mt-6 space-y-6">
+              <div className="grid gap-3 sm:grid-cols-3">
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="text-xs uppercase tracking-wide text-slate-500">Video</div>
+                  <div className="mt-1 flex items-center gap-2 text-sm font-medium text-slate-900">
+                    <Video className="h-4 w-4 text-slate-500" />
+                    {detail.files.video ? 'Available' : 'Missing'}
+                  </div>
+                </div>
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="text-xs uppercase tracking-wide text-slate-500">Radar</div>
+                  <div className="mt-1 flex items-center gap-2 text-sm font-medium text-slate-900">
+                    <Radar className="h-4 w-4 text-slate-500" />
+                    {detail.files.radar ? 'Available' : 'Missing'}
+                  </div>
+                </div>
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="text-xs uppercase tracking-wide text-slate-500">CSI</div>
+                  <div className="mt-1 flex items-center gap-2 text-sm font-medium text-slate-900">
+                    <Wifi className="h-4 w-4 text-slate-500" />
+                    {detail.files.csi ? 'Available' : 'Missing'}
+                  </div>
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-slate-200 bg-slate-950 p-3">
+                {detail.files.video ? (
+                  <video controls className="w-full rounded-lg bg-black" src={`/api/data/minutes/${detail.minute}/file/video`} />
+                ) : (
+                  <div className="flex h-64 items-center justify-center rounded-lg border border-dashed border-slate-700 text-sm text-slate-400">
+                    No video file found in this minute.
+                  </div>
+                )}
+              </div>
+
+              <div className="grid gap-4 xl:grid-cols-3">
+                {RADAR_PLOTS.map((plot) => (
+                  <a
+                    key={plot.key}
+                    href={`/api/data/minutes/${detail.minute}/radar/${plot.key}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm transition hover:border-slate-300"
+                  >
+                    <div className="border-b border-slate-200 px-4 py-3">
+                      <div className="text-sm font-semibold text-slate-950">{plot.label}</div>
+                      <div className="mt-1 text-xs text-slate-500">{plot.description}</div>
+                    </div>
+                    <img
+                      src={`/api/data/minutes/${detail.minute}/radar/${plot.key}`}
+                      alt={plot.label}
+                      className="h-48 w-full object-cover"
+                    />
+                  </a>
+                ))}
+              </div>
+
+              <div className="rounded-xl border border-slate-200 bg-white p-4">
+                <div className="mb-3">
+                  <div className="text-sm font-semibold text-slate-950">CSI amplitude graph</div>
+                  <div className="text-xs text-slate-500">
+                    Average amplitude across subcarriers, derived from the ESP32 receiver stream.
+                  </div>
+                </div>
+                {csiLoading ? <div className="rounded-xl border border-slate-200 bg-slate-50 p-6 text-sm text-slate-500">Loading CSI series...</div> : <CsiChart points={csiSeries} />}
+              </div>
+            </div>
+          ) : null}
         </div>
-      )}
+
+        <aside className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="text-xs uppercase tracking-[0.18em] text-slate-500">Minute details</div>
+          <div className="mt-1 text-lg font-semibold text-slate-950">What is on disk</div>
+
+          {detail ? (
+            <div className="mt-4 space-y-3 text-sm text-slate-600">
+              <div className="rounded-xl bg-slate-50 p-4">
+                <div className="text-xs uppercase tracking-wide text-slate-500">Files present</div>
+                <div className="mt-3 space-y-2">
+                  <FileBadge label="Manifest" ok={detail.files.manifest} />
+                  <div />
+                  <FileBadge label="Video MP4" ok={detail.files.video} />
+                  <div />
+                  <FileBadge label="Radar BIN" ok={detail.files.radar} />
+                  <div />
+                  <FileBadge label="CSI CSV/JSONL" ok={detail.files.csi} />
+                </div>
+              </div>
+
+              <div className="rounded-xl bg-slate-50 p-4">
+                <div className="text-xs uppercase tracking-wide text-slate-500">Paths</div>
+                <div className="mt-3 space-y-2 text-xs font-mono text-slate-600">
+                  <div className="break-all">{detail.filePaths.video || 'Missing video'}</div>
+                  <div className="break-all">{detail.filePaths.radar || 'Missing radar'}</div>
+                  <div className="break-all">{detail.filePaths.csi_timestamped || 'Missing CSI timestamped CSV'}</div>
+                  <div className="break-all">{detail.filePaths.csi_serial || 'Missing CSI serial log'}</div>
+                </div>
+              </div>
+
+              <div className="rounded-xl bg-slate-50 p-4">
+                <div className="text-xs uppercase tracking-wide text-slate-500">Manifest</div>
+                <pre className="mt-3 max-h-72 overflow-auto whitespace-pre-wrap rounded-lg bg-slate-950 p-3 text-xs text-slate-100">
+                  {detail.previews.manifest || JSON.stringify(detail.manifest || {}, null, 2)}
+                </pre>
+              </div>
+            </div>
+          ) : (
+            <div className="mt-4 rounded-xl border border-dashed border-slate-200 bg-slate-50 p-6 text-sm text-slate-500">
+              Select a minute to inspect the capture files, derived plots, and download links.
+            </div>
+          )}
+        </aside>
+      </section>
     </div>
   );
 }
