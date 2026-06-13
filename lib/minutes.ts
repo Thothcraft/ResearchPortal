@@ -16,6 +16,8 @@ export type MinuteSummary = {
   path: string;
   modified: string;
   created: string;
+  completed: boolean;
+  state: 'ready' | 'collecting';
   files: MinuteFiles;
   sizes: Record<string, number>;
   manifest?: any;
@@ -67,11 +69,15 @@ export function listMinuteSummaries(): MinuteSummary[] {
     if (!fs.statSync(minuteDir).isDirectory() || !MINUTE_RE.test(item)) continue;
     const stat = fs.statSync(minuteDir);
     const paths = getMinutePaths(minuteDir);
+    const manifest = readJsonPreview(paths.manifest);
+    const completed = Boolean(manifest?.capture_finished);
     minutes.push({
       minute: item,
       path: minuteDir,
       modified: stat.mtime.toISOString(),
       created: stat.birthtime.toISOString(),
+      completed,
+      state: completed ? 'ready' : 'collecting',
       files: {
         video: !!paths.video,
         radar: !!paths.radar,
@@ -85,7 +91,7 @@ export function listMinuteSummaries(): MinuteSummary[] {
         csi_timestamped: paths.csiTimestamped ? fs.statSync(paths.csiTimestamped).size : 0,
         csi_serial: paths.csiSerial ? fs.statSync(paths.csiSerial).size : 0,
       },
-      manifest: readJsonPreview(paths.manifest),
+      manifest,
     });
   }
 
@@ -104,11 +110,15 @@ export function getMinuteDetail(minute: string): MinuteDetail | null {
 
   const stat = fs.statSync(minuteDir);
   const paths = getMinutePaths(minuteDir);
+  const manifest = readJsonPreview(paths.manifest);
+  const completed = Boolean(manifest?.capture_finished);
   const summary = getMinuteSummary(minute) || {
     minute,
     path: minuteDir,
     modified: stat.mtime.toISOString(),
     created: stat.birthtime.toISOString(),
+    completed,
+    state: completed ? 'ready' : 'collecting',
     files: {
       video: !!paths.video,
       radar: !!paths.radar,
@@ -119,10 +129,10 @@ export function getMinuteDetail(minute: string): MinuteDetail | null {
       video: paths.video ? fs.statSync(paths.video).size : 0,
       radar: paths.radar ? fs.statSync(paths.radar).size : 0,
       csi_csv: paths.csiCsv ? fs.statSync(paths.csiCsv).size : 0,
-      csi_timestamped: paths.csiTimestamped ? fs.statSync(paths.csiTimestamped).size : 0,
-      csi_serial: paths.csiSerial ? fs.statSync(paths.csiSerial).size : 0,
-    },
-    manifest: readJsonPreview(paths.manifest),
+        csi_timestamped: paths.csiTimestamped ? fs.statSync(paths.csiTimestamped).size : 0,
+        csi_serial: paths.csiSerial ? fs.statSync(paths.csiSerial).size : 0,
+      },
+    manifest,
   };
 
   return {

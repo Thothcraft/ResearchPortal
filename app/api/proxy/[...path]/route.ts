@@ -161,3 +161,11 @@ export async function PATCH(request: NextRequest, { params }: { params: { path: 
 export async function OPTIONS(request: NextRequest, { params }: { params: { path: string[] } }) {
   return proxy(request, params.path);
 }
+
+export async function HEAD(request: NextRequest, { params }: { params: { path: string[] } }) {
+  const response = await proxy(request, params.path);
+  return new NextResponse(null, {
+    status: response.status,
+    headers: response.headers,
+  });
+}

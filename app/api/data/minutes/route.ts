@@ -18,3 +18,7 @@ export async function GET() {
     );
   }
 }
+
+export async function HEAD() {
+  return new NextResponse(null, { status: 200 });
+}

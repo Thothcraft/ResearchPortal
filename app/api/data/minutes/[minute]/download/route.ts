@@ -41,3 +41,7 @@ export async function GET(
     return NextResponse.json({ error: 'Failed to build zip archive' }, { status: 500 });
   }
 }
+
+export async function HEAD() {
+  return new NextResponse(null, { status: 200 });
+}

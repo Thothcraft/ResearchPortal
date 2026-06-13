@@ -13,6 +13,8 @@ export async function GET() {
       modified: string;
       files?: Record<string, boolean>;
       type?: string;
+      completed?: boolean;
+      state?: 'ready' | 'collecting';
     }[] = [];
 
     if (fs.existsSync(DATA_DIR)) {
@@ -24,11 +26,23 @@ export async function GET() {
         if (!stat.isDirectory() || !MINUTE_RE.test(item)) continue;
 
         const names = new Set(fs.readdirSync(itemPath));
+        const manifestPath = path.join(itemPath, 'manifest.json');
+        let manifest: any = null;
+        if (fs.existsSync(manifestPath)) {
+          try {
+            manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+          } catch {
+            manifest = null;
+          }
+        }
+        const completed = Boolean(manifest?.capture_finished);
         files.push({
           name: item,
           size: stat.size,
           modified: stat.mtime.toISOString(),
           type: 'minute-folder',
+          completed,
+          state: completed ? 'ready' : 'collecting',
           files: {
             video: names.has('usb_camera.mp4'),
             radar: Array.from(names).some(name => name.startsWith('mmw_radar_raw_') && name.endsWith('.bin')),
@@ -53,4 +67,8 @@ export async function GET() {
       { status: 500 }
     );
   }
+}
+
+export async function HEAD() {
+  return NextResponse.json({ success: true }, { status: 200 });
 }
