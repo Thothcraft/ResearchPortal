@@ -81,7 +81,6 @@ export function subscribeToTrainingJobs(
   const client = getSupabaseClient();
   
   if (!client) {
-    console.warn('[Supabase] Client not available, using polling fallback');
     return null;
   }
   

@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo } from 'react';
-import { useCachedData, clearCache } from '@/hooks/useCachedApi';
+import { useCachedData } from '@/hooks/useCachedApi';
 import { StatCardsSkeleton, ActivitySkeleton } from '@/components/LoadingSkeleton';
 import {
   Monitor,
@@ -99,7 +99,6 @@ export default function HomePage() {
   const isRefreshing = statsValidating || activityValidating;
 
   const handleRefresh = async () => {
-    clearCache('/activity');
     await Promise.all([refetchStats(), refetchActivity()]);
   };
 

@@ -260,7 +260,6 @@ class ApiService {
 
   // WebSocket for live sensor streaming
   private onDataCallback: ((data: SensorData) => void) | null = null;
-  private simulationInterval: NodeJS.Timeout | null = null;
 
   connectToSensorStream(deviceId: string, onData: (data: SensorData) => void) {
     if (this.socket) {
@@ -277,53 +276,13 @@ class ApiService {
     // this.socket.on('sensor_data', (data: SensorData) => {
     //   this.onDataCallback?.(data);
     // });
-    
-    // For now, simulate WebSocket data
-    this.simulateData();
-    
+
     return () => {
       this.disconnectSensorStream();
     };
   }
-
-  private simulateData() {
-    // Clear any existing simulation
-    if (this.simulationInterval) {
-      clearInterval(this.simulationInterval);
-    }
-    
-    this.simulationInterval = setInterval(() => {
-      if (!this.onDataCallback) return;
-      
-      const mockData: SensorData = {
-        temperature: 25 + Math.random() * 5,
-        humidity: 40 + Math.random() * 20,
-        pressure: 1000 + Math.random() * 20,
-        orientation: {
-          pitch: Math.random() * 360 - 180,
-          roll: Math.random() * 360 - 180,
-          yaw: Math.random() * 360 - 180,
-        },
-        acceleration: {
-          x: Math.random() * 2 - 1,
-          y: Math.random() * 2 - 1,
-          z: 9.8 + Math.random() * 0.2 - 0.1,
-        },
-        compass: Math.random() * 360,
-        timestamp: new Date().toISOString(),
-        device_id: 'simulated-device',
-      };
-      
-      this.onDataCallback?.(mockData);
-    }, 1000);
-  }
   
   disconnectSensorStream() {
-    if (this.simulationInterval) {
-      clearInterval(this.simulationInterval);
-      this.simulationInterval = null;
-    }
-    
     if (this.socket) {
       this.socket.disconnect();
       this.socket = null;

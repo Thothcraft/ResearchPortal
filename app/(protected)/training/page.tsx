@@ -698,40 +698,8 @@ export default function TrainingPage() {
       };
     } else {
       realtimeActiveRef.current = false;
-      console.log('[Realtime] Not available, using polling fallback');
     }
   }, [activeTab, user?.userId]);
-
-  // Polling fallback (only when realtime is not active)
-  useEffect(() => {
-    if (activeTab !== 'jobs' && activeTab !== 'models' && activeTab !== 'compare' && activeTab !== 'deployments') return;
-
-    // If realtime is active for jobs tab, use slower polling (just for models/compare/deployments or as backup)
-    const pollInterval = realtimeActiveRef.current && activeTab === 'jobs' 
-      ? 30000  // 30s backup poll when realtime is active
-      : (activeTab === 'jobs' && hasRunningJobs ? 3000 : 10000);  // Fast poll when no realtime
-
-    const interval = setInterval(async () => {
-      const hasActiveOperation = Object.values(operations).some(v => v === true || v !== null);
-      if (hasActiveOperation) return;
-
-      try {
-        if (activeTab === 'deployments') {
-          await loadDeployments();
-        } else {
-          await fetchData({
-            datasets: false,
-            jobs: activeTab === 'jobs',
-            models: activeTab === 'models' || activeTab === 'compare',
-            files: false,
-          });
-        }
-      } catch {}
-    }, pollInterval);
-
-    return () => clearInterval(interval);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTab, operations, hasRunningJobs]);
 
   // Get available models based on dataset file types
   const getAvailableModels = useCallback((dataset: Dataset | null): ModelOption[] => {

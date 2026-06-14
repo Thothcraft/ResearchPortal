@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import { mkdtempSync, rmSync } from 'fs';
 import { execFileSync } from 'child_process';
 import { getMinuteDetail } from '@/lib/minutes';
 
@@ -34,27 +35,19 @@ export async function GET(
       return NextResponse.json({ error: 'Radar file not found' }, { status: 404 });
     }
 
-    const cacheDir = path.join(os.tmpdir(), 'thoth-researchportal-radar', minute);
-    const outPath = path.join(cacheDir, `${plot}.png`);
+    const workDir = mkdtempSync(path.join(os.tmpdir(), 'thoth-researchportal-radar-'));
+    const outPath = path.join(workDir, `${minute}-${plot}.png`);
     const scriptPath = path.join(process.cwd(), 'scripts', 'render_radar_plot.py');
-
-    const radarMtime = fs.statSync(radarPath).mtimeMs;
-    const scriptMtime = fs.existsSync(scriptPath) ? fs.statSync(scriptPath).mtimeMs : 0;
-    const outExists = fs.existsSync(outPath);
-    const outMtime = outExists ? fs.statSync(outPath).mtimeMs : 0;
-
-    if (!outExists || outMtime < radarMtime || outMtime < scriptMtime) {
-      fs.mkdirSync(cacheDir, { recursive: true });
-      execFileSync(PYTHON, [scriptPath, radarPath, plot, outPath], {
-        stdio: 'pipe',
-      });
-    }
+    execFileSync(PYTHON, [scriptPath, radarPath, plot, outPath], {
+      stdio: 'pipe',
+    });
 
     const payload = fs.readFileSync(outPath);
+    rmSync(workDir, { recursive: true, force: true });
     return new NextResponse(payload, {
       headers: {
         'Content-Type': 'image/png',
-        'Cache-Control': 'public, max-age=60',
+        'Cache-Control': 'no-store, no-cache, must-revalidate',
         'Content-Length': String(payload.length),
       },
     });
