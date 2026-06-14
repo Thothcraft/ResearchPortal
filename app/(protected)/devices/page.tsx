@@ -146,22 +146,6 @@ function getDeviceIdentity(device: Device) {
   return { key, label, aliases };
 }
 
-function isThothLikeDevice(device: Device) {
-  const identity = getDeviceIdentity(device);
-  const hw = device.hardware_info || {};
-  const values = [
-    identity.key,
-    device.device_id,
-    device.device_uuid,
-    device.device_name,
-    hw.hostname,
-    hw.device_type,
-  ]
-    .filter(Boolean)
-    .map(normalize);
-  return values.some((value) => value === 'thoth' || value === 'thoth-local' || value.includes('thoth'));
-}
-
 function getMinuteIdentity(minute: MinuteSummary) {
   const manifest = minute.manifest || {};
   const aliases = [
@@ -419,23 +403,14 @@ export default function DevicesPage() {
     setLoading(true);
     setError(null);
     try {
-      const [deviceRes, minuteRes, localRes, deployRes] = await Promise.all([
+      const [deviceRes, minuteRes, deployRes] = await Promise.all([
         get('/device/list?include_offline=true').catch(() => ({ devices: [] })),
         fetch('/api/data/minutes', { cache: 'no-store' }).then((res) => res.json()).catch(() => ({ minutes: [] })),
-        fetch('/api/local/thoth/status', { cache: 'no-store' }).then((res) => res.json()).catch(() => null),
         get('/datasets/models/deployments').catch(() => ({ deployments: [] })),
       ]);
 
       const remoteDevices = Array.isArray(deviceRes?.devices) ? deviceRes.devices : [];
-      const localDevice = localRes?.device ? localRes.device : null;
-      const mergedDevices = localDevice
-        ? [
-            localDevice,
-            ...remoteDevices.filter((device) => !isThothLikeDevice(device)),
-          ]
-        : remoteDevices;
-
-      setDevices(mergedDevices);
+      setDevices(remoteDevices);
       setMinutes(Array.isArray(minuteRes?.minutes) ? minuteRes.minutes : []);
       setDeployments(Array.isArray(deployRes?.deployments) ? deployRes.deployments : []);
     } catch (err) {
@@ -458,7 +433,6 @@ export default function DevicesPage() {
     return devices.map((device) => {
       const identity = getDeviceIdentity(device);
       const relatedMinutes = minutes.filter((minute) => {
-        if (singleDevice || identity.key === 'thoth-local' || identity.key === 'thoth') return true;
         const aliases = getMinuteIdentity(minute).aliases;
         return aliases.some((alias) => identity.aliases.includes(alias));
       });
