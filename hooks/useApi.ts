@@ -45,7 +45,9 @@ export const useApi = () => {
   }, []);
 
   const get = useCallback(async (url: string) => {
-    const response = await fetch(`${apiBaseUrl}${url}`, {
+    const hasQuery = url.includes('?');
+    const cacheBustedUrl = `${url}${hasQuery ? '&' : '?'}_ts=${Date.now()}`;
+    const response = await fetch(`${apiBaseUrl}${cacheBustedUrl}`, {
       method: 'GET',
       headers: getAuthHeaders(),
       cache: 'no-store',

@@ -115,6 +115,10 @@ async function proxy(
       }
     });
 
+    responseHeaders.set('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0, private');
+    responseHeaders.set('Pragma', 'no-cache');
+    responseHeaders.set('Expires', '0');
+
     return new NextResponse(response.body, {
       status: response.statusCode,
       headers: responseHeaders,
