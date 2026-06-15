@@ -1,288 +1,242 @@
 'use client';
 
-import { useEffect, useMemo } from 'react';
-import { useCachedData } from '@/hooks/useCachedApi';
-import { StatCardsSkeleton, ActivitySkeleton } from '@/components/LoadingSkeleton';
-import {
-  Monitor,
-  Database,
-  Brain,
-  Activity,
-  TrendingUp,
-  Clock,
-  CheckCircle,
-  XCircle,
-  Wifi,
-  WifiOff,
-  File,
-  MessageCircle,
-  Loader2,
-  RefreshCw,
-} from 'lucide-react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useApi } from '@/hooks/useApi';
+import { useToast } from '@/contexts/ToastContext';
+import { Brain, Cpu, FolderOpen, RefreshCw, Radar, Wifi, Camera, Mic, Activity } from 'lucide-react';
 
-type Stats = {
-  totalDevices: number;
-  onlineDevices: number;
-  offlineDevices: number;
-  totalDataFiles: number;
-  trainingJobs: number;
-  activeJobs: number;
-  totalModels: number;
-  bestAccuracy: number | null;
+type Sensor = {
+  sensor_type: string;
+  name: string;
+  available: boolean;
 };
 
-type ActivityItem = {
-  type: string;
-  action: string;
-  title: string;
-  description: string;
-  timestamp: string;
-  icon: string;
-  color: string;
-  metadata?: Record<string, any>;
+type Device = {
+  device_uuid: string;
+  device_name: string;
+  device_type: string;
+  online: boolean;
+  last_seen?: string;
+  hardware_info?: {
+    hostname?: string;
+    is_raspberry_pi?: boolean;
+    raspberry_pi_model?: string;
+    sensors?: Sensor[];
+    available_sensors?: Sensor[];
+  };
+};
+
+type Deployment = {
+  deployment_id: string;
+  model_name: string;
+  model_type?: string;
+  device_name?: string;
+  status?: string;
+  created_at?: string;
+};
+
+const getSensorIcon = (sensorType: string) => {
+  switch ((sensorType || '').toLowerCase()) {
+    case 'camera':
+      return Camera;
+    case 'microphone':
+      return Mic;
+    case 'wifi_csi':
+    case 'csi':
+      return Wifi;
+    case 'radar':
+      return Radar;
+    default:
+      return Activity;
+  }
 };
 
 export default function HomePage() {
-  // Use cached data hooks for better performance
-  const { 
-    data: statsRes, 
-    isLoading: statsLoading,
-    isValidating: statsValidating,
-    refetch: refetchStats 
-  } = useCachedData<{ success: boolean; stats: any }>('/activity/stats', {
-    cacheTTL: 30000, // 30 seconds
-    refreshInterval: 30000, // Auto-refresh every 30s
-  });
+  const { get } = useApi();
+  const toast = useToast();
+  const [devices, setDevices] = useState<Device[]>([]);
+  const [deployments, setDeployments] = useState<Deployment[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  const { 
-    data: activityRes, 
-    isLoading: activityLoading,
-    isValidating: activityValidating,
-    refetch: refetchActivity 
-  } = useCachedData<{ success: boolean; activities: ActivityItem[] }>('/activity/recent?limit=10&hours=48', {
-    cacheTTL: 30000,
-    refreshInterval: 30000,
-  });
-
-  // Memoize stats to prevent unnecessary re-renders
-  const stats = useMemo<Stats>(() => {
-    if (!statsRes?.success || !statsRes.stats) {
-      return {
-        totalDevices: 0,
-        onlineDevices: 0,
-        offlineDevices: 0,
-        totalDataFiles: 0,
-        trainingJobs: 0,
-        activeJobs: 0,
-        totalModels: 0,
-        bestAccuracy: null,
-      };
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const [deviceRes, deployRes] = await Promise.all([
+        get('/device/list?include_offline=true').catch(() => ({ devices: [] })),
+        get('/datasets/models/deployments').catch(() => ({ deployments: [] })),
+      ]);
+      setDevices(Array.isArray(deviceRes?.devices) ? deviceRes.devices : []);
+      setDeployments(Array.isArray(deployRes?.deployments) ? deployRes.deployments : []);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to load dashboard';
+      setError(message);
+      toast.error('Load failed', message);
+    } finally {
+      setLoading(false);
     }
-    const s = statsRes.stats;
-    return {
-      totalDevices: s.devices?.total || 0,
-      onlineDevices: s.devices?.online || 0,
-      offlineDevices: s.devices?.offline || 0,
-      totalDataFiles: s.files?.total || 0,
-      trainingJobs: s.training?.total_jobs || 0,
-      activeJobs: s.training?.active_jobs || 0,
-      totalModels: s.models?.total || 0,
-      bestAccuracy: s.models?.best_accuracy || null,
-    };
-  }, [statsRes]);
+  }, [get, toast]);
 
-  const activities = useMemo(() => {
-    return activityRes?.success ? activityRes.activities || [] : [];
-  }, [activityRes]);
+  useEffect(() => {
+    load();
+  }, [load]);
 
-  const isLoading = statsLoading || activityLoading;
-  const isRefreshing = statsValidating || activityValidating;
+  const onlineDevices = useMemo(() => devices.filter((device) => device.online), [devices]);
+  const latestDevice = onlineDevices[0] || devices[0] || null;
+  const latestSensors = latestDevice?.hardware_info?.sensors || latestDevice?.hardware_info?.available_sensors || [];
 
-  const handleRefresh = async () => {
-    await Promise.all([refetchStats(), refetchActivity()]);
-  };
-
-  const getActivityIcon = (icon: string) => {
-    switch (icon) {
-      case 'wifi': return <Wifi className="w-4 h-4" />;
-      case 'wifi-off': return <WifiOff className="w-4 h-4" />;
-      case 'file': return <File className="w-4 h-4" />;
-      case 'check-circle': return <CheckCircle className="w-4 h-4" />;
-      case 'x-circle': return <XCircle className="w-4 h-4" />;
-      case 'loader': return <Loader2 className="w-4 h-4 animate-spin" />;
-      case 'brain': return <Brain className="w-4 h-4" />;
-      case 'message-circle': return <MessageCircle className="w-4 h-4" />;
-      default: return <Activity className="w-4 h-4" />;
-    }
-  };
-
-  const getActivityColor = (color: string) => {
-    switch (color) {
-      case 'green': return 'bg-green-500';
-      case 'red': return 'bg-red-500';
-      case 'blue': return 'bg-blue-500';
-      case 'purple': return 'bg-purple-500';
-      case 'indigo': return 'bg-indigo-500';
-      case 'orange': return 'bg-orange-500';
-      default: return 'bg-slate-500';
-    }
-  };
-
-  const formatTimestamp = (timestamp: string) => {
-    const date = new Date(timestamp);
-    const now = new Date();
-    const diffMs = now.getTime() - date.getTime();
-    const diffMins = Math.floor(diffMs / 60000);
-    const diffHours = Math.floor(diffMs / 3600000);
-    const diffDays = Math.floor(diffMs / 86400000);
-    
-    if (diffMins < 1) return 'Just now';
-    if (diffMins < 60) return `${diffMins}m ago`;
-    if (diffHours < 24) return `${diffHours}h ago`;
-    if (diffDays < 7) return `${diffDays}d ago`;
-    return date.toLocaleDateString();
-  };
-
-  const statCards = [
-    {
-      title: 'Total Devices',
-      value: stats.totalDevices,
-      icon: Monitor,
-      color: 'from-blue-500 to-blue-600',
-      bgColor: 'bg-blue-500/10',
-    },
-    {
-      title: 'Online Devices',
-      value: stats.onlineDevices,
-      icon: CheckCircle,
-      color: 'from-green-500 to-green-600',
-      bgColor: 'bg-green-500/10',
-    },
-    {
-      title: 'Data Files',
-      value: stats.totalDataFiles,
-      icon: Database,
-      color: 'from-purple-500 to-purple-600',
-      bgColor: 'bg-purple-500/10',
-    },
-    {
-      title: 'Training Jobs',
-      value: stats.trainingJobs,
-      subtitle: stats.activeJobs > 0 ? `${stats.activeJobs} active` : undefined,
-      icon: Brain,
-      color: 'from-orange-500 to-orange-600',
-      bgColor: 'bg-orange-500/10',
-    },
-    {
-      title: 'Trained Models',
-      value: stats.totalModels,
-      icon: Brain,
-      color: 'from-indigo-500 to-indigo-600',
-      bgColor: 'bg-indigo-500/10',
-    },
-    {
-      title: 'Best Accuracy',
-      value: stats.bestAccuracy ? `${stats.bestAccuracy.toFixed(1)}%` : 'N/A',
-      icon: TrendingUp,
-      color: 'from-teal-500 to-teal-600',
-      bgColor: 'bg-teal-500/10',
-      isText: true,
-    },
-  ];
-
-  if (isLoading) {
+  if (loading && !devices.length) {
     return (
-      <div className="p-8">
-        <div className="mb-8">
-          <h1 className="text-3xl font-bold text-white mb-2">Dashboard</h1>
-          <p className="text-slate-400">Welcome to ThothCraft Research Portal</p>
-        </div>
-        <StatCardsSkeleton count={6} />
-        <div className="mt-8 bg-slate-800/50 backdrop-blur-sm rounded-xl p-6 border border-slate-700">
-          <div className="flex items-center gap-3 mb-6">
-            <Clock className="w-5 h-5 text-indigo-400" />
-            <h2 className="text-xl font-semibold text-white">Recent Activity</h2>
-          </div>
-          <ActivitySkeleton count={5} />
-        </div>
+      <div className="rounded-2xl border border-slate-200 bg-white p-8 text-sm text-slate-500 shadow-sm">
+        Loading dashboard...
       </div>
     );
   }
 
   return (
-    <div className="p-8">
-      {/* Header */}
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold text-white mb-2">Dashboard</h1>
-        <p className="text-slate-400">Welcome to ThothCraft Research Portal</p>
-      </div>
-
-      {/* Stats Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-8">
-        {statCards.map((stat, index) => {
-          const Icon = stat.icon;
-          return (
-            <div
-              key={index}
-              className="bg-slate-800/50 backdrop-blur-sm rounded-xl p-6 border border-slate-700 hover:border-slate-600 transition-all duration-200"
-            >
-              <div className="flex items-center justify-between mb-4">
-                <div className={`p-3 rounded-lg ${stat.bgColor}`}>
-                  <Icon className={`w-6 h-6 bg-gradient-to-r ${stat.color} bg-clip-text text-transparent`} style={{ color: stat.color.includes('blue') ? '#3b82f6' : stat.color.includes('green') ? '#22c55e' : stat.color.includes('red') ? '#ef4444' : stat.color.includes('purple') ? '#a855f7' : stat.color.includes('orange') ? '#f97316' : '#14b8a6' }} />
-                </div>
-                <TrendingUp className="w-5 h-5 text-slate-500" />
-              </div>
-              <h3 className="text-slate-400 text-sm font-medium mb-1">{stat.title}</h3>
-              <p className="text-3xl font-bold text-white">
-                {stat.isText ? stat.value : stat.value.toLocaleString()}
-              </p>
-            </div>
-          );
-        })}
-      </div>
-
-      {/* Recent Activity */}
-      <div className="bg-slate-800/50 backdrop-blur-sm rounded-xl p-6 border border-slate-700">
-        <div className="flex items-center justify-between mb-6">
-          <div className="flex items-center gap-3">
-            <Clock className="w-5 h-5 text-indigo-400" />
-            <h2 className="text-xl font-semibold text-white">Recent Activity</h2>
+    <div className="space-y-6">
+      <section className="rounded-2xl border border-slate-800 bg-slate-950 p-6 text-slate-100 shadow-sm">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+          <div>
+            <div className="text-xs uppercase tracking-[0.22em] text-slate-500">Home</div>
+            <h1 className="mt-1 text-3xl font-semibold text-white">Thoth Research Dashboard</h1>
+            <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-400">
+              Live device state comes from Brain. Local sensor data stays on the device unless a minute is explicitly uploaded to cloud.
+            </p>
           </div>
           <button
-            onClick={handleRefresh}
-            disabled={isRefreshing}
-            className="p-2 text-slate-400 hover:text-white hover:bg-slate-700 rounded-lg transition-colors"
+            type="button"
+            onClick={load}
+            className="inline-flex items-center gap-2 rounded-xl border border-slate-700 bg-slate-900 px-3.5 py-2 text-sm font-medium text-slate-100 hover:bg-slate-800"
           >
-            <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+            <RefreshCw className="h-4 w-4" />
+            Refresh
           </button>
         </div>
-        <div className="space-y-3 max-h-96 overflow-y-auto">
-          {activities.length === 0 ? (
-            <div className="text-center py-8">
-              <Activity className="w-10 h-10 text-slate-500 mx-auto mb-2" />
-              <p className="text-slate-400 text-sm">No recent activity</p>
-            </div>
-          ) : (
-            activities.map((activity, index) => (
-              <div
-                key={`${activity.type}-${activity.timestamp}-${index}`}
-                className="flex items-start gap-4 p-4 bg-slate-700/30 rounded-lg hover:bg-slate-700/50 transition-colors"
-              >
-                <div className={`w-8 h-8 rounded-full ${getActivityColor(activity.color)} flex items-center justify-center text-white`}>
-                  {getActivityIcon(activity.icon)}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-white text-sm font-medium">{activity.title}</p>
-                  <p className="text-slate-400 text-xs truncate">{activity.description}</p>
-                </div>
-                <span className="text-slate-500 text-xs whitespace-nowrap">
-                  {formatTimestamp(activity.timestamp)}
-                </span>
-              </div>
-            ))
-          )}
+
+        <div className="mt-5 grid gap-3 sm:grid-cols-3">
+          <div className="rounded-xl bg-white/5 p-4">
+            <div className="text-xs uppercase tracking-wide text-slate-500">Devices online</div>
+            <div className="mt-1 text-2xl font-semibold text-emerald-300">{onlineDevices.length}</div>
+          </div>
+          <div className="rounded-xl bg-white/5 p-4">
+            <div className="text-xs uppercase tracking-wide text-slate-500">Devices total</div>
+            <div className="mt-1 text-2xl font-semibold text-white">{devices.length}</div>
+          </div>
+          <div className="rounded-xl bg-white/5 p-4">
+            <div className="text-xs uppercase tracking-wide text-slate-500">Deployments</div>
+            <div className="mt-1 text-2xl font-semibold text-cyan-300">{deployments.length}</div>
+          </div>
         </div>
-      </div>
+
+        {error && (
+          <div className="mt-4 rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
+            {error}
+          </div>
+        )}
+      </section>
+
+      <section className="grid gap-6 lg:grid-cols-[1.4fr_0.9fr]">
+        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <div className="text-xs uppercase tracking-[0.18em] text-slate-500">Device status</div>
+              <h2 className="mt-1 text-2xl font-semibold text-slate-950">Connected devices</h2>
+            </div>
+            <Cpu className="h-5 w-5 text-slate-400" />
+          </div>
+
+          <div className="mt-4 space-y-3">
+            {devices.map((device) => (
+              <article key={device.device_uuid} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                  <div>
+                    <div className="text-sm font-semibold text-slate-950">{device.device_name}</div>
+                    <div className="mt-1 text-xs text-slate-500">{device.hardware_info?.hostname || device.device_uuid}</div>
+                  </div>
+                  <span className={`inline-flex items-center gap-2 rounded-full px-2.5 py-1 text-xs font-medium ${device.online ? 'bg-emerald-500/10 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>
+                    <span className={`h-2 w-2 rounded-full ${device.online ? 'bg-emerald-500' : 'bg-slate-400'}`} />
+                    {device.online ? 'Online' : 'Offline'}
+                  </span>
+                </div>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {(device.hardware_info?.sensors || device.hardware_info?.available_sensors || []).map((sensor) => {
+                    const Icon = getSensorIcon(sensor.sensor_type);
+                    return (
+                      <span key={`${device.device_uuid}-${sensor.sensor_type}`} className={`inline-flex items-center gap-2 rounded-full px-2.5 py-1 text-xs font-medium ${sensor.available ? 'bg-cyan-500/10 text-cyan-700' : 'bg-slate-100 text-slate-500'}`}>
+                        <Icon className="h-3.5 w-3.5" />
+                        {sensor.name}
+                      </span>
+                    );
+                  })}
+                  {!((device.hardware_info?.sensors || device.hardware_info?.available_sensors || []).length) && (
+                    <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs text-slate-500">No sensors reported</span>
+                  )}
+                </div>
+              </article>
+            ))}
+            {!devices.length && (
+              <div className="rounded-2xl border border-dashed border-slate-200 p-6 text-sm text-slate-500">
+                No devices found for this account.
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="space-y-6">
+          <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <div className="text-xs uppercase tracking-[0.18em] text-slate-500">Primary device</div>
+                <h2 className="mt-1 text-2xl font-semibold text-slate-950">Latest online unit</h2>
+              </div>
+              <Brain className="h-5 w-5 text-slate-400" />
+            </div>
+            {latestDevice ? (
+              <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <div className="text-sm font-medium text-slate-950">{latestDevice.device_name}</div>
+                <div className="mt-1 text-xs text-slate-500">{latestDevice.hardware_info?.raspberry_pi_model || latestDevice.hardware_info?.hostname || latestDevice.device_uuid}</div>
+                <div className="mt-3 text-xs uppercase tracking-wide text-slate-500">Sensors</div>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {latestSensors.length ? latestSensors.map((sensor) => (
+                    <span key={sensor.sensor_type} className="rounded-full bg-white px-2.5 py-1 text-xs text-slate-700">{sensor.name}</span>
+                  )) : (
+                    <span className="rounded-full bg-white px-2.5 py-1 text-xs text-slate-500">None reported</span>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <div className="mt-4 rounded-2xl border border-dashed border-slate-200 p-4 text-sm text-slate-500">
+                No online device available.
+              </div>
+            )}
+          </section>
+
+          <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <div className="text-xs uppercase tracking-[0.18em] text-slate-500">Deployments</div>
+                <h2 className="mt-1 text-2xl font-semibold text-slate-950">Recent model deliveries</h2>
+              </div>
+              <FolderOpen className="h-5 w-5 text-slate-400" />
+            </div>
+            <div className="mt-4 space-y-2">
+              {deployments.slice(0, 6).map((deployment) => (
+                <div key={deployment.deployment_id} className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
+                  <div className="text-sm font-medium text-slate-950">{deployment.model_name}</div>
+                  <div className="mt-1 text-xs text-slate-500">{deployment.device_name || 'Unknown device'} · {deployment.status || 'pending'}</div>
+                </div>
+              ))}
+              {!deployments.length && (
+                <div className="rounded-2xl border border-dashed border-slate-200 p-4 text-sm text-slate-500">
+                  No deployments yet.
+                </div>
+              )}
+            </div>
+          </section>
+        </div>
+      </section>
     </div>
   );
 }

@@ -159,6 +159,13 @@ type TrainingJob = {
   created_at: string; started_at?: string; completed_at?: string;
 };
 type TrainedModel = { id: number; job_id: string; name: string; architecture: string; accuracy: number | null; size_mb: number | null; created_at: string };
+type PretrainedModel = {
+  key: string;
+  name: string;
+  architecture: string;
+  data_type: string;
+  description: string;
+};
 
 const STATUS_CONFIG: Record<string, { color: string; bg: string; icon: React.ElementType }> = {
   pending: { color: 'text-yellow-400', bg: 'bg-yellow-500/20', icon: Clock },
@@ -236,6 +243,16 @@ const MODEL_OPTIONS: ModelOption[] = [
     label: 'ML: XGBoost',
     description: 'Gradient boosting (high performance, handles missing data)',
     supported_data: ['imu', 'csi', 'sensor', 'other']
+  },
+];
+
+const PRETRAINED_MODELS: PretrainedModel[] = [
+  {
+    key: 'opencv_person_detector',
+    name: 'OpenCV Person Detector',
+    architecture: 'opencv_person_detector',
+    data_type: 'image',
+    description: 'Pretrained HOG + SVM person detector for quick workflow validation.',
   },
 ];
 
@@ -443,7 +460,12 @@ export default function TrainingPage() {
     renamingModel: null as number | null,
     deployingModel: null as number | null,
   });
-  const [showDeployModal, setShowDeployModal] = useState<{modelId: number; modelName: string} | null>(null);
+  const [showDeployModal, setShowDeployModal] = useState<{
+    kind: 'trained' | 'pretrained';
+    modelId?: number;
+    modelKey?: string;
+    modelName: string;
+  } | null>(null);
   const [devices, setDevices] = useState<{device_id: string; device_name: string; online: boolean; device_type: string; last_seen?: string}[]>([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState<string>('');
   const [devicesLoading, setDevicesLoading] = useState(false);
@@ -1051,17 +1073,28 @@ export default function TrainingPage() {
 
   const handleDeployModel = async () => {
     if (!showDeployModal || !selectedDeviceId) return;
-    setOperations(prev => ({ ...prev, deployingModel: showDeployModal.modelId }));
+    const deploymentKey = showDeployModal.modelId ?? -1;
+    setOperations(prev => ({ ...prev, deployingModel: deploymentKey }));
     try {
-      const result = await post(`/datasets/models/${showDeployModal.modelId}/deploy`, {
-        model_id: showDeployModal.modelId,
-        device_id: selectedDeviceId,
-        config: {
-          prediction_duration: deployConfig.prediction_duration,
-          prediction_interval: deployConfig.prediction_interval,
-          actions: deployConfig.actions,
-        },
-      });
+      const result = showDeployModal.kind === 'pretrained'
+        ? await post('/datasets/models/pretrained/deploy', {
+            model_key: showDeployModal.modelKey,
+            device_id: selectedDeviceId,
+            config: {
+              prediction_duration: deployConfig.prediction_duration,
+              prediction_interval: deployConfig.prediction_interval,
+              actions: deployConfig.actions,
+            },
+          })
+        : await post(`/datasets/models/${showDeployModal.modelId}/deploy`, {
+            model_id: showDeployModal.modelId,
+            device_id: selectedDeviceId,
+            config: {
+              prediction_duration: deployConfig.prediction_duration,
+              prediction_interval: deployConfig.prediction_interval,
+              actions: deployConfig.actions,
+            },
+          });
       if (result?.success) {
         toast.success('Deployment Sent', `${result.model_name || showDeployModal.modelName} sent to device. Awaiting confirmation on device dashboard.`);
         setShowDeployModal(null);
@@ -1991,10 +2024,43 @@ export default function TrainingPage() {
                   <h3 className="text-xl font-medium text-white mb-2">Loading Trained Models</h3>
                   <p className="text-slate-400">Fetching your models...</p>
                 </div>
-              ) : trainedModels.length === 0 ? (
-                <div className="text-center py-12 bg-slate-800/50 rounded-xl border border-slate-700"><Brain className="w-16 h-16 text-slate-500 mx-auto mb-4" /><h3 className="text-xl font-medium text-white mb-2">No Trained Models</h3><p className="text-slate-400">Complete a training job to see models here</p></div>
               ) : (
-                <div className="bg-slate-800/50 rounded-xl border border-slate-700 overflow-hidden">
+                <div className="space-y-6">
+                  <section className="rounded-xl border border-slate-700 bg-slate-800/50 p-5">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <div className="text-xs uppercase tracking-[0.18em] text-slate-400">Pretrained</div>
+                        <h3 className="mt-1 text-lg font-semibold text-white">Built-in demo models</h3>
+                      </div>
+                    </div>
+                    <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                      {PRETRAINED_MODELS.map((model) => (
+                        <div key={model.key} className="rounded-xl border border-slate-700 bg-slate-900 p-4">
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <div className="text-sm font-semibold text-white">{model.name}</div>
+                              <div className="mt-1 text-xs uppercase tracking-[0.16em] text-cyan-300">{model.data_type}</div>
+                            </div>
+                            <span className="rounded-full bg-cyan-500/15 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-cyan-200">Pretrained</span>
+                          </div>
+                          <p className="mt-3 text-sm leading-6 text-slate-300">{model.description}</p>
+                          <div className="mt-4 flex gap-2">
+                            <button
+                              type="button"
+                              onClick={() => { setShowDeployModal({ kind: 'pretrained', modelKey: model.key, modelName: model.name }); loadDevices(); }}
+                              className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-500"
+                            >
+                              <Rocket className="h-4 w-4" />
+                              Deploy
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </section>
+
+                  <div className="bg-slate-800/50 rounded-xl border border-slate-700 overflow-hidden">
+                  {trainedModels.length ? (
                   <table className="w-full">
                     <thead className="bg-slate-900/50"><tr><th className="px-6 py-3 text-left text-xs font-medium text-slate-400 uppercase">Select</th><th className="px-6 py-3 text-left text-xs font-medium text-slate-400 uppercase">Model</th><th className="px-6 py-3 text-left text-xs font-medium text-slate-400 uppercase">Architecture</th><th className="px-6 py-3 text-left text-xs font-medium text-slate-400 uppercase">Accuracy</th><th className="px-6 py-3 text-left text-xs font-medium text-slate-400 uppercase">Size</th><th className="px-6 py-3 text-left text-xs font-medium text-slate-400 uppercase">Created</th><th className="px-6 py-3 text-left text-xs font-medium text-slate-400 uppercase">Actions</th></tr></thead>
                     <tbody className="divide-y divide-slate-700">
@@ -2019,7 +2085,7 @@ export default function TrainingPage() {
                               )}
                             </button>
                             <button 
-                              onClick={() => { setShowDeployModal({ modelId: m.id, modelName: m.name }); loadDevices(); }} 
+                            onClick={() => { setShowDeployModal({ kind: 'trained', modelId: m.id, modelName: m.name }); loadDevices(); }}
                               disabled={operations.deployingModel === m.id}
                               className="flex items-center gap-1 px-2 py-1 text-green-400 hover:bg-green-500/10 disabled:text-green-600 disabled:hover:bg-green-500/5 rounded text-sm"
                             >
@@ -2056,7 +2122,15 @@ export default function TrainingPage() {
                       ))}
                     </tbody>
                   </table>
+                  ) : (
+                    <div className="px-6 py-12 text-center">
+                      <Brain className="w-12 h-12 text-slate-500 mx-auto mb-3" />
+                      <h3 className="text-lg font-medium text-white mb-1">No Trained Models</h3>
+                      <p className="text-slate-400 text-sm">Complete a training job to see models here.</p>
+                    </div>
+                  )}
                 </div>
+              </div>
               )}
             </div>
           )}
@@ -3641,10 +3715,10 @@ export default function TrainingPage() {
             <div className="flex gap-3 mt-6">
               <button
                 onClick={handleDeployModel}
-                disabled={!selectedDeviceId || operations.deployingModel === showDeployModal.modelId}
+                disabled={!selectedDeviceId || operations.deployingModel === (showDeployModal.modelId ?? -1)}
                 className="flex-1 px-4 py-2 bg-green-600 hover:bg-green-700 disabled:bg-slate-600 text-white rounded-lg font-medium flex items-center justify-center gap-2"
               >
-                {operations.deployingModel === showDeployModal.modelId ? (
+                {operations.deployingModel === (showDeployModal.modelId ?? -1) ? (
                   <><Loader2 className="w-4 h-4 animate-spin" /> Sending Request...</>
                 ) : (
                   <><Rocket className="w-4 h-4" /> Send Deployment Request</>

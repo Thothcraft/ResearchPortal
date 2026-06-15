@@ -17,8 +17,7 @@ export default function AuthPage() {
 
   useEffect(() => {
     if (isAuthenticated) {
-      const user = JSON.parse(localStorage.getItem('user') || '{}');
-      router.push(user.role === 1 ? '/admin' : '/home');
+      router.replace('/home');
     }
   }, [isAuthenticated, router]);
 
@@ -30,8 +29,7 @@ export default function AuthPage() {
     try {
       const success = await login(formData.username, formData.password);
       if (success) {
-        const user = JSON.parse(localStorage.getItem('user') || '{}');
-        router.push(user.role === 1 ? '/admin' : '/home');
+        router.replace('/home');
       }
     } finally {
       setIsSubmitting(false);
@@ -39,29 +37,29 @@ export default function AuthPage() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-100 p-4">
+    <div className="min-h-screen flex items-center justify-center bg-slate-950 p-4 text-slate-100">
       <div className="w-full max-w-md">
-        <div className="rounded-2xl bg-white shadow-xl overflow-hidden">
+        <div className="rounded-2xl border border-slate-800 bg-slate-900 shadow-2xl overflow-hidden">
           <div className="p-8">
             <div className="text-center mb-8">
-              <h1 className="text-3xl font-bold text-gray-900">Welcome to ThothCraft</h1>
-              <p className="mt-2 text-gray-500">Sign in to access your research portal</p>
+              <h1 className="text-3xl font-bold text-white">ThothCraft</h1>
+              <p className="mt-2 text-slate-400">Sign in to access your research portal</p>
             </div>
 
             {error && (
-              <div className="mb-6 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+              <div className="mb-6 rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-200">
                 {typeof error === 'string' ? error : 'An error occurred'}
               </div>
             )}
 
             <form onSubmit={handleSubmit} className="space-y-6">
               <div>
-                <label htmlFor="username" className="mb-1 block text-sm font-medium text-gray-700">
+                <label htmlFor="username" className="mb-1 block text-sm font-medium text-slate-300">
                   Username
                 </label>
                 <div className="relative">
                   <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
-                    <User className="h-5 w-5 text-gray-400" />
+                    <User className="h-5 w-5 text-slate-500" />
                   </div>
                   <input
                     id="username"
@@ -69,7 +67,7 @@ export default function AuthPage() {
                     type="text"
                     required
                     minLength={3}
-                    className="block w-full rounded-lg border border-gray-300 pl-10 pr-3 py-2 shadow-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    className="block w-full rounded-lg border border-slate-700 bg-slate-950 pl-10 pr-3 py-2 text-slate-100 shadow-sm outline-none placeholder:text-slate-500 focus:border-cyan-400 focus:ring-2 focus:ring-cyan-500/30"
                     placeholder="Enter your username"
                     value={formData.username}
                     onChange={(e) => setFormData({ ...formData, username: e.target.value })}
@@ -78,12 +76,12 @@ export default function AuthPage() {
               </div>
 
               <div>
-                <label htmlFor="password" className="mb-1 block text-sm font-medium text-gray-700">
+                <label htmlFor="password" className="mb-1 block text-sm font-medium text-slate-300">
                   Password
                 </label>
                 <div className="relative">
                   <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
-                    <Lock className="h-5 w-5 text-gray-400" />
+                    <Lock className="h-5 w-5 text-slate-500" />
                   </div>
                   <input
                     id="password"
@@ -91,7 +89,7 @@ export default function AuthPage() {
                     type={showPassword ? 'text' : 'password'}
                     required
                     minLength={6}
-                    className="block w-full rounded-lg border border-gray-300 pl-10 pr-10 py-2 shadow-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    className="block w-full rounded-lg border border-slate-700 bg-slate-950 pl-10 pr-10 py-2 text-slate-100 shadow-sm outline-none placeholder:text-slate-500 focus:border-cyan-400 focus:ring-2 focus:ring-cyan-500/30"
                     placeholder="Enter your password"
                     value={formData.password}
                     onChange={(e) => setFormData({ ...formData, password: e.target.value })}
@@ -102,9 +100,9 @@ export default function AuthPage() {
                     className="absolute inset-y-0 right-0 flex items-center pr-3"
                   >
                     {showPassword ? (
-                      <EyeOff className="h-5 w-5 text-gray-400 hover:text-gray-600" />
+                      <EyeOff className="h-5 w-5 text-slate-500 hover:text-slate-300" />
                     ) : (
-                      <Eye className="h-5 w-5 text-gray-400 hover:text-gray-600" />
+                      <Eye className="h-5 w-5 text-slate-500 hover:text-slate-300" />
                     )}
                   </button>
                 </div>
@@ -113,7 +111,7 @@ export default function AuthPage() {
               <button
                 type="submit"
                 disabled={isSubmitting}
-                className="flex w-full justify-center rounded-lg border border-transparent bg-indigo-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                className="flex w-full justify-center rounded-lg border border-transparent bg-cyan-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-cyan-500 focus:outline-none focus:ring-2 focus:ring-cyan-400 focus:ring-offset-2 focus:ring-offset-slate-900 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {isSubmitting ? 'Signing in...' : 'Sign in'}
               </button>

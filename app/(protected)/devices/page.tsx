@@ -1,14 +1,11 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import Link from 'next/link';
 import { useApi } from '@/hooks/useApi';
 import { useToast } from '@/contexts/ToastContext';
 import {
   Activity,
   Cpu,
-  Download,
-  Eye,
   FolderOpen,
   Monitor,
   RefreshCw,
@@ -17,11 +14,12 @@ import {
   Wifi,
   Camera,
   Mic,
-  Clock3,
   UploadCloud,
   PackageCheck,
   XCircle,
   Brain,
+  ToggleLeft,
+  ToggleRight,
 } from 'lucide-react';
 
 type Sensor = {
@@ -37,6 +35,7 @@ type DeviceHardwareInfo = {
   device_type?: string;
   is_raspberry_pi?: boolean;
   raspberry_pi_model?: string;
+  portal_upload_allowed?: boolean;
   sensors?: Sensor[];
   available_sensors?: Sensor[];
   system?: string;
@@ -68,27 +67,21 @@ type Deployment = {
   model_type?: string;
   status?: string;
   delivered_at?: string;
+  declined_at?: string;
   device_id?: string;
 };
 
-type MinuteSummary = {
-  minute: string;
-  path: string;
-  modified: string;
-  created: string;
-  deviceKey: string;
-  deviceLabel: string;
-  completed: boolean;
-  uploaded: boolean;
-  state: 'ready' | 'collecting';
-  files: {
-    video: boolean;
-    radar: boolean;
-    csi: boolean;
-    manifest: boolean;
-  };
-  sizes: Record<string, number>;
-  manifest?: any;
+type DeviceFileSummary = {
+  id: number;
+  filename: string;
+  size?: number;
+  file_type?: string;
+  created_at?: string;
+  modified_at?: string;
+  on_device: boolean;
+  on_cloud: boolean;
+  upload_requested: boolean;
+  last_synced?: string;
 };
 
 const getSensorIcon = (sensorType: string) => {
@@ -146,23 +139,6 @@ function getDeviceIdentity(device: Device) {
   return { key, label, aliases };
 }
 
-function getMinuteIdentity(minute: MinuteSummary) {
-  const manifest = minute.manifest || {};
-  const aliases = [
-    minute.deviceKey,
-    minute.deviceLabel,
-    manifest.device_id,
-    manifest.device_name,
-    manifest.host,
-    manifest.outputs?.video?.device,
-    manifest.outputs?.radar?.device,
-    manifest.outputs?.wifi?.device,
-  ]
-    .filter(Boolean)
-    .map(normalize);
-  return { aliases };
-}
-
 function humanBytes(bytes: number | null): string {
   if (!bytes) return '0 B';
   const units = ['B', 'KB', 'MB', 'GB'];
@@ -177,20 +153,17 @@ function humanBytes(bytes: number | null): string {
 
 function DeviceCard({
   device,
-  minutes,
+  files,
   deployments,
-  onUploadMinute,
-  onRefresh,
+  onRequestUpload,
 }: {
   device: Device;
-  minutes: MinuteSummary[];
+  files: DeviceFileSummary[];
   deployments: Deployment[];
-  onUploadMinute: (minute: string) => Promise<void>;
-  onRefresh: () => void;
+  onRequestUpload: (fileId: number) => Promise<void>;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [flipped, setFlipped] = useState(false);
-  const [uploading, setUploading] = useState<string | null>(null);
   const hardware = device.hardware_info || {};
   const sensors = hardware.sensors || hardware.available_sensors || [];
   const deviceType = hardware.device_type || device.device_type;
@@ -200,8 +173,8 @@ function DeviceCard({
     /arm|aarch/i.test(`${hardware.processor || ''} ${hardware.system || ''} ${hardware.raspberry_pi_model || ''}`)
   );
   const DeviceIcon = getDeviceIcon(deviceType, hardware.is_raspberry_pi);
-  const minuteCount = minutes.length;
-  const uploadedCount = minutes.filter((minute) => minute.uploaded).length;
+  const cloudCount = files.filter((file) => file.on_cloud).length;
+  const localCount = files.filter((file) => file.on_device).length;
   const deployedCount = deployments.length;
 
   useEffect(() => {
@@ -213,18 +186,6 @@ function DeviceCard({
     const frame = requestAnimationFrame(() => setFlipped(true));
     return () => cancelAnimationFrame(frame);
   }, [expanded]);
-
-  const handleUpload = async (minute: string) => {
-    setUploading(minute);
-    try {
-      await onUploadMinute(minute);
-      onRefresh();
-    } catch {
-      // toast already handled by parent
-    } finally {
-      setUploading(null);
-    }
-  };
 
   return (
     <>
@@ -245,12 +206,16 @@ function DeviceCard({
                 <span className={`h-2 w-2 rounded-full ${device.online ? 'bg-emerald-500' : 'bg-slate-400'}`} />
                 {device.online ? 'Online' : 'Offline'}
               </span>
+              <span className={`inline-flex items-center gap-2 rounded-full px-2.5 py-1 font-medium ${device.hardware_info?.portal_upload_allowed !== false ? 'bg-cyan-500/10 text-cyan-700' : 'bg-rose-500/10 text-rose-700'}`}>
+                {device.hardware_info?.portal_upload_allowed !== false ? <ToggleRight className="h-3.5 w-3.5" /> : <ToggleLeft className="h-3.5 w-3.5" />}
+                {device.hardware_info?.portal_upload_allowed !== false ? 'Portal uploads allowed' : 'Portal uploads disabled'}
+              </span>
               {hardware.raspberry_pi_model && (
                 <span className="rounded-full bg-slate-100 px-2.5 py-1 text-slate-600">{hardware.raspberry_pi_model}</span>
               )}
               <span className="rounded-full bg-slate-100 px-2.5 py-1 text-slate-600">{sensors.length} sensors</span>
-              <span className="rounded-full bg-slate-100 px-2.5 py-1 text-slate-600">{minuteCount} minutes</span>
-              <span className="rounded-full bg-slate-100 px-2.5 py-1 text-slate-600">{uploadedCount} uploaded</span>
+              <span className="rounded-full bg-slate-100 px-2.5 py-1 text-slate-600">{localCount} files</span>
+              <span className="rounded-full bg-slate-100 px-2.5 py-1 text-slate-600">{cloudCount} on cloud</span>
               <span className="rounded-full bg-slate-100 px-2.5 py-1 text-slate-600">{deployedCount} models</span>
             </div>
           </div>
@@ -259,7 +224,7 @@ function DeviceCard({
         <div className="flex flex-wrap gap-2">
           <a href="/data" onClick={(event) => event.stopPropagation()} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3.5 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
             <FolderOpen className="h-4 w-4" />
-            Minutes
+            Data
           </a>
           <button
             type="button"
@@ -353,58 +318,43 @@ function DeviceCard({
 
           <section>
             <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-slate-950">
-              <Clock3 className="h-4 w-4" />
-              Collected minutes
+              <FolderOpen className="h-4 w-4" />
+              Device file registry
             </div>
             <div className="space-y-2">
-              {minutes.length ? minutes.map((minute) => (
-                <div key={minute.minute} className="rounded-xl border border-slate-200 bg-white p-4">
+              {files.length ? files.slice(0, 12).map((file) => (
+                <div key={file.id} className="rounded-xl border border-slate-200 bg-white p-4">
                   <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                     <div className="min-w-0">
-                      <div className="font-mono text-sm font-semibold text-slate-950">{minute.minute}</div>
+                      <div className="truncate text-sm font-semibold text-slate-950">{file.filename}</div>
                       <div className="mt-1 flex flex-wrap gap-2 text-xs text-slate-500">
-                        <span>{minute.deviceLabel}</span>
-                        <span>Updated {new Date(minute.modified).toLocaleString()}</span>
-                        <span>{humanBytes((minute.sizes.video || 0) + (minute.sizes.radar || 0) + (minute.sizes.csi_timestamped || 0) + (minute.sizes.csi_serial || 0))}</span>
+                        <span>{file.file_type || 'unknown'}</span>
+                        <span>{humanBytes(file.size || 0)}</span>
+                        <span>{file.modified_at ? new Date(file.modified_at).toLocaleString() : 'N/A'}</span>
                       </div>
                       <div className="mt-2 flex flex-wrap gap-2 text-xs">
-                        <span className={`rounded-full px-2.5 py-1 font-medium ${minute.uploaded ? 'bg-blue-500/10 text-blue-700' : 'bg-amber-500/10 text-amber-700'}`}>
-                          {minute.uploaded ? 'Uploaded' : 'Local'}
-                        </span>
-                        <span className={`rounded-full px-2.5 py-1 font-medium ${minute.completed ? 'bg-emerald-500/10 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>
-                          {minute.completed ? 'Ready' : 'Collecting'}
-                        </span>
-                        <span className={`rounded-full px-2.5 py-1 font-medium ${minute.files.video ? 'bg-slate-100 text-slate-700' : 'bg-slate-100 text-slate-400'}`}>Video</span>
-                        <span className={`rounded-full px-2.5 py-1 font-medium ${minute.files.radar ? 'bg-slate-100 text-slate-700' : 'bg-slate-100 text-slate-400'}`}>Radar</span>
-                        <span className={`rounded-full px-2.5 py-1 font-medium ${minute.files.csi ? 'bg-slate-100 text-slate-700' : 'bg-slate-100 text-slate-400'}`}>CSI</span>
+                        <span className={`rounded-full px-2.5 py-1 font-medium ${file.on_device ? 'bg-slate-100 text-slate-700' : 'bg-slate-100 text-slate-400'}`}>On device</span>
+                        <span className={`rounded-full px-2.5 py-1 font-medium ${file.on_cloud ? 'bg-blue-500/10 text-blue-700' : 'bg-amber-500/10 text-amber-700'}`}>{file.on_cloud ? 'On cloud' : 'Local only'}</span>
+                        <span className={`rounded-full px-2.5 py-1 font-medium ${file.upload_requested ? 'bg-cyan-500/10 text-cyan-700' : 'bg-slate-100 text-slate-500'}`}>{file.upload_requested ? 'Upload requested' : 'No request'}</span>
                       </div>
                     </div>
                     <div className="flex flex-wrap gap-2">
-                      <Link href={`/data?minute=${minute.minute}`} onClick={(event) => event.stopPropagation()} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
-                        <Eye className="h-4 w-4" />
-                        View
-                      </Link>
-                      <a href={`/api/data/minutes/${minute.minute}/download`} onClick={(event) => event.stopPropagation()} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
-                        <Download className="h-4 w-4" />
-                        Download
-                      </a>
-                      {!minute.uploaded && (
+                      {!file.on_cloud && (
                         <button
                           type="button"
-                          onClick={() => handleUpload(minute.minute)}
+                          onClick={() => onRequestUpload(file.id)}
                           onClickCapture={(event) => event.stopPropagation()}
-                          disabled={uploading === minute.minute}
-                          className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-60"
+                          className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-500"
                         >
                           <UploadCloud className="h-4 w-4" />
-                          {uploading === minute.minute ? 'Uploading...' : 'Upload'}
+                          Request upload
                         </button>
                       )}
                     </div>
                   </div>
                 </div>
               )) : (
-                <div className="rounded-xl border border-dashed border-slate-200 p-4 text-sm text-slate-500">No minute folders assigned to this device yet.</div>
+                <div className="rounded-xl border border-dashed border-slate-200 p-4 text-sm text-slate-500">No device files found in Brain.</div>
               )}
             </div>
           </section>
@@ -444,27 +394,33 @@ function DeviceCard({
 
 export default function DevicesPage() {
   const [devices, setDevices] = useState<Device[]>([]);
-  const [minutes, setMinutes] = useState<MinuteSummary[]>([]);
+  const [deviceFiles, setDeviceFiles] = useState<Record<string, DeviceFileSummary[]>>({});
   const [deployments, setDeployments] = useState<Deployment[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const { get } = useApi();
+  const { get, post } = useApi();
   const toast = useToast();
 
   const loadData = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const [deviceRes, minuteRes, deployRes] = await Promise.all([
+      const [deviceRes, deployRes] = await Promise.all([
         get('/device/list?include_offline=true').catch(() => ({ devices: [] })),
-        fetch('/api/data/minutes', { cache: 'no-store' }).then((res) => res.json()).catch(() => ({ minutes: [] })),
         get('/datasets/models/deployments').catch(() => ({ deployments: [] })),
       ]);
 
       const remoteDevices = Array.isArray(deviceRes?.devices) ? deviceRes.devices : [];
       setDevices(remoteDevices);
-      setMinutes(Array.isArray(minuteRes?.minutes) ? minuteRes.minutes : []);
       setDeployments(Array.isArray(deployRes?.deployments) ? deployRes.deployments : []);
+
+      const fileEntries = await Promise.all(
+        remoteDevices.map(async (device: Device) => {
+          const response = await get(`/device/${device.device_uuid}/files`).catch(() => null);
+          return [device.device_uuid, Array.isArray(response?.files) ? response.files : []] as const;
+        })
+      );
+      setDeviceFiles(Object.fromEntries(fileEntries));
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to load devices';
       setError(message);
@@ -484,39 +440,35 @@ export default function DevicesPage() {
     const singleDevice = devices.length === 1;
     return devices.map((device) => {
       const identity = getDeviceIdentity(device);
-      const relatedMinutes = minutes.filter((minute) => {
-        const aliases = getMinuteIdentity(minute).aliases;
-        return aliases.some((alias) => identity.aliases.includes(alias));
-      });
+      const relatedFiles = deviceFiles[device.device_uuid] || [];
       const relatedDeployments = deployments.filter((deployment) => {
         if (singleDevice) return true;
         const target = normalize(deployment.device_id);
         return target && identity.aliases.includes(target);
       });
-      return { device, relatedMinutes, relatedDeployments };
+      return { device, relatedFiles, relatedDeployments };
     });
-  }, [devices, minutes, deployments]);
+  }, [devices, deviceFiles, deployments]);
 
-  const handleUploadMinute = async (minute: string) => {
+  const handleRequestUpload = async (fileId: number) => {
     try {
-      const response = await fetch(`/api/data/minutes/${minute}/upload`, { method: 'POST' });
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        throw new Error(payload?.error || 'Upload failed');
+      const response = await post(`/device/file/${fileId}/request-upload`, {});
+      if (!response?.success) {
+        throw new Error(response?.message || 'Request failed');
       }
-      toast.success('Uploaded', `Minute ${minute} uploaded to cloud`);
+      toast.success('Requested', 'Upload request sent to the device');
       await loadData();
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Upload failed';
-      toast.error('Upload Failed', message);
+      const message = err instanceof Error ? err.message : 'Request failed';
+      toast.error('Request Failed', message);
       throw err;
     }
   };
 
   const onlineCount = devices.filter((device) => device.online).length;
   const offlineCount = devices.length - onlineCount;
-  const totalMinutes = minutes.length;
-  const uploadedMinutes = minutes.filter((minute) => minute.uploaded).length;
+  const totalFiles = Object.values(deviceFiles).flat().length;
+  const uploadedFiles = Object.values(deviceFiles).flat().filter((file) => file.on_cloud).length;
 
   if (loading && !devices.length) {
     return (
@@ -534,7 +486,7 @@ export default function DevicesPage() {
             <div className="text-xs uppercase tracking-[0.22em] text-slate-500">Devices</div>
             <h1 className="mt-1 text-3xl font-semibold text-slate-950">Connected sensor devices</h1>
             <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">
-              Each device card shows online state, attached sensors, minute folders, cloud upload state, and deployed models.
+              Each device card shows online state, attached sensors, cloud file registry state, upload controls, and deployed models.
             </p>
           </div>
           <button
@@ -557,12 +509,12 @@ export default function DevicesPage() {
             <div className="mt-1 text-2xl font-semibold text-emerald-700">{onlineCount}</div>
           </div>
           <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-            <div className="text-xs uppercase tracking-wide text-slate-500">Minutes</div>
-            <div className="mt-1 text-2xl font-semibold text-slate-950">{totalMinutes}</div>
+            <div className="text-xs uppercase tracking-wide text-slate-500">Files</div>
+            <div className="mt-1 text-2xl font-semibold text-slate-950">{totalFiles}</div>
           </div>
           <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-            <div className="text-xs uppercase tracking-wide text-slate-500">Uploaded</div>
-            <div className="mt-1 text-2xl font-semibold text-blue-700">{uploadedMinutes}</div>
+            <div className="text-xs uppercase tracking-wide text-slate-500">Cloud</div>
+            <div className="mt-1 text-2xl font-semibold text-blue-700">{uploadedFiles}</div>
           </div>
         </div>
 
@@ -575,14 +527,13 @@ export default function DevicesPage() {
       </section>
 
       <section className="space-y-4">
-        {deviceRows.length ? deviceRows.map(({ device, relatedMinutes, relatedDeployments }) => (
+        {deviceRows.length ? deviceRows.map(({ device, relatedFiles, relatedDeployments }) => (
           <DeviceCard
             key={device.device_uuid || device.device_id}
             device={device}
-            minutes={relatedMinutes}
+            files={relatedFiles}
             deployments={relatedDeployments}
-            onUploadMinute={handleUploadMinute}
-            onRefresh={loadData}
+            onRequestUpload={handleRequestUpload}
           />
         )) : (
           <div className="rounded-2xl border border-dashed border-slate-200 bg-white p-8 text-sm text-slate-500 shadow-sm">
