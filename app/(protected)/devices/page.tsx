@@ -203,6 +203,7 @@ function DeviceCard({
   const uploadedCount = minutes.filter((minute) => minute.uploaded).length;
   const deployedCount = deployments.length;
   const connectHost = device.ip_address || 'thoth.local';
+  const showConnect = isRaspberryPi || device.device_type === 'thoth' || hardware.device_type === 'thoth';
   const connectUrl = connectHost.includes(':')
     ? `http://[${connectHost}]:5000/connect`
     : `http://${connectHost}:5000/connect`;
@@ -246,7 +247,7 @@ function DeviceCard({
         </div>
 
         <div className="flex flex-wrap gap-2">
-          {device.online && isRaspberryPi && (
+          {showConnect && (
             <a
               href={connectUrl}
               target="_blank"

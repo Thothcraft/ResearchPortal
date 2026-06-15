@@ -26,6 +26,7 @@ type MinuteSummary = {
   created: string;
   deviceKey: string;
   deviceLabel: string;
+  labels: string[];
   completed: boolean;
   uploaded: boolean;
   state: 'ready' | 'collecting';
@@ -96,7 +97,7 @@ function splitCsvLine(line: string): string[] {
   return cells;
 }
 
-function parseCsiAverageSeries(text: string, limit = 180): number[] {
+function parseCsiAverageSeries(text: string, limit = 5000): number[] {
   const series: number[] = [];
   const lines = text.split('\n').map((line) => line.trim()).filter(Boolean);
   if (!lines.length) return series;
@@ -215,6 +216,17 @@ function normalize(value: unknown): string {
     .replace(/^-+|-+$/g, '');
 }
 
+function parseLabels(value: string): string[] {
+  return Array.from(
+    new Set(
+      value
+        .split(',')
+        .map((label) => label.trim().replace(/\s+/g, ' '))
+        .filter(Boolean)
+    )
+  );
+}
+
 export default function DataPage() {
   const searchParams = useSearchParams();
   const [minutes, setMinutes] = useState<MinuteSummary[]>([]);
@@ -226,10 +238,13 @@ export default function DataPage() {
   const [startMinute, setStartMinute] = useState('');
   const [endMinute, setEndMinute] = useState('');
   const [selectedMinute, setSelectedMinute] = useState<string | null>(null);
+  const [selectedMinutes, setSelectedMinutes] = useState<string[]>([]);
   const [detail, setDetail] = useState<MinuteDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [csiSeries, setCsiSeries] = useState<number[]>([]);
   const [uploadingMinute, setUploadingMinute] = useState<string | null>(null);
+  const [labelInput, setLabelInput] = useState('');
+  const [labelBusy, setLabelBusy] = useState(false);
 
   const loadMinutes = useCallback(async () => {
     setLoading(true);
@@ -244,6 +259,7 @@ export default function DataPage() {
       const list = Array.isArray(payload.minutes) ? payload.minutes : [];
       setMinutes(list);
       setSelectedMinute((current) => current && list.some((minute: MinuteSummary) => minute.minute === current) ? current : (searchParams.get('minute') || list[0]?.minute || null));
+      setSelectedMinutes((current) => current.filter((minute) => list.some((item: MinuteSummary) => item.minute === minute)));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load minute folders');
     } finally {
@@ -304,6 +320,40 @@ export default function DataPage() {
     }
   }, [loadMinuteDetail, loadMinutes, selectedMinute]);
 
+  const applyLabels = useCallback(async (minutesToLabel: string[], replace = false) => {
+    const labels = parseLabels(labelInput);
+    if (!labels.length || !minutesToLabel.length) {
+      return;
+    }
+
+    setLabelBusy(true);
+    try {
+      const endpoint = minutesToLabel.length === 1
+        ? `/api/data/minutes/${minutesToLabel[0]}/labels`
+        : '/api/data/minutes/labels';
+      const response = await fetch(endpoint, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(minutesToLabel.length === 1
+          ? { labels, replace }
+          : { minutes: minutesToLabel, labels, replace }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload?.error || 'Failed to update labels');
+      }
+      setLabelInput('');
+      await loadMinutes();
+      if (selectedMinute) {
+        await loadMinuteDetail(selectedMinute);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to update labels');
+    } finally {
+      setLabelBusy(false);
+    }
+  }, [labelInput, loadMinuteDetail, loadMinutes, selectedMinute]);
+
   useEffect(() => {
     loadMinutes();
   }, [loadMinutes]);
@@ -362,6 +412,15 @@ export default function DataPage() {
   );
 
   const groupedDeviceCount = deviceOptions.length;
+  const selectedCount = selectedMinutes.length;
+
+  const toggleSelectedMinute = (minute: string) => {
+    setSelectedMinutes((current) => (
+      current.includes(minute)
+        ? current.filter((item) => item !== minute)
+        : [...current, minute]
+    ));
+  };
 
   return (
     <div className="space-y-6">
@@ -463,6 +522,46 @@ export default function DataPage() {
             {error}
           </div>
         )}
+
+        <div className="mt-4 flex flex-col gap-3 rounded-xl border border-slate-200 bg-slate-50 p-4 lg:flex-row lg:items-end lg:justify-between">
+          <div className="min-w-0 flex-1">
+            <div className="text-xs uppercase tracking-wide text-slate-500">Labels</div>
+            <input
+              value={labelInput}
+              onChange={(event) => setLabelInput(event.target.value)}
+              placeholder="Add labels, comma separated"
+              className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none placeholder:text-slate-400"
+            />
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => selectedMinute ? applyLabels([selectedMinute]) : undefined}
+              disabled={!selectedMinute || !labelInput.trim() || labelBusy}
+              className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-3.5 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
+            >
+              {labelBusy && selectedMinute ? 'Saving...' : 'Label selected minute'}
+            </button>
+            <button
+              type="button"
+              onClick={() => selectedMinutes.length ? applyLabels(selectedMinutes) : undefined}
+              disabled={!selectedMinutes.length || !labelInput.trim() || labelBusy}
+              className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100 disabled:opacity-50"
+            >
+              {labelBusy && selectedMinutes.length ? 'Saving...' : `Label ${selectedCount} selected`}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setLabelInput('');
+                setSelectedMinutes([]);
+              }}
+              className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100"
+            >
+              Clear
+            </button>
+          </div>
+        </div>
       </section>
 
       <section className="grid gap-4 lg:grid-cols-2 2xl:grid-cols-3">
@@ -483,11 +582,27 @@ export default function DataPage() {
                 >
                   <div className="min-w-0">
                     <div className="flex items-center gap-2 text-xs uppercase tracking-[0.18em] text-slate-500">
+                      <input
+                        type="checkbox"
+                        checked={selectedMinutes.includes(minute.minute)}
+                        onChange={() => toggleSelectedMinute(minute.minute)}
+                        onClick={(event) => event.stopPropagation()}
+                        className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                      />
                       <CalendarDays className="h-4 w-4" />
                       Minute folder
                     </div>
                     <h2 className="mt-2 truncate text-xl font-semibold text-slate-950">{minute.minute}</h2>
                     <div className="mt-1 text-sm text-slate-600">{minute.deviceLabel}</div>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {(minute.labels || []).length ? minute.labels.map((label) => (
+                        <span key={label} className="rounded-full bg-slate-100 px-2.5 py-1 text-xs text-slate-600">
+                          {label}
+                        </span>
+                      )) : (
+                        <span className="rounded-full bg-slate-50 px-2.5 py-1 text-xs text-slate-400">No labels</span>
+                      )}
+                    </div>
                     <div className="mt-2 flex flex-wrap gap-2">
                       <FileBadge label="Video" ok={minute.files.video} />
                       <FileBadge label="Radar" ok={minute.files.radar} />
@@ -690,6 +805,37 @@ export default function DataPage() {
                   <FileBadge label="Video MP4" ok={detail.files.video} />
                   <FileBadge label="Radar BIN" ok={detail.files.radar} />
                   <FileBadge label="CSI CSV/JSONL" ok={detail.files.csi} />
+                </div>
+              </div>
+
+              <div className="rounded-xl bg-slate-50 p-4">
+                <div className="text-xs uppercase tracking-wide text-slate-500">Labels</div>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {Array.isArray(detail.manifest?.labels) && detail.manifest.labels.length ? (
+                    detail.manifest.labels.map((label) => (
+                      <span key={label} className="rounded-full bg-indigo-600/10 px-2.5 py-1 text-xs font-medium text-indigo-700">{label}</span>
+                    ))
+                  ) : (
+                    <span className="text-sm text-slate-500">No labels yet.</span>
+                  )}
+                </div>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => selectedSummary ? setLabelInput((selectedSummary.labels || []).join(', ')) : undefined}
+                    disabled={!selectedSummary}
+                    className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100 disabled:opacity-50"
+                  >
+                    Load labels
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => selectedSummary ? applyLabels([selectedSummary.minute], true) : undefined}
+                    disabled={!selectedSummary || !labelInput.trim() || labelBusy}
+                    className="rounded-xl bg-slate-950 px-3 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-50"
+                  >
+                    {labelBusy ? 'Saving...' : 'Replace minute labels'}
+                  </button>
                 </div>
               </div>
 

@@ -18,6 +18,7 @@ export type MinuteSummary = {
   created: string;
   deviceKey: string;
   deviceLabel: string;
+  labels: string[];
   completed: boolean;
   state: 'ready' | 'collecting';
   uploaded: boolean;
@@ -55,6 +56,25 @@ function normalizeDeviceValue(value: unknown): string {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '');
+}
+
+function normalizeLabelValue(value: unknown): string {
+  return String(value || '')
+    .trim()
+    .replace(/\s+/g, ' ')
+    .replace(/^,+|,+$/g, '');
+}
+
+function extractLabels(manifest: any): string[] {
+  const labels = Array.isArray(manifest?.labels) ? manifest.labels : [];
+  const cleaned: string[] = [];
+  for (const label of labels) {
+    const value = normalizeLabelValue(label);
+    if (value && !cleaned.includes(value)) {
+      cleaned.push(value);
+    }
+  }
+  return cleaned;
 }
 
 function extractDeviceInfo(manifest: any, minuteDir: string): { deviceKey: string; deviceLabel: string; uploaded: boolean } {
@@ -108,6 +128,7 @@ export function listMinuteSummaries(): MinuteSummary[] {
     const paths = getMinutePaths(minuteDir);
     const manifest = readJsonPreview(paths.manifest);
     const deviceInfo = extractDeviceInfo(manifest, minuteDir);
+    const labels = extractLabels(manifest);
     const completed = Boolean(manifest?.capture_finished);
     minutes.push({
       minute: item,
@@ -116,6 +137,7 @@ export function listMinuteSummaries(): MinuteSummary[] {
       created: stat.birthtime.toISOString(),
       deviceKey: deviceInfo.deviceKey,
       deviceLabel: deviceInfo.deviceLabel,
+      labels,
       completed,
       state: completed ? 'ready' : 'collecting',
       uploaded: deviceInfo.uploaded,
@@ -153,6 +175,7 @@ export function getMinuteDetail(minute: string): MinuteDetail | null {
   const paths = getMinutePaths(minuteDir);
   const manifest = readJsonPreview(paths.manifest);
   const deviceInfo = extractDeviceInfo(manifest, minuteDir);
+  const labels = extractLabels(manifest);
   const completed = Boolean(manifest?.capture_finished);
   const summary = getMinuteSummary(minute) || {
     minute,
@@ -161,6 +184,7 @@ export function getMinuteDetail(minute: string): MinuteDetail | null {
     created: stat.birthtime.toISOString(),
     deviceKey: deviceInfo.deviceKey,
     deviceLabel: deviceInfo.deviceLabel,
+    labels,
     completed,
     state: completed ? 'ready' : 'collecting',
     uploaded: deviceInfo.uploaded,
