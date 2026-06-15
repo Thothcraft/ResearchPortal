@@ -48,6 +48,7 @@ export const useApi = () => {
     const response = await fetch(`${apiBaseUrl}${url}`, {
       method: 'GET',
       headers: getAuthHeaders(),
+      cache: 'no-store',
     });
 
     return handleResponse(response);
