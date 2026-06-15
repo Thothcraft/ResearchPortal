@@ -122,6 +122,11 @@ function normalize(value: unknown): string {
     .replace(/^-+|-+$/g, '');
 }
 
+function extractMinuteStamp(value: unknown): string | null {
+  const match = String(value || '').match(/\b\d{8}_\d{4}\b/);
+  return match ? match[0] : null;
+}
+
 function getDeviceIdentity(device: Device) {
   const hw = device.hardware_info || {};
   const label = device.device_name || device.device_id || hw.hostname || 'Unknown device';
@@ -176,6 +181,25 @@ function DeviceCard({
   const cloudCount = files.filter((file) => file.on_cloud).length;
   const localCount = files.filter((file) => file.on_device).length;
   const deployedCount = deployments.length;
+  const minuteBundles = useMemo(() => {
+    const grouped = new Map<string, DeviceFileSummary[]>();
+    files.forEach((file) => {
+      const minute = extractMinuteStamp(file.filename);
+      if (!minute) return;
+      const bucket = grouped.get(minute) || [];
+      bucket.push(file);
+      grouped.set(minute, bucket);
+    });
+    return Array.from(grouped.entries())
+      .map(([minute, minuteFiles]) => ({
+        minute,
+        files: minuteFiles.sort((a, b) => (a.filename || '').localeCompare(b.filename || '')),
+        localCount: minuteFiles.filter((file) => file.on_device).length,
+        cloudCount: minuteFiles.filter((file) => file.on_cloud).length,
+        uploadRequested: minuteFiles.some((file) => file.upload_requested),
+      }))
+      .sort((a, b) => b.minute.localeCompare(a.minute));
+  }, [files]);
 
   useEffect(() => {
     if (!expanded) {
@@ -213,7 +237,8 @@ function DeviceCard({
               {hardware.raspberry_pi_model && (
                 <span className="rounded-full bg-slate-100 px-2.5 py-1 text-slate-600">{hardware.raspberry_pi_model}</span>
               )}
-              <span className="rounded-full bg-slate-100 px-2.5 py-1 text-slate-600">{sensors.length} sensors</span>
+          <span className="rounded-full bg-slate-100 px-2.5 py-1 text-slate-600">{sensors.length} sensors</span>
+              <span className="rounded-full bg-slate-100 px-2.5 py-1 text-slate-600">{minuteBundles.length} minutes</span>
               <span className="rounded-full bg-slate-100 px-2.5 py-1 text-slate-600">{localCount} files</span>
               <span className="rounded-full bg-slate-100 px-2.5 py-1 text-slate-600">{cloudCount} on cloud</span>
               <span className="rounded-full bg-slate-100 px-2.5 py-1 text-slate-600">{deployedCount} models</span>
@@ -312,6 +337,47 @@ function DeviceCard({
                 );
               }) : (
                 <div className="rounded-xl border border-dashed border-slate-200 p-4 text-sm text-slate-500">No sensors detected.</div>
+              )}
+            </div>
+          </section>
+
+          <section>
+            <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-slate-950">
+              <FolderOpen className="h-4 w-4" />
+              Collected minutes
+            </div>
+            <div className="space-y-2">
+              {minuteBundles.length ? minuteBundles.map((minute) => (
+                <div key={minute.minute} className="rounded-xl border border-slate-200 bg-white p-4">
+                  <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                    <div>
+                      <div className="text-sm font-semibold text-slate-950">{minute.minute}</div>
+                      <div className="mt-1 flex flex-wrap gap-2 text-xs text-slate-500">
+                        <span>{minute.files.length} files</span>
+                        <span>{minute.localCount} local</span>
+                        <span>{minute.cloudCount} cloud</span>
+                      </div>
+                    </div>
+                    <span className={`inline-flex items-center gap-2 rounded-full px-2.5 py-1 text-xs font-medium ${minute.uploadRequested ? 'bg-cyan-500/10 text-cyan-700' : 'bg-slate-100 text-slate-500'}`}>
+                      <UploadCloud className="h-3.5 w-3.5" />
+                      {minute.uploadRequested ? 'Upload requested' : 'Local minute'}
+                    </span>
+                  </div>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {minute.files.slice(0, 8).map((file) => (
+                      <span key={file.id} className="rounded-full bg-slate-100 px-2.5 py-1 text-xs text-slate-600">
+                        {file.filename.replace(`${minute.minute}_`, '')}
+                      </span>
+                    ))}
+                    {minute.files.length > 8 && (
+                      <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs text-slate-500">
+                        +{minute.files.length - 8} more
+                      </span>
+                    )}
+                  </div>
+                </div>
+              )) : (
+                <div className="rounded-xl border border-dashed border-slate-200 p-4 text-sm text-slate-500">No minute folders found on this device.</div>
               )}
             </div>
           </section>
