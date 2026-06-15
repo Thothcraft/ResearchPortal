@@ -193,10 +193,18 @@ function DeviceCard({
   const hardware = device.hardware_info || {};
   const sensors = hardware.sensors || hardware.available_sensors || [];
   const deviceType = hardware.device_type || device.device_type;
+  const isRaspberryPi = Boolean(
+    hardware.is_raspberry_pi ||
+    /arm|aarch/i.test(`${hardware.processor || ''} ${hardware.system || ''} ${hardware.raspberry_pi_model || ''}`)
+  );
   const DeviceIcon = getDeviceIcon(deviceType, hardware.is_raspberry_pi);
   const minuteCount = minutes.length;
   const uploadedCount = minutes.filter((minute) => minute.uploaded).length;
   const deployedCount = deployments.length;
+  const connectHost = device.ip_address || 'thoth.local';
+  const connectUrl = connectHost.includes(':')
+    ? `http://[${connectHost}]:5000/connect`
+    : `http://${connectHost}:5000/connect`;
 
   const handleUpload = async (minute: string) => {
     setUploading(minute);
@@ -237,6 +245,17 @@ function DeviceCard({
         </div>
 
         <div className="flex flex-wrap gap-2">
+          {device.online && isRaspberryPi && (
+            <a
+              href={connectUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3.5 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+            >
+              <Monitor className="h-4 w-4" />
+              Connect
+            </a>
+          )}
           <a href="/data" className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3.5 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
             <FolderOpen className="h-4 w-4" />
             Minutes
