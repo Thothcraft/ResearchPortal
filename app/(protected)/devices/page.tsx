@@ -202,11 +202,6 @@ function DeviceCard({
   const minuteCount = minutes.length;
   const uploadedCount = minutes.filter((minute) => minute.uploaded).length;
   const deployedCount = deployments.length;
-  const connectHost = device.ip_address || 'thoth.local';
-  const showConnect = isRaspberryPi || device.device_type === 'thoth' || hardware.device_type === 'thoth';
-  const connectUrl = connectHost.includes(':')
-    ? `http://[${connectHost}]:5000/connect`
-    : `http://${connectHost}:5000/connect`;
 
   const handleUpload = async (minute: string) => {
     setUploading(minute);
@@ -247,17 +242,6 @@ function DeviceCard({
         </div>
 
         <div className="flex flex-wrap gap-2">
-          {showConnect && (
-            <a
-              href={connectUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3.5 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
-            >
-              <Monitor className="h-4 w-4" />
-              Connect
-            </a>
-          )}
           <a href="/data" className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3.5 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
             <FolderOpen className="h-4 w-4" />
             Minutes
