@@ -195,6 +195,7 @@ function DeviceCard({
   const deviceType = hardware.device_type || device.device_type;
   const isRaspberryPi = Boolean(
     hardware.is_raspberry_pi ||
+    device.device_type === 'thoth' ||
     /arm|aarch/i.test(`${hardware.processor || ''} ${hardware.system || ''} ${hardware.raspberry_pi_model || ''}`)
   );
   const DeviceIcon = getDeviceIcon(deviceType, hardware.is_raspberry_pi);
