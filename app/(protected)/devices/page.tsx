@@ -189,6 +189,7 @@ function DeviceCard({
   onRefresh: () => void;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const [flipped, setFlipped] = useState(false);
   const [uploading, setUploading] = useState<string | null>(null);
   const hardware = device.hardware_info || {};
   const sensors = hardware.sensors || hardware.available_sensors || [];
@@ -203,6 +204,16 @@ function DeviceCard({
   const uploadedCount = minutes.filter((minute) => minute.uploaded).length;
   const deployedCount = deployments.length;
 
+  useEffect(() => {
+    if (!expanded) {
+      setFlipped(false);
+      return;
+    }
+
+    const frame = requestAnimationFrame(() => setFlipped(true));
+    return () => cancelAnimationFrame(frame);
+  }, [expanded]);
+
   const handleUpload = async (minute: string) => {
     setUploading(minute);
     try {
@@ -216,7 +227,11 @@ function DeviceCard({
   };
 
   return (
-    <article className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+    <>
+    <article
+      className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm cursor-pointer transition-transform duration-300 hover:-translate-y-0.5 hover:shadow-md"
+      onClick={() => setExpanded(true)}
+    >
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div className="flex items-start gap-4">
           <div className="rounded-2xl bg-slate-950 p-3 text-white">
@@ -242,16 +257,19 @@ function DeviceCard({
         </div>
 
         <div className="flex flex-wrap gap-2">
-          <a href="/data" className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3.5 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
+          <a href="/data" onClick={(event) => event.stopPropagation()} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3.5 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
             <FolderOpen className="h-4 w-4" />
             Minutes
           </a>
           <button
             type="button"
-            onClick={() => setExpanded((value) => !value)}
+            onClick={(event) => {
+              event.stopPropagation();
+              setExpanded(true);
+            }}
             className="inline-flex items-center gap-2 rounded-xl bg-slate-950 px-3.5 py-2 text-sm font-medium text-white hover:bg-slate-800"
           >
-            {expanded ? 'Collapse' : 'Expand'}
+            Open
           </button>
         </div>
       </div>
@@ -275,8 +293,33 @@ function DeviceCard({
         </div>
       </div>
 
+    </article>
+
       {expanded && (
-        <div className="mt-5 space-y-5">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-4 backdrop-blur-sm" onClick={() => setExpanded(false)}>
+          <div className="w-full max-w-6xl" style={{ perspective: '1600px' }} onClick={(event) => event.stopPropagation()}>
+            <div
+              className="rounded-3xl border border-slate-200 bg-white shadow-2xl transition-transform duration-300 ease-out"
+              style={{
+                transformStyle: 'preserve-3d',
+                backfaceVisibility: 'hidden',
+                transform: flipped ? 'rotateY(0deg) translateY(0)' : 'rotateY(-18deg) translateY(8px)',
+              }}
+            >
+              <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
+                <div>
+                  <div className="text-xs uppercase tracking-[0.18em] text-slate-500">Device details</div>
+                  <div className="mt-1 text-xl font-semibold text-slate-950">{device.device_name || device.device_id}</div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setExpanded(false)}
+                  className="rounded-xl border border-slate-200 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                >
+                  Close
+                </button>
+              </div>
+              <div className="max-h-[80vh] overflow-auto p-5 space-y-5">
           <section>
             <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-slate-950">
               <Activity className="h-4 w-4" />
@@ -337,11 +380,11 @@ function DeviceCard({
                       </div>
                     </div>
                     <div className="flex flex-wrap gap-2">
-                      <Link href={`/data?minute=${minute.minute}`} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
+                      <Link href={`/data?minute=${minute.minute}`} onClick={(event) => event.stopPropagation()} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
                         <Eye className="h-4 w-4" />
                         View
                       </Link>
-                      <a href={`/api/data/minutes/${minute.minute}/download`} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
+                      <a href={`/api/data/minutes/${minute.minute}/download`} onClick={(event) => event.stopPropagation()} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
                         <Download className="h-4 w-4" />
                         Download
                       </a>
@@ -349,6 +392,7 @@ function DeviceCard({
                         <button
                           type="button"
                           onClick={() => handleUpload(minute.minute)}
+                          onClickCapture={(event) => event.stopPropagation()}
                           disabled={uploading === minute.minute}
                           className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-60"
                         >
@@ -389,9 +433,12 @@ function DeviceCard({
               )}
             </div>
           </section>
+              </div>
+            </div>
+          </div>
         </div>
       )}
-    </article>
+    </>
   );
 }
 

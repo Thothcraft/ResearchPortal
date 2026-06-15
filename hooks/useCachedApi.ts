@@ -33,7 +33,9 @@ export function useCachedApi() {
   }, []);
 
   const get = useCallback(async <T = any>(endpoint: string): Promise<T | null> => {
-    const response = await fetch(`${apiBaseUrl}${endpoint}`, {
+    const hasQuery = endpoint.includes('?');
+    const cacheBusted = `${endpoint}${hasQuery ? '&' : '?'}_ts=${Date.now()}`;
+    const response = await fetch(`${apiBaseUrl}${cacheBusted}`, {
       method: 'GET',
       headers: getAuthHeaders(),
       cache: 'no-store',

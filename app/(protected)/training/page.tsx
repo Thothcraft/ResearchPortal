@@ -293,12 +293,16 @@ export default function TrainingPage() {
   const [trainingJobs, setTrainingJobs] = useState<TrainingJob[]>([]);
   const [trainedModels, setTrainedModels] = useState<TrainedModel[]>([]);
   const [showTrainingConfig, setShowTrainingConfig] = useState(false);
-  const [preprocessingPipelines, setPreprocessingPipelines] = useState<PreprocessingPipelineSummary[]>([]);
-  const [pipelinesLoading, setPipelinesLoading] = useState(false);
   const [trainingWizardStep, setTrainingWizardStep] = useState<0 | 1 | 2 | 3>(0);
   const [preprocessingPreview, setPreprocessingPreview] = useState<PreprocessingPreview | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
+  const [preprocessingToggles, setPreprocessingToggles] = useState({
+    image_resize: true,
+    image_canny: true,
+    csi_subcarrier_filter: true,
+    radar_basic_preprocess: true,
+  });
   const [trainingConfig, setTrainingConfig] = useState({ 
     model_type: 'dl_cnn_lstm', 
     model_architecture: 'medium',
@@ -539,27 +543,6 @@ export default function TrainingPage() {
 
   useEffect(() => {
     if (!showTrainingConfig) return;
-
-    const loadPipelinesAndMethods = async () => {
-      setPipelinesLoading(true);
-      try {
-        const [pipelinesRes, methodsRes] = await Promise.all([
-          get('/processing/db-pipelines').catch(() => null),
-          get('/processing/preprocessing-methods').catch(() => null),
-        ]);
-
-        if (pipelinesRes?.pipelines) setPreprocessingPipelines(pipelinesRes.pipelines);
-        if (methodsRes?.methods) setPreprocessingMethods(methodsRes.methods);
-      } catch {}
-      finally { setPipelinesLoading(false); }
-    };
-
-    loadPipelinesAndMethods();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showTrainingConfig]);
-
-  useEffect(() => {
-    if (!showTrainingConfig) return;
     setTrainingWizardStep(0);
     setPreprocessingPreview(null);
     setPreviewError(null);
@@ -605,6 +588,7 @@ export default function TrainingPage() {
       try {
         const res = await post(`/datasets/${selectedDataset.id}/preprocessing/preview`, {
           preprocessing_pipeline_id: trainingConfig.preprocessing_pipeline_id,
+          preprocessing_steps: preprocessingToggles,
           data_type: trainingConfig.data_type,
           output_shape: trainingConfig.output_shape,
           window_size: trainingConfig.window_size,
@@ -631,6 +615,7 @@ export default function TrainingPage() {
     showTrainingConfig,
     selectedDataset?.id,
     trainingConfig.preprocessing_pipeline_id,
+    preprocessingToggles,
     trainingConfig.data_type,
     trainingConfig.output_shape,
     trainingConfig.window_size,
@@ -985,6 +970,7 @@ export default function TrainingPage() {
         model_name: trainingConfig.model_name || undefined,
         window_size: trainingConfig.window_size,
         preprocessing_pipeline_id: trainingConfig.preprocessing_pipeline_id,
+        preprocessing_steps: preprocessingToggles,
         data_type: resolvedDataType,
         output_shape: trainingConfig.output_shape,
         ml_params,
@@ -2454,34 +2440,64 @@ export default function TrainingPage() {
 
             {trainingWizardStep === 0 && (
               <div className="space-y-4">
-                {/* File-to-Pipeline Assignment */}
                 <div className="p-4 bg-slate-800/30 rounded-lg border border-slate-700">
-                  <div className="flex items-center justify-between mb-3">
-                    <h4 className="text-sm font-medium text-indigo-400">File → Pipeline → Split Assignment</h4>
-                    {pipelinesLoading ? <span className="text-xs text-slate-500">Loading pipelines...</span> : 
-                      <span className="text-xs text-slate-500">{preprocessingPipelines.length} saved pipeline(s)</span>
-                    }
+                  <div className="flex items-center justify-between gap-3 mb-3">
+                    <h4 className="text-sm font-medium text-indigo-400">Built-in preprocessing</h4>
+                    <span className="text-xs text-slate-500">Hardcoded per data type</span>
                   </div>
-                  <p className="text-xs text-slate-500 mb-2">
-                    Assign a preprocessing pipeline and train/test split to each file.
+                  <p className="text-xs text-slate-500 mb-3">
+                    The pipeline is fixed in code. You can only enable or disable the default steps.
                   </p>
-                  <div className="p-2 bg-slate-900/50 rounded border border-slate-700 mb-4">
-                    <p className="text-xs text-slate-400">
-                      <span className="text-yellow-400 font-medium">Default (Auto-detect)</span>: Uses built-in preprocessing based on detected data type:
-                    </p>
-                    <ul className="text-xs text-slate-500 mt-1 ml-4 list-disc">
-                      {getEffectiveDatasetType(selectedDataset) === 'image' ? (
-                        <li><span className="text-pink-400">Image</span>: Resize → Normalize → Augment (optional) → Batch</li>
-                      ) : (
-                        <>
-                          <li><span className="text-cyan-400">CSI</span>: Extract amplitude+phase → Filter subcarriers (5-32) → Window (1000 rows) → Flatten</li>
-                          <li><span className="text-green-400">IMU</span>: Window (128 rows) → Flatten to feature vector</li>
-                        </>
-                      )}
-                    </ul>
-                    <p className="text-xs text-slate-500 mt-1">
-                      For custom preprocessing, create a pipeline in the <span className="text-indigo-400">Processing</span> page.
-                    </p>
+                  <div className="grid gap-3 md:grid-cols-3">
+                    {getEffectiveDatasetType(selectedDataset) === 'image' && [
+                      { key: 'image_resize', label: 'Resize', description: 'Resize to the configured size.' },
+                      { key: 'image_canny', label: 'Canny edges', description: 'Optional edge extraction for person-detection workflows.' },
+                    ].map((step) => (
+                      <label key={step.key} className="flex items-start gap-3 rounded-lg border border-slate-700 bg-slate-900/40 p-3">
+                        <input
+                          type="checkbox"
+                          checked={preprocessingToggles[step.key as keyof typeof preprocessingToggles]}
+                          onChange={(e) => setPreprocessingToggles((prev) => ({ ...prev, [step.key]: e.target.checked }))}
+                          className="mt-1 h-4 w-4 rounded border-slate-600 bg-slate-800 text-indigo-500"
+                        />
+                        <div>
+                          <div className="text-sm font-medium text-white">{step.label}</div>
+                          <div className="text-xs text-slate-500">{step.description}</div>
+                        </div>
+                      </label>
+                    ))}
+                    {getEffectiveDatasetType(selectedDataset) === 'csi' && [
+                      { key: 'csi_subcarrier_filter', label: 'Subcarrier filter', description: 'Drop bad carriers and keep the stable 52-carrier set.' },
+                    ].map((step) => (
+                      <label key={step.key} className="flex items-start gap-3 rounded-lg border border-slate-700 bg-slate-900/40 p-3">
+                        <input
+                          type="checkbox"
+                          checked={preprocessingToggles[step.key as keyof typeof preprocessingToggles]}
+                          onChange={(e) => setPreprocessingToggles((prev) => ({ ...prev, [step.key]: e.target.checked }))}
+                          className="mt-1 h-4 w-4 rounded border-slate-600 bg-slate-800 text-indigo-500"
+                        />
+                        <div>
+                          <div className="text-sm font-medium text-white">{step.label}</div>
+                          <div className="text-xs text-slate-500">{step.description}</div>
+                        </div>
+                      </label>
+                    ))}
+                    {getEffectiveDatasetType(selectedDataset) === 'fmcw' && [
+                      { key: 'radar_basic_preprocess', label: 'Radar preprocess', description: 'Basic FMCW preprocessing used by the radar plots.' },
+                    ].map((step) => (
+                      <label key={step.key} className="flex items-start gap-3 rounded-lg border border-slate-700 bg-slate-900/40 p-3">
+                        <input
+                          type="checkbox"
+                          checked={preprocessingToggles[step.key as keyof typeof preprocessingToggles]}
+                          onChange={(e) => setPreprocessingToggles((prev) => ({ ...prev, [step.key]: e.target.checked }))}
+                          className="mt-1 h-4 w-4 rounded border-slate-600 bg-slate-800 text-indigo-500"
+                        />
+                        <div>
+                          <div className="text-sm font-medium text-white">{step.label}</div>
+                          <div className="text-xs text-slate-500">{step.description}</div>
+                        </div>
+                      </label>
+                    ))}
                   </div>
 
                   {selectedDataset?.files && selectedDataset.files.length > 0 ? (
@@ -2533,26 +2549,6 @@ export default function TrainingPage() {
                                 </div>
                               </div>
                               )}
-                              <div>
-                                <label className="block text-xs text-slate-400 mb-1">Pipeline</label>
-                                <select
-                                  value={assignment.pipeline_id ?? ''}
-                                  onChange={(e) => {
-                                    const newAssignments = { ...trainingConfig.file_assignments };
-                                    newAssignments[file.file_id] = { ...assignment, pipeline_id: e.target.value ? parseInt(e.target.value) : null };
-                                    setTrainingConfig({ ...trainingConfig, file_assignments: newAssignments });
-                                  }}
-                                  className="w-full px-2 py-1.5 bg-slate-800 border border-slate-600 rounded text-white text-sm"
-                                >
-                                  <option value="">Default (Auto-detect)</option>
-                                  {preprocessingPipelines.length === 0 && !pipelinesLoading && (
-                                    <option disabled>No saved pipelines - create in Processing page</option>
-                                  )}
-                                  {preprocessingPipelines.map(p => (
-                                    <option key={p.id} value={p.id}>{p.name} ({p.data_type}, {p.output_shape})</option>
-                                  ))}
-                                </select>
-                              </div>
                               <div>
                                 <label className="block text-xs text-slate-400 mb-1">Split</label>
                                 <select

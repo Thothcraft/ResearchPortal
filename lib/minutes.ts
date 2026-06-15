@@ -9,6 +9,7 @@ export type MinuteFiles = {
   radar: boolean;
   csi: boolean;
   manifest: boolean;
+  predictions: boolean;
 };
 
 export type MinuteSummary = {
@@ -113,6 +114,7 @@ function getMinutePaths(minuteDir: string) {
     csiTimestamped: names.includes('wifi_csi_timestamped.csv') ? path.join(minuteDir, 'wifi_csi_timestamped.csv') : null,
     csiSerial: names.includes('wifi_csi_serial_all.jsonl') ? path.join(minuteDir, 'wifi_csi_serial_all.jsonl') : null,
     manifest: names.includes('manifest.json') ? path.join(minuteDir, 'manifest.json') : null,
+    predictions: names.includes('predictions.json') ? path.join(minuteDir, 'predictions.json') : null,
     ffmpegLog: names.includes('usb_camera.ffmpeg.log') ? path.join(minuteDir, 'usb_camera.ffmpeg.log') : null,
   };
 }
@@ -146,6 +148,7 @@ export function listMinuteSummaries(): MinuteSummary[] {
         radar: !!paths.radar,
         csi: !!(paths.csiCsv || paths.csiTimestamped || paths.csiSerial),
         manifest: !!paths.manifest,
+        predictions: !!paths.predictions,
       },
       sizes: {
         video: paths.video ? fs.statSync(paths.video).size : 0,
@@ -193,6 +196,7 @@ export function getMinuteDetail(minute: string): MinuteDetail | null {
       radar: !!paths.radar,
       csi: !!(paths.csiCsv || paths.csiTimestamped || paths.csiSerial),
       manifest: !!paths.manifest,
+      predictions: !!paths.predictions,
     },
     sizes: {
       video: paths.video ? fs.statSync(paths.video).size : 0,
@@ -213,6 +217,7 @@ export function getMinuteDetail(minute: string): MinuteDetail | null {
       csi_timestamped: paths.csiTimestamped,
       csi_serial: paths.csiSerial,
       manifest: paths.manifest,
+      predictions: paths.predictions,
       ffmpeg_log: paths.ffmpegLog,
     },
     previews: {

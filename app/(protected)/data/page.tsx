@@ -35,6 +35,7 @@ type MinuteSummary = {
     radar: boolean;
     csi: boolean;
     manifest: boolean;
+    predictions: boolean;
   };
   sizes: Record<string, number>;
   manifest?: any;
@@ -794,6 +795,7 @@ export default function DataPage() {
                 <div className="text-xs uppercase tracking-wide text-slate-500">Files present</div>
                 <div className="mt-3 space-y-2">
                   <FileBadge label="Manifest" ok={detail.files.manifest} />
+                  <FileBadge label="Predictions" ok={detail.files.predictions} />
                   <FileBadge label="Video MP4" ok={detail.files.video} />
                   <FileBadge label="Radar BIN" ok={detail.files.radar} />
                   <FileBadge label="CSI CSV/JSONL" ok={detail.files.csi} />
@@ -838,6 +840,7 @@ export default function DataPage() {
                   <div className="break-all">{detail.filePaths.radar || 'Missing radar'}</div>
                   <div className="break-all">{detail.filePaths.csi_timestamped || 'Missing CSI timestamped CSV'}</div>
                   <div className="break-all">{detail.filePaths.csi_serial || 'Missing CSI serial log'}</div>
+                  <div className="break-all">{detail.filePaths.predictions || 'Missing predictions.json'}</div>
                 </div>
               </div>
 
