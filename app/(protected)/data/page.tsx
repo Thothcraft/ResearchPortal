@@ -367,14 +367,6 @@ export default function DataPage() {
     }
   }, [loadMinuteDetail, selectedMinute]);
 
-  useEffect(() => {
-    if (!selectedSummary || selectedSummary.state !== 'collecting') return;
-    const timer = window.setInterval(() => {
-      loadMinuteDetail(selectedSummary.minute);
-    }, 5000);
-    return () => window.clearInterval(timer);
-  }, [loadMinuteDetail, selectedSummary?.minute, selectedSummary?.state]);
-
   const deviceOptions = useMemo(() => {
     const seen = new Map<string, string>();
     for (const minute of minutes) {
@@ -431,7 +423,7 @@ export default function DataPage() {
             <h1 className="mt-1 text-3xl font-semibold text-slate-950">All minute folders</h1>
             <p className="mt-2 text-sm leading-6 text-slate-600">
               Only timestamped folders from <code className="rounded bg-slate-100 px-1.5 py-0.5 text-slate-900">/home/pi/Desktop/data</code> are shown.
-              Filter by device, time range, and cloud sync status.
+              Filter by device, time range, and cloud sync status, then open a minute for the full capture bundle.
             </p>
           </div>
 
