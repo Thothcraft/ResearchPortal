@@ -6,6 +6,8 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/contexts/ToastContext';
 import {
   Activity,
+  ChevronDown,
+  ChevronRight,
   Cpu,
   Download,
   FolderOpen,
@@ -127,6 +129,7 @@ function DevicePanel({
 }) {
   const hardware = device.hardware_info || {};
   const sensors = hardware.sensors || hardware.available_sensors || [];
+  const [expanded, setExpanded] = useState(false);
   const [draftLabel, setDraftLabel] = useState(settings.labels.join(', '));
   const [draftSensors, setDraftSensors] = useState<Record<string, boolean>>(settings.sensors);
 
@@ -161,8 +164,12 @@ function DevicePanel({
   };
 
   return (
-    <article className="border border-slate-300 bg-white">
-      <div className="flex flex-col gap-4 border-b border-slate-300 p-5 lg:flex-row lg:items-start lg:justify-between">
+    <article className={`border border-slate-300 ${device.online ? 'bg-white' : 'bg-slate-100 opacity-75 grayscale'}`}>
+      <button
+        type="button"
+        onClick={() => setExpanded((current) => !current)}
+        className="flex w-full flex-col gap-4 border-b border-slate-300 p-5 text-left lg:flex-row lg:items-start lg:justify-between"
+      >
         <div className="flex items-start gap-3">
           <div className="bg-slate-950 p-3 text-white">
             <Cpu className="h-5 w-5" />
@@ -177,14 +184,19 @@ function DevicePanel({
               <span className="border border-slate-300 bg-white px-2 py-1">IP {device.ip_address || 'N/A'}</span>
               <span className="border border-slate-300 bg-white px-2 py-1">Last seen {device.last_seen ? new Date(device.last_seen).toLocaleString() : 'N/A'}</span>
               <span className="border border-slate-300 bg-white px-2 py-1">{minuteBundles.length} captured minutes</span>
+              <span className="border border-slate-300 bg-white px-2 py-1">{expanded ? 'Expanded' : 'Collapsed'}</span>
             </div>
           </div>
         </div>
-        {hardware.raspberry_pi_model && (
-          <div className="max-w-sm text-sm font-medium text-slate-800">{hardware.raspberry_pi_model}</div>
-        )}
-      </div>
+        <div className="flex items-center gap-3">
+          {hardware.raspberry_pi_model && (
+            <div className="max-w-sm text-sm font-medium text-slate-800">{hardware.raspberry_pi_model}</div>
+          )}
+          {expanded ? <ChevronDown className="h-5 w-5 text-slate-700" /> : <ChevronRight className="h-5 w-5 text-slate-700" />}
+        </div>
+      </button>
 
+      {expanded && (
       <div className="grid gap-0 lg:grid-cols-[360px_1fr]">
         <section className="border-b border-slate-300 p-5 lg:border-b-0 lg:border-r">
           <div className="mb-4 flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-slate-800">
@@ -313,6 +325,7 @@ function DevicePanel({
           )}
         </section>
       </div>
+      )}
     </article>
   );
 }
@@ -326,8 +339,8 @@ export default function DevicesPage() {
   const { user } = useAuth();
   const toast = useToast();
 
-  const loadData = useCallback(async () => {
-    setLoading(true);
+  const loadData = useCallback(async (showLoading = false) => {
+    if (showLoading) setLoading(true);
     try {
       const deviceRes = await get('/device/list?include_offline=true').catch(() => ({ devices: [] }));
       const remoteDevices = Array.isArray(deviceRes?.devices) ? deviceRes.devices : [];
@@ -354,16 +367,14 @@ export default function DevicesPage() {
   }, [get, toast]);
 
   useEffect(() => {
-    loadData();
-    const timer = window.setInterval(loadData, 30000);
+    loadData(true);
+    const timer = window.setInterval(() => loadData(false), 10000);
     return () => window.clearInterval(timer);
   }, [loadData]);
 
   const rows = useMemo(() => devices.map((device) => {
-    const files = deviceFiles[device.device_uuid] || [];
-    const recentlySynced = files.some((file) => isRecent(file.last_synced || file.modified_at));
-    return { ...device, online: Boolean(device.online || isRecent(device.last_seen) || recentlySynced) };
-  }), [deviceFiles, devices]);
+    return { ...device, online: Boolean(device.online || isRecent(device.last_seen)) };
+  }), [devices]);
 
   const saveSettings = async (deviceId: string, nextSettings: CaptureSettings) => {
     const response = await put(`/device/${deviceId}/capture-settings`, nextSettings);
@@ -423,7 +434,7 @@ export default function DevicesPage() {
           </div>
           <button
             type="button"
-            onClick={loadData}
+            onClick={() => loadData(true)}
             className="inline-flex items-center gap-2 border border-slate-400 px-3 py-2 text-sm font-semibold text-slate-950 hover:bg-slate-100"
           >
             <RefreshCw className="h-4 w-4" />
