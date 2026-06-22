@@ -17,7 +17,6 @@ import {
   Users,
   BookOpen,
   Shield,
-  FolderOpen,
 } from 'lucide-react';
 import { useState } from 'react';
 
@@ -30,7 +29,6 @@ export default function Sidebar() {
   const baseItems = [
     { name: 'Home', href: '/home', icon: Home, description: 'Statistics & Overview' },
     { name: 'Devices', href: '/devices', icon: Monitor, description: 'Online/Offline Devices' },
-    { name: 'Captures', href: '/data', icon: FolderOpen, description: 'Minute capture folders' },
     { name: 'Training', href: '/training', icon: Brain, description: 'Model Training' },
     { name: 'Chatbot', href: '/chatbot', icon: MessageCircle, description: 'AI Assistant' },
   ];

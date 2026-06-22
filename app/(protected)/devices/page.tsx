@@ -2,10 +2,12 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useApi } from '@/hooks/useApi';
+import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/contexts/ToastContext';
 import {
   Activity,
   Cpu,
+  Download,
   FolderOpen,
   Monitor,
   RefreshCw,
@@ -80,6 +82,7 @@ type DeviceFileSummary = {
   modified_at?: string;
   on_device: boolean;
   on_cloud: boolean;
+  cloud_file_id?: number | null;
   upload_requested: boolean;
   last_synced?: string;
 };
@@ -156,16 +159,26 @@ function humanBytes(bytes: number | null): string {
   return `${value.toFixed(value >= 10 || unit === 0 ? 0 : 1)} ${units[unit]}`;
 }
 
+function isRecent(value?: string | null, windowMs = 10 * 60 * 1000): boolean {
+  if (!value) return false;
+  const time = new Date(value).getTime();
+  return Number.isFinite(time) && Date.now() - time <= windowMs;
+}
+
 function DeviceCard({
   device,
   files,
   deployments,
   onRequestUpload,
+  onDownloadCloudFile,
+  onDownloadMinute,
 }: {
   device: Device;
   files: DeviceFileSummary[];
   deployments: Deployment[];
   onRequestUpload: (fileId: number) => Promise<void>;
+  onDownloadCloudFile: (fileId: number, filename?: string) => Promise<void>;
+  onDownloadMinute: (minute: string, deviceId: string) => Promise<void>;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [flipped, setFlipped] = useState(false);
@@ -247,10 +260,6 @@ function DeviceCard({
         </div>
 
         <div className="flex flex-wrap gap-2">
-          <a href="/data" onClick={(event) => event.stopPropagation()} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3.5 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
-            <FolderOpen className="h-4 w-4" />
-            Data
-          </a>
           <button
             type="button"
             onClick={(event) => {
@@ -358,10 +367,22 @@ function DeviceCard({
                         <span>{minute.cloudCount} cloud</span>
                       </div>
                     </div>
-                    <span className={`inline-flex items-center gap-2 rounded-full px-2.5 py-1 text-xs font-medium ${minute.uploadRequested ? 'bg-cyan-500/10 text-cyan-700' : 'bg-slate-100 text-slate-500'}`}>
-                      <UploadCloud className="h-3.5 w-3.5" />
-                      {minute.uploadRequested ? 'Upload requested' : 'Local minute'}
-                    </span>
+                    <div className="flex flex-wrap gap-2">
+                      <span className={`inline-flex items-center gap-2 rounded-full px-2.5 py-1 text-xs font-medium ${minute.uploadRequested ? 'bg-cyan-500/10 text-cyan-700' : 'bg-slate-100 text-slate-500'}`}>
+                        <UploadCloud className="h-3.5 w-3.5" />
+                        {minute.uploadRequested ? 'Upload requested' : 'Local minute'}
+                      </span>
+                      {minute.cloudCount > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => onDownloadMinute(minute.minute, device.device_uuid)}
+                          className="inline-flex items-center gap-2 rounded-lg bg-slate-950 px-3 py-1.5 text-xs font-medium text-white hover:bg-slate-800"
+                        >
+                          <Download className="h-3.5 w-3.5" />
+                          Download minute
+                        </button>
+                      )}
+                    </div>
                   </div>
                   <div className="mt-3 flex flex-wrap gap-2">
                     {minute.files.slice(0, 8).map((file) => (
@@ -416,6 +437,17 @@ function DeviceCard({
                           Request upload
                         </button>
                       )}
+                      {file.on_cloud && file.cloud_file_id && (
+                        <button
+                          type="button"
+                          onClick={() => onDownloadCloudFile(file.cloud_file_id!, file.filename)}
+                          onClickCapture={(event) => event.stopPropagation()}
+                          className="inline-flex items-center gap-2 rounded-xl bg-slate-950 px-3 py-2 text-sm font-medium text-white hover:bg-slate-800"
+                        >
+                          <Download className="h-4 w-4" />
+                          Download
+                        </button>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -465,6 +497,7 @@ export default function DevicesPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const { get, post } = useApi();
+  const { user } = useAuth();
   const toast = useToast();
 
   const loadData = useCallback(async () => {
@@ -507,12 +540,14 @@ export default function DevicesPage() {
     return devices.map((device) => {
       const identity = getDeviceIdentity(device);
       const relatedFiles = deviceFiles[device.device_uuid] || [];
+      const recentlySynced = relatedFiles.some((file) => isRecent(file.last_synced || file.modified_at));
+      const displayDevice = { ...device, online: Boolean(device.online || isRecent(device.last_seen) || recentlySynced) };
       const relatedDeployments = deployments.filter((deployment) => {
         if (singleDevice) return true;
         const target = normalize(deployment.device_id);
         return target && identity.aliases.includes(target);
       });
-      return { device, relatedFiles, relatedDeployments };
+      return { device: displayDevice, relatedFiles, relatedDeployments };
     });
   }, [devices, deviceFiles, deployments]);
 
@@ -531,8 +566,41 @@ export default function DevicesPage() {
     }
   };
 
-  const onlineCount = devices.filter((device) => device.online).length;
-  const offlineCount = devices.length - onlineCount;
+  const downloadFromUrl = useCallback(async (url: string, fallbackName: string) => {
+    try {
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: user?.token ? { Authorization: `Bearer ${user.token}` } : undefined,
+        cache: 'no-store',
+      });
+      if (!response.ok) {
+        throw new Error(await response.text());
+      }
+      const blob = await response.blob();
+      const objectUrl = window.URL.createObjectURL(blob);
+      const disposition = response.headers.get('content-disposition') || '';
+      const match = disposition.match(/filename="?([^";]+)"?/i);
+      const anchor = document.createElement('a');
+      anchor.href = objectUrl;
+      anchor.download = match?.[1] || fallbackName;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.URL.revokeObjectURL(objectUrl);
+    } catch (err) {
+      toast.error('Download failed', err instanceof Error ? err.message : 'Unable to download');
+    }
+  }, [toast, user?.token]);
+
+  const handleDownloadCloudFile = useCallback(async (fileId: number, filename = 'file') => {
+    await downloadFromUrl(`/api/proxy/file/${fileId}`, filename);
+  }, [downloadFromUrl]);
+
+  const handleDownloadMinute = useCallback(async (minute: string, deviceId: string) => {
+    await downloadFromUrl(`/api/proxy/file/minute/${minute}/download?device_id=${encodeURIComponent(deviceId)}`, `${minute}.zip`);
+  }, [downloadFromUrl]);
+
+  const onlineCount = deviceRows.filter(({ device }) => device.online).length;
   const totalFiles = Object.values(deviceFiles).flat().length;
   const uploadedFiles = Object.values(deviceFiles).flat().filter((file) => file.on_cloud).length;
 
@@ -600,6 +668,8 @@ export default function DevicesPage() {
             files={relatedFiles}
             deployments={relatedDeployments}
             onRequestUpload={handleRequestUpload}
+            onDownloadCloudFile={handleDownloadCloudFile}
+            onDownloadMinute={handleDownloadMinute}
           />
         )) : (
           <div className="rounded-2xl border border-dashed border-slate-200 bg-white p-8 text-sm text-slate-500 shadow-sm">
