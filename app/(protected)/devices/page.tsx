@@ -97,9 +97,15 @@ function humanBytes(bytes?: number): string {
   return `${value.toFixed(value >= 10 || unit === 0 ? 0 : 1)} ${units[unit]}`;
 }
 
+function parseServerTime(value?: string | null): number {
+  if (!value) return NaN;
+  const normalized = /(?:Z|[+-]\d{2}:?\d{2})$/.test(value) ? value : `${value}Z`;
+  return new Date(normalized).getTime();
+}
+
 function isRecent(value?: string | null, windowMs = 10 * 60 * 1000): boolean {
   if (!value) return false;
-  const time = new Date(value).getTime();
+  const time = parseServerTime(value);
   return Number.isFinite(time) && Date.now() - time <= windowMs;
 }
 
@@ -183,7 +189,7 @@ function DevicePanel({
                 {(device.online || freshFileActivity) ? 'Online' : 'Offline'}
               </span>
               <span className="border border-slate-300 bg-white px-2 py-1">IP {device.ip_address || 'N/A'}</span>
-              <span className="border border-slate-300 bg-white px-2 py-1">Last seen {device.last_seen ? new Date(device.last_seen).toLocaleString() : 'N/A'}</span>
+              <span className="border border-slate-300 bg-white px-2 py-1">Last seen {device.last_seen ? new Date(parseServerTime(device.last_seen)).toLocaleString() : 'N/A'}</span>
               <span className="border border-slate-300 bg-white px-2 py-1">{minuteBundles.length} captured minutes</span>
               <span className="border border-slate-300 bg-white px-2 py-1">{expanded ? 'Expanded' : 'Collapsed'}</span>
             </div>
@@ -375,8 +381,8 @@ export default function DevicesPage() {
 
   const rows = useMemo(() => devices.map((device) => {
     const files = deviceFiles[device.device_uuid] || [];
-    const freshFileActivity = files.some((file) => isRecent(file.last_synced || file.modified_at, 3 * 60 * 1000));
-    return { ...device, online: Boolean(device.online || isRecent(device.last_seen, 3 * 60 * 1000) || freshFileActivity) };
+    const freshFileActivity = files.some((file) => isRecent(file.last_synced || file.modified_at, 15 * 60 * 1000));
+    return { ...device, online: Boolean(device.online || isRecent(device.last_seen, 15 * 60 * 1000) || freshFileActivity) };
   }), [deviceFiles, devices]);
 
   const saveSettings = async (deviceId: string, nextSettings: CaptureSettings) => {

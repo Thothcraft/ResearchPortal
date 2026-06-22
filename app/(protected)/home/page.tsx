@@ -51,10 +51,16 @@ const getSensorIcon = (sensorType: string) => {
   }
 };
 
+function parseServerTime(value?: string | null): number {
+  if (!value) return NaN;
+  const normalized = /(?:Z|[+-]\d{2}:?\d{2})$/.test(value) ? value : `${value}Z`;
+  return new Date(normalized).getTime();
+}
+
 const isDeviceOnline = (device: Device): boolean => {
   if (device.online) return true;
   if (device.last_seen) {
-    const lastSeenTime = new Date(device.last_seen).getTime();
+    const lastSeenTime = parseServerTime(device.last_seen);
     if (Number.isFinite(lastSeenTime) && Date.now() - lastSeenTime <= 15 * 60 * 1000) return true;
   }
   return false;
