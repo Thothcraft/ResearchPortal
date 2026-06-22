@@ -12,7 +12,7 @@ export const useApi = () => {
   tokenRef.current = user?.token;
 
   const getAuthHeaders = useCallback((): Record<string, string> => {
-    const token = tokenRef.current;
+    const token = tokenRef.current || (typeof window !== 'undefined' ? localStorage.getItem('auth_token') : null);
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
       'Accept': 'application/json',

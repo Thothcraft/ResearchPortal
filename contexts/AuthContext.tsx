@@ -26,24 +26,33 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User>(null);
-  const [isLoading, setIsLoading] = useState(false); // Start with false
+  const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const router = useRouter();
 
   // Load user from localStorage on mount
   useEffect(() => {
-    const token = localStorage.getItem('auth_token');
-    const userStr = localStorage.getItem('user');
-    
-    if (token && userStr) {
-      try {
-        const userData = JSON.parse(userStr);
-        setUser(userData);
-      } catch (e) {
-        console.error('Failed to parse user data:', e);
+    try {
+      const token = localStorage.getItem('auth_token');
+      const userStr = localStorage.getItem('user');
+
+      if (token && userStr) {
+        try {
+          const userData = JSON.parse(userStr);
+          setUser({ ...userData, token });
+        } catch (e) {
+          console.error('Failed to parse user data:', e);
+          localStorage.removeItem('auth_token');
+          localStorage.removeItem('user');
+        }
+      } else if (token) {
+        setUser({ username: 'user', token, role: 0 });
+      } else {
         localStorage.removeItem('auth_token');
         localStorage.removeItem('user');
       }
+    } finally {
+      setIsLoading(false);
     }
   }, []);
 

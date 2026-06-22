@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useApi } from '@/hooks/useApi';
 import { useToast } from '@/contexts/ToastContext';
+import { useAuth } from '@/contexts/AuthContext';
 import { Brain, Cpu, FolderOpen, RefreshCw, Radar, Wifi, Camera, Mic, Activity } from 'lucide-react';
 
 type Sensor = {
@@ -68,6 +69,7 @@ const isDeviceOnline = (device: Device): boolean => {
 
 export default function HomePage() {
   const { get } = useApi();
+  const { user, isLoading: authLoading } = useAuth();
   const toast = useToast();
   const [devices, setDevices] = useState<Device[]>([]);
   const [deployments, setDeployments] = useState<Deployment[]>([]);
@@ -75,6 +77,7 @@ export default function HomePage() {
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
+    if (authLoading || !user?.token) return;
     setLoading(true);
     setError(null);
     try {
@@ -91,11 +94,12 @@ export default function HomePage() {
     } finally {
       setLoading(false);
     }
-  }, [get, toast]);
+  }, [authLoading, get, toast, user?.token]);
 
   useEffect(() => {
+    if (authLoading || !user?.token) return;
     load();
-  }, [load]);
+  }, [authLoading, load, user?.token]);
 
   const normalizedDevices = useMemo(
     () => devices.map((device) => ({

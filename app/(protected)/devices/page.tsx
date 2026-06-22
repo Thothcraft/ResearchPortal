@@ -343,10 +343,11 @@ export default function DevicesPage() {
   const [settings, setSettings] = useState<Record<string, CaptureSettings>>({});
   const [loading, setLoading] = useState(true);
   const { get, post, put } = useApi();
-  const { user } = useAuth();
+  const { user, isLoading: authLoading } = useAuth();
   const toast = useToast();
 
   const loadData = useCallback(async (showLoading = false) => {
+    if (authLoading || !user?.token) return;
     if (showLoading) setLoading(true);
     try {
       const deviceRes = await get('/device/list?include_offline=true').catch(() => ({ devices: [] }));
@@ -371,13 +372,14 @@ export default function DevicesPage() {
     } finally {
       setLoading(false);
     }
-  }, [get, toast]);
+  }, [authLoading, get, toast, user?.token]);
 
   useEffect(() => {
+    if (authLoading || !user?.token) return;
     loadData(true);
     const timer = window.setInterval(() => loadData(false), 10000);
     return () => window.clearInterval(timer);
-  }, [loadData]);
+  }, [authLoading, loadData, user?.token]);
 
   const rows = useMemo(() => devices.map((device) => {
     const files = deviceFiles[device.device_uuid] || [];
