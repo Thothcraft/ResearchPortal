@@ -132,6 +132,7 @@ function DevicePanel({
   const [expanded, setExpanded] = useState(false);
   const [draftLabel, setDraftLabel] = useState(settings.labels.join(', '));
   const [draftSensors, setDraftSensors] = useState<Record<string, boolean>>(settings.sensors);
+  const freshFileActivity = files.some((file) => isRecent(file.last_synced || file.modified_at, 15 * 60 * 1000));
 
   useEffect(() => {
     setDraftLabel(settings.labels.join(', '));
@@ -164,7 +165,7 @@ function DevicePanel({
   };
 
   return (
-    <article className={`border border-slate-300 ${device.online ? 'bg-white' : 'bg-slate-100 opacity-75 grayscale'}`}>
+    <article className={`border border-slate-300 ${(device.online || freshFileActivity) ? 'bg-white' : 'bg-slate-100 opacity-75 grayscale'}`}>
       <button
         type="button"
         onClick={() => setExpanded((current) => !current)}
@@ -178,8 +179,8 @@ function DevicePanel({
             <div className="text-xs font-semibold uppercase tracking-wide text-slate-700">{device.device_type || hardware.device_type || 'device'}</div>
             <h2 className="mt-1 text-2xl font-semibold text-slate-950">{device.device_name || device.device_id}</h2>
             <div className="mt-2 flex flex-wrap gap-2 text-sm text-slate-700">
-              <span className={`border px-2 py-1 font-medium ${device.online ? 'border-emerald-700 bg-emerald-50 text-emerald-800' : 'border-slate-400 bg-slate-100 text-slate-700'}`}>
-                {device.online ? 'Online' : 'Offline'}
+              <span className={`border px-2 py-1 font-medium ${(device.online || freshFileActivity) ? 'border-emerald-700 bg-emerald-50 text-emerald-800' : 'border-slate-400 bg-slate-100 text-slate-700'}`}>
+                {(device.online || freshFileActivity) ? 'Online' : 'Offline'}
               </span>
               <span className="border border-slate-300 bg-white px-2 py-1">IP {device.ip_address || 'N/A'}</span>
               <span className="border border-slate-300 bg-white px-2 py-1">Last seen {device.last_seen ? new Date(device.last_seen).toLocaleString() : 'N/A'}</span>
@@ -373,8 +374,10 @@ export default function DevicesPage() {
   }, [loadData]);
 
   const rows = useMemo(() => devices.map((device) => {
-    return { ...device, online: Boolean(device.online || isRecent(device.last_seen)) };
-  }), [devices]);
+    const files = deviceFiles[device.device_uuid] || [];
+    const freshFileActivity = files.some((file) => isRecent(file.last_synced || file.modified_at, 15 * 60 * 1000));
+    return { ...device, online: Boolean(device.online || isRecent(device.last_seen, 15 * 60 * 1000) || freshFileActivity) };
+  }), [deviceFiles, devices]);
 
   const saveSettings = async (deviceId: string, nextSettings: CaptureSettings) => {
     const response = await put(`/device/${deviceId}/capture-settings`, nextSettings);
