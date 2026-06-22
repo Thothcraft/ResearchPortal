@@ -132,7 +132,7 @@ function DevicePanel({
   const [expanded, setExpanded] = useState(false);
   const [draftLabel, setDraftLabel] = useState(settings.labels.join(', '));
   const [draftSensors, setDraftSensors] = useState<Record<string, boolean>>(settings.sensors);
-  const freshFileActivity = files.some((file) => isRecent(file.last_synced || file.modified_at, 15 * 60 * 1000));
+  const freshFileActivity = files.some((file) => isRecent(file.last_synced || file.modified_at, 3 * 60 * 1000));
 
   useEffect(() => {
     setDraftLabel(settings.labels.join(', '));
@@ -375,8 +375,8 @@ export default function DevicesPage() {
 
   const rows = useMemo(() => devices.map((device) => {
     const files = deviceFiles[device.device_uuid] || [];
-    const freshFileActivity = files.some((file) => isRecent(file.last_synced || file.modified_at, 15 * 60 * 1000));
-    return { ...device, online: Boolean(device.online || isRecent(device.last_seen, 15 * 60 * 1000) || freshFileActivity) };
+    const freshFileActivity = files.some((file) => isRecent(file.last_synced || file.modified_at, 3 * 60 * 1000));
+    return { ...device, online: Boolean(device.online || isRecent(device.last_seen, 3 * 60 * 1000) || freshFileActivity) };
   }), [deviceFiles, devices]);
 
   const saveSettings = async (deviceId: string, nextSettings: CaptureSettings) => {

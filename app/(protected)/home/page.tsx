@@ -51,6 +51,17 @@ const getSensorIcon = (sensorType: string) => {
   }
 };
 
+const isDeviceOnline = (device: Device): boolean => {
+  if (device.online) return true;
+  // Consider device online if seen within 3 minutes
+  if (device.last_seen) {
+    const lastSeenTime = new Date(device.last_seen).getTime();
+    const now = Date.now();
+    if (now - lastSeenTime <= 3 * 60 * 1000) return true;
+  }
+  return false;
+};
+
 export default function HomePage() {
   const { get } = useApi();
   const toast = useToast();
@@ -82,7 +93,7 @@ export default function HomePage() {
     load();
   }, [load]);
 
-  const onlineDevices = useMemo(() => devices.filter((device) => device.online), [devices]);
+  const onlineDevices = useMemo(() => devices.filter(isDeviceOnline), [devices]);
   const latestDevice = onlineDevices[0] || devices[0] || null;
   const latestSensors = latestDevice?.hardware_info?.sensors || latestDevice?.hardware_info?.available_sensors || [];
 
@@ -155,9 +166,9 @@ export default function HomePage() {
                     <div className="text-sm font-semibold text-slate-950">{device.device_name}</div>
                     <div className="mt-1 text-xs text-slate-500">{device.hardware_info?.hostname || device.device_uuid}</div>
                   </div>
-                  <span className={`inline-flex items-center gap-2 rounded-full px-2.5 py-1 text-xs font-medium ${device.online ? 'bg-emerald-500/10 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>
-                    <span className={`h-2 w-2 rounded-full ${device.online ? 'bg-emerald-500' : 'bg-slate-400'}`} />
-                    {device.online ? 'Online' : 'Offline'}
+                  <span className={`inline-flex items-center gap-2 rounded-full px-2.5 py-1 text-xs font-medium ${isDeviceOnline(device) ? 'bg-emerald-500/10 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>
+                    <span className={`h-2 w-2 rounded-full ${isDeviceOnline(device) ? 'bg-emerald-500' : 'bg-slate-400'}`} />
+                    {isDeviceOnline(device) ? 'Online' : 'Offline'}
                   </span>
                 </div>
                 <div className="mt-3 flex flex-wrap gap-2">
