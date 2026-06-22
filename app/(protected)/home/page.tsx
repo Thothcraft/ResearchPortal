@@ -53,11 +53,9 @@ const getSensorIcon = (sensorType: string) => {
 
 const isDeviceOnline = (device: Device): boolean => {
   if (device.online) return true;
-  // Consider device online if seen within 3 minutes
   if (device.last_seen) {
     const lastSeenTime = new Date(device.last_seen).getTime();
-    const now = Date.now();
-    if (now - lastSeenTime <= 3 * 60 * 1000) return true;
+    if (Number.isFinite(lastSeenTime) && Date.now() - lastSeenTime <= 15 * 60 * 1000) return true;
   }
   return false;
 };
@@ -93,8 +91,15 @@ export default function HomePage() {
     load();
   }, [load]);
 
-  const onlineDevices = useMemo(() => devices.filter(isDeviceOnline), [devices]);
-  const latestDevice = onlineDevices[0] || devices[0] || null;
+  const normalizedDevices = useMemo(
+    () => devices.map((device) => ({
+      ...device,
+      online: isDeviceOnline(device),
+    })),
+    [devices],
+  );
+  const onlineDevices = useMemo(() => normalizedDevices.filter((device) => device.online), [normalizedDevices]);
+  const latestDevice = onlineDevices[0] || normalizedDevices[0] || null;
   const latestSensors = latestDevice?.hardware_info?.sensors || latestDevice?.hardware_info?.available_sensors || [];
 
   if (loading && !devices.length) {
@@ -133,7 +138,7 @@ export default function HomePage() {
           </div>
           <div className="rounded-xl bg-white/5 p-4">
             <div className="text-xs uppercase tracking-wide text-slate-500">Devices total</div>
-            <div className="mt-1 text-2xl font-semibold text-white">{devices.length}</div>
+            <div className="mt-1 text-2xl font-semibold text-white">{normalizedDevices.length}</div>
           </div>
           <div className="rounded-xl bg-white/5 p-4">
             <div className="text-xs uppercase tracking-wide text-slate-500">Deployments</div>
@@ -159,7 +164,7 @@ export default function HomePage() {
           </div>
 
           <div className="mt-4 space-y-3">
-            {devices.map((device) => (
+            {normalizedDevices.map((device) => (
               <article key={device.device_uuid} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
                 <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                   <div>
@@ -187,7 +192,7 @@ export default function HomePage() {
                 </div>
               </article>
             ))}
-            {!devices.length && (
+            {!normalizedDevices.length && (
               <div className="rounded-2xl border border-dashed border-slate-200 p-6 text-sm text-slate-500">
                 No devices found for this account.
               </div>
