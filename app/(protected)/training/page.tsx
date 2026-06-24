@@ -67,6 +67,7 @@ function parseLabels(value: unknown): string[] {
 
 function labelsFromPath(filename: string): string[] {
   const parts = filename.split('/').map((part) => part.trim()).filter(Boolean);
+  if (parts.length >= 2 && /^\d{8}_\d{4}$/.test(parts[1])) return [parts[0]];
   if (parts.length >= 3 && parts[0] === 'data') return [parts[1]];
   return [];
 }
@@ -106,13 +107,33 @@ export default function TrainingPage() {
         get('/device/list?include_offline=true').catch(() => ({ devices: [] })),
         get('/datasets/list').catch(() => ({ datasets: [] })),
       ]);
-      const localRes = await fetch('/api/data/labels', { cache: 'no-store' }).then((res) => res.json()).catch(() => ({ labels: [] }));
+      const scanRes = await get('/device/scan-files?data_path=thoth/data').catch(() => ({ data: { all_files: [] } }));
 
       const remoteDevices = Array.isArray(deviceRes?.devices) ? deviceRes.devices : [];
       setCloudFiles(Array.isArray(fileRes?.files) ? fileRes.files : []);
       setDevices(remoteDevices);
       setDatasets(Array.isArray(datasetRes?.datasets) ? datasetRes.datasets : []);
-      setLocalLabelGroups(Array.isArray(localRes?.labels) ? localRes.labels : []);
+
+      const scannedFiles = Array.isArray(scanRes?.data?.all_files) ? scanRes.data.all_files : [];
+      const localGroups = new Map<string, { label: string; files: LabelGroup['localDataFiles'] }>();
+      for (const file of scannedFiles) {
+        const relativePath = String(file?.relative_path || file?.relative_name || file?.name || '');
+        const label = String(file?.label || labelsFromPath(relativePath)[0] || '').trim();
+        if (!label) continue;
+        const existing = localGroups.get(label) || { label, files: [] };
+        existing.files.push({
+          id: String(file?.path || file?.relative_path || file?.name || `${label}-${file?.minute || 'minute'}`),
+          label,
+          minute: String(file?.minute || ''),
+          filename: String(file?.relative_name || file?.name || ''),
+          relativePath,
+          size: Number(file?.size || 0),
+          modified: String(file?.modified || ''),
+          contentType: String(file?.type || 'application/octet-stream'),
+        });
+        localGroups.set(label, existing);
+      }
+      setLocalLabelGroups(Array.from(localGroups.values()).sort((a, b) => a.label.localeCompare(b.label)));
 
       const fileEntries = await Promise.all(
         remoteDevices.map(async (device: Device) => {
