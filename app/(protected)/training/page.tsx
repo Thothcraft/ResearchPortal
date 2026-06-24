@@ -120,7 +120,9 @@ export default function TrainingPage() {
         get('/device/list?include_offline=true').catch(() => ({ devices: [] })),
         get('/datasets/list').catch(() => ({ datasets: [] })),
       ]);
-      const labelRes = await get('/data/labels').catch(() => ({ labels: [] }));
+      const labelRes = await fetch('/api/data/labels', { cache: 'no-store' })
+        .then((response) => response.json())
+        .catch(() => ({ labels: [] }));
 
       const remoteDevices = Array.isArray(deviceRes?.devices) ? deviceRes.devices : [];
       setCloudFiles(Array.isArray(fileRes?.files) ? fileRes.files : []);
