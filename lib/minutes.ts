@@ -46,6 +46,21 @@ export type MinuteDataFile = {
   contentType: string;
 };
 
+export type PredictionTimelineEntry = {
+  minute: string;
+  minuteName: string;
+  generated_at?: string;
+  labels: string[];
+  model_name: string;
+  data_type?: string;
+  prediction?: string | number | boolean | null;
+  probability?: number | null;
+  confidence?: number | null;
+  status?: string;
+  error?: string;
+  [key: string]: any;
+};
+
 export type LabeledMinuteGroup = {
   label: string;
   minutes: Array<MinuteSummary & {
@@ -373,4 +388,72 @@ export function listLabeledMinuteGroups(): LabeledMinuteGroup[] {
       minutes: group.minutes.sort((a, b) => b.minute.localeCompare(a.minute)),
     }))
     .sort((a, b) => a.label.localeCompare(b.label));
+}
+
+function normalizePredictionLabels(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => normalizeLabelValue(item))
+    .filter(Boolean);
+}
+
+export function collectPredictionTimelines(): Record<string, PredictionTimelineEntry[]> {
+  const timelines: Record<string, PredictionTimelineEntry[]> = {};
+
+  for (const minute of listMinuteSummaries()) {
+    const predictionPath = path.join(minute.path, 'predictions.json');
+    const prediction = readJsonPreview(predictionPath);
+    if (!prediction || typeof prediction !== 'object') continue;
+
+    const generatedAt = prediction.generated_at;
+    const labels = Array.from(new Set([...minute.labels, ...normalizePredictionLabels(prediction.labels)]));
+    const deployedModels = Array.isArray(prediction.deployed_models) ? prediction.deployed_models : [];
+    const timeline = Array.isArray(prediction.timeline) ? prediction.timeline : [];
+    const entries = timeline.length ? timeline : deployedModels;
+
+    if (entries.length) {
+      for (const item of entries) {
+        if (!item || typeof item !== 'object') continue;
+        const modelName = String(
+          item.model_name ||
+          item.model ||
+          item.deployment_name ||
+          item.name ||
+          'default'
+        ).trim() || 'default';
+
+        if (!timelines[modelName]) timelines[modelName] = [];
+        timelines[modelName].push({
+          minute: minute.minute,
+          minuteName: minute.minuteName,
+          generated_at: generatedAt,
+          labels,
+          model_name: modelName,
+          ...item,
+        });
+      }
+      continue;
+    }
+
+    const modelName = String(prediction.model_name || prediction.model || 'default').trim() || 'default';
+    if (!timelines[modelName]) timelines[modelName] = [];
+    timelines[modelName].push({
+      minute: minute.minute,
+      minuteName: minute.minuteName,
+      generated_at: generatedAt,
+      labels,
+      model_name: modelName,
+      prediction: prediction.prediction || prediction.label || prediction.occupied,
+      probability: prediction.probability || prediction.confidence || null,
+      confidence: prediction.confidence || null,
+      status: prediction.status,
+      error: prediction.error,
+    });
+  }
+
+  for (const modelName of Object.keys(timelines)) {
+    timelines[modelName].sort((a, b) => b.minute.localeCompare(a.minute));
+  }
+
+  return timelines;
 }
