@@ -1,8 +1,9 @@
 import fs from 'fs';
 import path from 'path';
 
-export const MINUTES_DATA_DIR = '/home/pi/Desktop/data';
+export const MINUTES_DATA_DIR = process.env.THOTH_DATA_DIR || '/home/pi/Desktop/thoth/data';
 export const MINUTE_RE = /^\d{8}_\d{4}$/;
+export const MINUTE_ID_RE = /^(?:(?<label>[^/\\]+)__)?(?<minute>\d{8}_\d{4})$/;
 
 export type MinuteFiles = {
   video: boolean;
@@ -14,6 +15,8 @@ export type MinuteFiles = {
 
 export type MinuteSummary = {
   minute: string;
+  minuteName: string;
+  relativePath: string;
   path: string;
   modified: string;
   created: string;
@@ -32,6 +35,30 @@ export type MinuteDetail = MinuteSummary & {
   filePaths: Record<string, string | null>;
   previews: Record<string, string>;
 };
+
+export type MinuteDataFile = {
+  filename: string;
+  relativePath: string;
+  path: string;
+  size: number;
+  modified: string;
+  contentType: string;
+};
+
+export type LabeledMinuteGroup = {
+  label: string;
+  minutes: Array<MinuteSummary & {
+    fileCount: number;
+    totalSize: number;
+    files: MinuteDataFile[];
+  }>;
+  minuteCount: number;
+  fileCount: number;
+  totalSize: number;
+};
+
+const MINUTE_UPLOAD_SKIP_NAMES = new Set(['manifest.json', 'predictions.json', 'cloud_upload.json']);
+const MINUTE_UPLOAD_EXTENSIONS = new Set(['.dat', '.bin', '.csv', '.jsonl', '.json', '.mp4']);
 
 function readTextPreview(filePath: string | null, limit = 12000): string {
   if (!filePath || !fs.existsSync(filePath)) return '';
@@ -78,6 +105,18 @@ function extractLabels(manifest: any): string[] {
   return cleaned;
 }
 
+function labelsFromMinutePath(relativePath: string): string[] {
+  const parts = relativePath.split(path.sep).filter(Boolean);
+  if (parts.length >= 2 && MINUTE_RE.test(parts[1])) return [parts[0]];
+  return [];
+}
+
+function minuteIdFor(relativePath: string): string {
+  const parts = relativePath.split(path.sep).filter(Boolean);
+  if (parts.length >= 2 && MINUTE_RE.test(parts[1])) return `${parts[0]}__${parts[1]}`;
+  return parts[0] || relativePath;
+}
+
 function extractDeviceInfo(manifest: any, minuteDir: string): { deviceKey: string; deviceLabel: string; uploaded: boolean } {
   const candidates = [
     manifest?.device_name,
@@ -119,21 +158,50 @@ function getMinutePaths(minuteDir: string) {
   };
 }
 
+function contentTypeForMinuteFile(filePath: string): string {
+  const ext = path.extname(filePath).toLowerCase();
+  if (ext === '.csv') return 'text/csv';
+  if (ext === '.json') return 'application/json';
+  if (ext === '.jsonl') return 'application/x-ndjson';
+  if (ext === '.mp4') return 'video/mp4';
+  if (ext === '.bin' || ext === '.dat') return 'application/octet-stream';
+  return 'application/octet-stream';
+}
+
 export function listMinuteSummaries(): MinuteSummary[] {
   if (!fs.existsSync(MINUTES_DATA_DIR)) return [];
 
   const minutes: MinuteSummary[] = [];
+  const candidateDirs: Array<{ dir: string; relativePath: string; minuteName: string }> = [];
   for (const item of fs.readdirSync(MINUTES_DATA_DIR)) {
-    const minuteDir = path.join(MINUTES_DATA_DIR, item);
-    if (!fs.statSync(minuteDir).isDirectory() || !MINUTE_RE.test(item)) continue;
+    if (item === 'config' || item.startsWith('.')) continue;
+    const itemPath = path.join(MINUTES_DATA_DIR, item);
+    if (!fs.statSync(itemPath).isDirectory()) continue;
+    if (MINUTE_RE.test(item)) {
+      candidateDirs.push({ dir: itemPath, relativePath: item, minuteName: item });
+      continue;
+    }
+    for (const child of fs.readdirSync(itemPath)) {
+      const childPath = path.join(itemPath, child);
+      if (fs.statSync(childPath).isDirectory() && MINUTE_RE.test(child)) {
+        candidateDirs.push({ dir: childPath, relativePath: path.join(item, child), minuteName: child });
+      }
+    }
+  }
+
+  for (const candidate of candidateDirs) {
+    const minuteDir = candidate.dir;
     const stat = fs.statSync(minuteDir);
     const paths = getMinutePaths(minuteDir);
     const manifest = readJsonPreview(paths.manifest);
     const deviceInfo = extractDeviceInfo(manifest, minuteDir);
-    const labels = extractLabels(manifest);
+    const labels = Array.from(new Set([...labelsFromMinutePath(candidate.relativePath), ...extractLabels(manifest)]));
     const completed = Boolean(manifest?.capture_finished);
+    const minute = minuteIdFor(candidate.relativePath);
     minutes.push({
-      minute: item,
+      minute,
+      minuteName: candidate.minuteName,
+      relativePath: candidate.relativePath,
       path: minuteDir,
       modified: stat.mtime.toISOString(),
       created: stat.birthtime.toISOString(),
@@ -170,18 +238,24 @@ export function getMinuteSummary(minute: string): MinuteSummary | null {
 }
 
 export function getMinuteDetail(minute: string): MinuteDetail | null {
-  if (!MINUTE_RE.test(minute)) return null;
-  const minuteDir = path.join(MINUTES_DATA_DIR, minute);
+  const existingSummary = getMinuteSummary(minute);
+  const parsed = MINUTE_ID_RE.exec(minute);
+  if (!existingSummary && !parsed) return null;
+  const minuteName = existingSummary?.minuteName || parsed?.groups?.minute || minute;
+  const minuteDir = existingSummary?.path || path.join(MINUTES_DATA_DIR, minuteName);
   if (!fs.existsSync(minuteDir) || !fs.statSync(minuteDir).isDirectory()) return null;
 
   const stat = fs.statSync(minuteDir);
   const paths = getMinutePaths(minuteDir);
   const manifest = readJsonPreview(paths.manifest);
   const deviceInfo = extractDeviceInfo(manifest, minuteDir);
-  const labels = extractLabels(manifest);
+  const relativePath = existingSummary?.relativePath || minuteName;
+  const labels = Array.from(new Set([...labelsFromMinutePath(relativePath), ...extractLabels(manifest)]));
   const completed = Boolean(manifest?.capture_finished);
-  const summary = getMinuteSummary(minute) || {
+  const summary = existingSummary || {
     minute,
+    minuteName,
+    relativePath,
     path: minuteDir,
     modified: stat.mtime.toISOString(),
     created: stat.birthtime.toISOString(),
@@ -228,4 +302,73 @@ export function getMinuteDetail(minute: string): MinuteDetail | null {
       manifest: paths.manifest ? JSON.stringify(readJsonPreview(paths.manifest), null, 2) : '',
     },
   };
+}
+
+export function listMinuteDataFiles(minuteDir: string): MinuteDataFile[] {
+  if (!fs.existsSync(minuteDir) || !fs.statSync(minuteDir).isDirectory()) return [];
+
+  return fs.readdirSync(minuteDir)
+    .sort()
+    .map((filename) => path.join(minuteDir, filename))
+    .filter((filePath) => fs.existsSync(filePath) && fs.statSync(filePath).isFile())
+    .filter((filePath) => {
+      const filename = path.basename(filePath);
+      if (filename.startsWith('.')) return false;
+      if (MINUTE_UPLOAD_SKIP_NAMES.has(filename)) return false;
+      const ext = path.extname(filename).toLowerCase();
+      return MINUTE_UPLOAD_EXTENSIONS.has(ext);
+    })
+    .map((filePath) => {
+      const stat = fs.statSync(filePath);
+      return {
+        filename: path.basename(filePath),
+        relativePath: path.relative(MINUTES_DATA_DIR, filePath).split(path.sep).join('/'),
+        path: filePath,
+        size: stat.size,
+        modified: stat.mtime.toISOString(),
+        contentType: contentTypeForMinuteFile(filePath),
+      };
+    });
+}
+
+export function listLabeledMinuteGroups(): LabeledMinuteGroup[] {
+  const groups = new Map<string, LabeledMinuteGroup>();
+
+  for (const minute of listMinuteSummaries()) {
+    if (!minute.labels.length) continue;
+    const detail = getMinuteDetail(minute.minute);
+    const files = detail
+      ? listMinuteDataFiles(detail.path)
+      : listMinuteDataFiles(minute.path);
+    const fileCount = files.length;
+    const totalSize = files.reduce((sum, file) => sum + file.size, 0);
+
+    for (const label of minute.labels) {
+      const existing = groups.get(label) || {
+        label,
+        minutes: [],
+        minuteCount: 0,
+        fileCount: 0,
+        totalSize: 0,
+      };
+
+      existing.minutes.push({
+        ...minute,
+        fileCount,
+        totalSize,
+        files,
+      });
+      existing.minuteCount += 1;
+      existing.fileCount += fileCount;
+      existing.totalSize += totalSize;
+      groups.set(label, existing);
+    }
+  }
+
+  return Array.from(groups.values())
+    .map((group) => ({
+      ...group,
+      minutes: group.minutes.sort((a, b) => b.minute.localeCompare(a.minute)),
+    }))
+    .sort((a, b) => a.label.localeCompare(b.label));
 }
