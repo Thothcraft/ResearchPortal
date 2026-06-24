@@ -77,6 +77,11 @@ type ScannedDeviceFile = {
   label?: string | null;
 };
 
+type DevicePanelFile = Partial<DeviceFileSummary> & ScannedDeviceFile & {
+  filename: string;
+  source: 'db' | 'scan';
+};
+
 const DEFAULT_SENSORS: Record<string, boolean> = {
   usb_camera: true,
   dreamhat_radar: true,
@@ -120,6 +125,35 @@ function isRecent(value?: string | null, windowMs = 10 * 60 * 1000): boolean {
   return Number.isFinite(time) && Date.now() - time <= windowMs;
 }
 
+function mergeDeviceFiles(files: DeviceFileSummary[], scannedFiles: ScannedDeviceFile[]): DevicePanelFile[] {
+  const merged = new Map<string, DevicePanelFile>();
+
+  for (const file of files) {
+    const key = `db:${file.filename}`;
+    merged.set(key, {
+      ...file,
+      filename: file.filename,
+      source: 'db',
+    });
+  }
+
+  for (const file of scannedFiles) {
+    const filename = String(file.relative_name || file.name || file.relative_path?.split('/').pop() || file.minute || 'file');
+    const key = `scan:${file.name || file.relative_path || file.relative_name || filename}`;
+    const existingKey = `db:${filename}`;
+    const existing = merged.get(existingKey);
+    const nextEntry: DevicePanelFile = {
+      ...(existing || {}),
+      ...file,
+      filename,
+      source: existing ? 'db' : 'scan',
+    };
+    merged.set(existing ? existingKey : key, nextEntry);
+  }
+
+  return Array.from(merged.values());
+}
+
 function normalizeSettings(value?: CaptureSettings | null): CaptureSettings {
   return {
     labels: Array.isArray(value?.labels) ? value!.labels.map(String).filter(Boolean) : [],
@@ -151,8 +185,8 @@ function DevicePanel({
   const [expanded, setExpanded] = useState(false);
   const [draftLabel, setDraftLabel] = useState(settings.labels.join(', '));
   const [draftSensors, setDraftSensors] = useState<Record<string, boolean>>(settings.sensors);
-  const freshFileActivity = files.some((file) => isRecent(file.last_synced || file.modified_at, 3 * 60 * 1000));
-  const displayFiles = files.length ? files : scannedFiles;
+  const displayFiles = useMemo(() => mergeDeviceFiles(files, scannedFiles), [files, scannedFiles]);
+  const freshFileActivity = displayFiles.some((file) => isRecent(file.last_synced || file.modified_at || file.modified, 3 * 60 * 1000));
   const canRequestUpload = files.length > 0;
 
   useEffect(() => {
@@ -161,27 +195,27 @@ function DevicePanel({
   }, [settings]);
 
   const minuteBundles = useMemo(() => {
-    const grouped = new Map<string, Array<DeviceFileSummary | ScannedDeviceFile>>();
+    const grouped = new Map<string, Array<DevicePanelFile>>();
     displayFiles.forEach((file) => {
       const minute = extractMinuteStamp(
-        (file as DeviceFileSummary).filename ||
-        (file as ScannedDeviceFile).relative_path ||
-        (file as ScannedDeviceFile).relative_name ||
-        (file as ScannedDeviceFile).name ||
-        (file as ScannedDeviceFile).minute
+        file.filename ||
+        file.relative_path ||
+        file.relative_name ||
+        file.name ||
+        file.minute
       );
       if (!minute) return;
       grouped.set(minute, [...(grouped.get(minute) || []), file]);
     });
     return Array.from(grouped.entries())
-      .map(([minute, minuteFiles]) => ({
-        minute,
-        files: minuteFiles,
-        localCount: minuteFiles.filter((file) => Boolean((file as DeviceFileSummary).on_device)).length,
-        cloudCount: minuteFiles.filter((file) => Boolean((file as DeviceFileSummary).on_cloud)).length,
-        uploadRequested: minuteFiles.some((file) => Boolean((file as DeviceFileSummary).upload_requested)),
-      }))
-      .sort((a, b) => b.minute.localeCompare(a.minute));
+        .map(([minute, minuteFiles]) => ({
+          minute,
+          files: minuteFiles,
+          localCount: minuteFiles.filter((file) => Boolean(file.on_device)).length,
+          cloudCount: minuteFiles.filter((file) => Boolean(file.on_cloud)).length,
+          uploadRequested: minuteFiles.some((file) => Boolean(file.upload_requested)),
+        }))
+        .sort((a, b) => b.minute.localeCompare(a.minute));
   }, [displayFiles]);
 
   const saveSettings = async () => {
@@ -320,13 +354,13 @@ function DevicePanel({
                         Download minute
                       </button>
                     )}
-                    {canRequestUpload && minute.files.some((file) => !(file as DeviceFileSummary).on_cloud) && (
+                    {canRequestUpload && minute.files.some((file) => file.source === 'db' && !file.on_cloud) && (
                       <button
                         type="button"
                         onClick={() => Promise.all(
                           minute.files
-                            .filter((file) => !(file as DeviceFileSummary).on_cloud)
-                            .map((file) => onRequestUpload((file as DeviceFileSummary).id))
+                            .filter((file) => file.source === 'db' && !file.on_cloud && typeof file.id === 'number')
+                            .map((file) => onRequestUpload(file.id as number))
                         )}
                         className="inline-flex items-center gap-2 border border-slate-400 px-3 py-2 text-sm font-semibold text-slate-950 hover:bg-slate-100"
                       >
@@ -461,16 +495,14 @@ export default function DevicesPage() {
   }, [toast, user?.token]);
 
   const onlineCount = rows.filter((device) => device.online).length;
-  const minuteSources = Object.values(deviceFiles).flat().length
-    ? Object.values(deviceFiles).flat()
-    : scannedFiles;
+  const minuteSources = mergeDeviceFiles(Object.values(deviceFiles).flat(), scannedFiles);
   const totalMinutes = minuteSources.reduce((minutes, file) => {
     const minute = extractMinuteStamp(
-      (file as DeviceFileSummary).filename ||
-      (file as ScannedDeviceFile).relative_path ||
-      (file as ScannedDeviceFile).relative_name ||
-      (file as ScannedDeviceFile).name ||
-      (file as ScannedDeviceFile).minute
+      file.filename ||
+      file.relative_path ||
+      file.relative_name ||
+      file.name ||
+      file.minute
     );
     return minute ? minutes.add(minute) : minutes;
   }, new Set<string>()).size;
