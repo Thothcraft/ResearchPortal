@@ -35,6 +35,7 @@ export type MinuteSummary = {
 export type MinuteDetail = MinuteSummary & {
   filePaths: Record<string, string | null>;
   previews: Record<string, string>;
+  predictions?: any;
 };
 
 export type MinuteDataFile = {
@@ -311,12 +312,14 @@ export function getMinuteDetail(minute: string): MinuteDetail | null {
       predictions: paths.predictions,
       ffmpeg_log: paths.ffmpegLog,
     },
+    predictions: readJsonPreview(paths.predictions),
     previews: {
       csi_csv: readTextPreview(paths.csiCsv),
       csi_timestamped: readTextPreview(paths.csiTimestamped),
       csi_serial: readTextPreview(paths.csiSerial),
       ffmpeg_log: readTextPreview(paths.ffmpegLog),
       manifest: paths.manifest ? JSON.stringify(readJsonPreview(paths.manifest), null, 2) : '',
+      predictions: paths.predictions ? JSON.stringify(readJsonPreview(paths.predictions), null, 2) : '',
     },
   };
 }
