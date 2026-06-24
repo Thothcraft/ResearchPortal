@@ -129,12 +129,11 @@ function isRecent(value?: string | null, windowMs = 10 * 60 * 1000): boolean {
 function normalizeKey(value: unknown): string {
   return String(value || '')
     .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '')
-    .trim();
+    .replace(/[^a-z0-9]+/g, '');
 }
 
-function minuteMatchesDevice(device: Device, minute: LocalMinuteSummary): boolean {
-  const candidates = [
+function matchesDevice(device: Device, minute: LocalMinuteSummary): boolean {
+  const deviceKeys = [
     device.device_uuid,
     device.device_id,
     device.device_name,
@@ -142,13 +141,10 @@ function minuteMatchesDevice(device: Device, minute: LocalMinuteSummary): boolea
     device.hardware_info?.raspberry_pi_model,
     device.hardware_info?.device_type,
   ].map(normalizeKey).filter(Boolean);
-  const minuteCandidates = [
-    minute.deviceKey,
-    minute.deviceLabel,
-    minute.relativePath,
-    minute.minuteName,
-  ].map(normalizeKey).filter(Boolean);
-  return minuteCandidates.some((candidate) => candidates.includes(candidate));
+  const minuteKeys = [minute.deviceKey, minute.deviceLabel, minute.relativePath, minute.minuteName]
+    .map(normalizeKey)
+    .filter(Boolean);
+  return minuteKeys.some((key) => deviceKeys.includes(key));
 }
 
 function normalizeSettings(value?: CaptureSettings | null): CaptureSettings {
@@ -180,29 +176,18 @@ function DevicePanel({
   const [expanded, setExpanded] = useState(false);
   const [draftLabel, setDraftLabel] = useState(settings.labels.join(', '));
   const [draftSensors, setDraftSensors] = useState<Record<string, boolean>>(settings.sensors);
+
   const matchedMinutes = useMemo(() => {
-    const scoped = minutes.filter((minute) => minuteMatchesDevice(device, minute));
+    const scoped = minutes.filter((minute) => matchesDevice(device, minute));
     return scoped.length ? scoped : minutes;
   }, [device, minutes]);
+
   const freshFileActivity = matchedMinutes.some((minute) => isRecent(minute.modified, 3 * 60 * 1000));
 
   useEffect(() => {
     setDraftLabel(settings.labels.join(', '));
     setDraftSensors(settings.sensors);
   }, [settings]);
-
-  const minuteBundles = useMemo(() => {
-    return matchedMinutes
-      .map((minute) => ({
-        minute: minute.minute,
-        minuteLabel: minute.relativePath,
-        fileCount: Object.values(minute.files).filter(Boolean).length,
-        totalSize: Object.values(minute.sizes || {}).reduce((sum, size) => sum + Number(size || 0), 0),
-        labels: minute.labels,
-        uploaded: minute.uploaded,
-      }))
-      .sort((a, b) => b.minute.localeCompare(a.minute));
-  }, [matchedMinutes]);
 
   const saveSettings = async () => {
     await onSaveSettings(device.device_uuid, {
@@ -231,7 +216,7 @@ function DevicePanel({
               </span>
               <span className="border border-slate-300 bg-white px-2 py-1">IP {device.ip_address || 'N/A'}</span>
               <span className="border border-slate-300 bg-white px-2 py-1">Last seen {device.last_seen ? new Date(parseServerTime(device.last_seen)).toLocaleString() : 'N/A'}</span>
-              <span className="border border-slate-300 bg-white px-2 py-1">{minuteBundles.length} captured minutes</span>
+              <span className="border border-slate-300 bg-white px-2 py-1">{matchedMinutes.length} captured minutes</span>
               <span className="border border-slate-300 bg-white px-2 py-1">{expanded ? 'Expanded' : 'Collapsed'}</span>
             </div>
           </div>
@@ -245,128 +230,132 @@ function DevicePanel({
       </button>
 
       {expanded && (
-      <div className="grid gap-0 lg:grid-cols-[360px_1fr]">
-        <section className="border-b border-slate-300 p-5 lg:border-b-0 lg:border-r">
-          <div className="mb-4 flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-slate-800">
-            <SlidersHorizontal className="h-4 w-4" />
-            Ongoing collection
-          </div>
-          <label className="block text-sm font-medium text-slate-950">
-            Current label
-            <input
-              value={draftLabel}
-              onChange={(event) => setDraftLabel(event.target.value)}
-              placeholder="comma-separated labels"
-              className="mt-2 w-full border border-slate-400 bg-white px-3 py-2 text-sm text-slate-950 outline-none focus:border-slate-950"
-            />
-          </label>
-          <div className="mt-5 space-y-3">
-            {Object.keys(DEFAULT_SENSORS).map((key) => (
-              <label key={key} className="flex items-center justify-between gap-4 border border-slate-300 bg-slate-50 px-3 py-2 text-sm font-medium text-slate-950">
-                <span>{SENSOR_LABELS[key] || key}</span>
-                <input
-                  type="checkbox"
-                  checked={draftSensors[key] !== false}
-                  onChange={(event) => setDraftSensors((current) => ({ ...current, [key]: event.target.checked }))}
-                  className="h-5 w-5"
-                />
-              </label>
-            ))}
-          </div>
-          <button
-            type="button"
-            onClick={saveSettings}
-            className="mt-5 w-full bg-slate-950 px-4 py-3 text-sm font-semibold text-white hover:bg-slate-800"
-          >
-            Apply to current and next minutes
-          </button>
-          <div className="mt-5">
-            <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-slate-950">
-              <Activity className="h-4 w-4" />
-              Detected sensors
+        <div className="grid gap-0 lg:grid-cols-[360px_1fr]">
+          <section className="border-b border-slate-300 p-5 lg:border-b-0 lg:border-r">
+            <div className="mb-4 flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-slate-800">
+              <SlidersHorizontal className="h-4 w-4" />
+              Ongoing collection
             </div>
-            <div className="space-y-2">
-              {sensors.length ? sensors.map((sensor) => (
-                <div key={sensor.sensor_type || sensor.key || sensor.name} className="flex justify-between gap-3 border border-slate-300 px-3 py-2 text-sm">
-                  <span className="font-medium text-slate-950">{sensor.name || sensor.sensor_type || sensor.key}</span>
-                  <span className={sensor.available ? 'text-emerald-800' : 'text-slate-600'}>{sensor.available ? 'Online' : 'Offline'}</span>
+            <label className="block text-sm font-medium text-slate-950">
+              Current label
+              <input
+                value={draftLabel}
+                onChange={(event) => setDraftLabel(event.target.value)}
+                placeholder="comma-separated labels"
+                className="mt-2 w-full border border-slate-400 bg-white px-3 py-2 text-sm text-slate-950 outline-none focus:border-slate-950"
+              />
+            </label>
+            <div className="mt-5 space-y-3">
+              {Object.keys(DEFAULT_SENSORS).map((key) => (
+                <label key={key} className="flex items-center justify-between gap-4 border border-slate-300 bg-slate-50 px-3 py-2 text-sm font-medium text-slate-950">
+                  <span>{SENSOR_LABELS[key] || key}</span>
+                  <input
+                    type="checkbox"
+                    checked={draftSensors[key] !== false}
+                    onChange={(event) => setDraftSensors((current) => ({ ...current, [key]: event.target.checked }))}
+                    className="h-5 w-5"
+                  />
+                </label>
+              ))}
+            </div>
+            <button
+              type="button"
+              onClick={saveSettings}
+              className="mt-5 w-full bg-slate-950 px-4 py-3 text-sm font-semibold text-white hover:bg-slate-800"
+            >
+              Apply to current and next minutes
+            </button>
+            <div className="mt-5">
+              <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-slate-950">
+                <Activity className="h-4 w-4" />
+                Detected sensors
+              </div>
+              <div className="space-y-2">
+                {sensors.length ? sensors.map((sensor) => (
+                  <div key={sensor.sensor_type || sensor.key || sensor.name} className="flex justify-between gap-3 border border-slate-300 px-3 py-2 text-sm">
+                    <span className="font-medium text-slate-950">{sensor.name || sensor.sensor_type || sensor.key}</span>
+                    <span className={sensor.available ? 'text-emerald-800' : 'text-slate-600'}>{sensor.available ? 'Online' : 'Offline'}</span>
+                  </div>
+                )) : (
+                  <div className="border border-dashed border-slate-400 p-3 text-sm text-slate-700">No sensors reported yet.</div>
+                )}
+              </div>
+            </div>
+          </section>
+
+          <section className="p-5">
+            <div className="mb-4 flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-slate-800">
+              <FolderOpen className="h-4 w-4" />
+              Captured minutes
+            </div>
+            <div className="space-y-3">
+              {matchedMinutes.map((minute) => {
+                const fileCount = Object.values(minute.files).filter(Boolean).length;
+                const totalSize = Object.values(minute.sizes || {}).reduce((sum, size) => sum + Number(size || 0), 0);
+                return (
+                  <div key={minute.minute} className="border border-slate-300 bg-white p-4">
+                    <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                      <div>
+                        <div className="font-mono text-base font-semibold text-slate-950">{minute.minute}</div>
+                        <div className="mt-1 text-sm text-slate-700">
+                          {fileCount} files · {humanBytes(totalSize)}
+                        </div>
+                        <div className="mt-2 flex flex-wrap gap-2 text-xs text-slate-700">
+                          {minute.labels.length ? minute.labels.map((label) => (
+                            <span key={`${minute.minute}:${label}`} className="border border-slate-300 bg-slate-50 px-2 py-1">
+                              {label}
+                            </span>
+                          )) : (
+                            <span className="border border-slate-300 bg-slate-50 px-2 py-1">
+                              {minute.relativePath}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        {fileCount > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => onDownloadMinute(minute.minute, device.device_uuid)}
+                            className="inline-flex items-center gap-2 bg-slate-950 px-3 py-2 text-sm font-semibold text-white hover:bg-slate-800"
+                          >
+                            <Download className="h-4 w-4" />
+                            Download minute
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+              {!matchedMinutes.length && (
+                <div className="border border-dashed border-slate-400 p-6 text-sm text-slate-700">
+                  No captured minutes are registered for this device yet.
                 </div>
-              )) : (
-                <div className="border border-dashed border-slate-400 p-3 text-sm text-slate-700">No sensors reported yet.</div>
               )}
             </div>
-          </div>
-        </section>
 
-        <section className="p-5">
-          <div className="mb-4 flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-slate-800">
-            <FolderOpen className="h-4 w-4" />
-            Captured minutes
-          </div>
-          <div className="space-y-3">
-            {minuteBundles.map((minute) => (
-              <div key={minute.minute} className="border border-slate-300 bg-white p-4">
-                <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-                  <div>
-                    <div className="font-mono text-base font-semibold text-slate-950">{minute.minute}</div>
-                    <div className="mt-1 text-sm text-slate-700">
-                      {minute.fileCount} files · {humanBytes(minute.totalSize)}
-                    </div>
-                    <div className="mt-2 flex flex-wrap gap-2 text-xs text-slate-700">
-                      {minute.labels.length ? minute.labels.map((label) => (
-                        <span key={`${minute.minute}:${label}`} className="border border-slate-300 bg-slate-50 px-2 py-1">
-                          {label}
-                        </span>
-                      )) : (
-                        <span className="border border-slate-300 bg-slate-50 px-2 py-1">
-                          {minute.minuteLabel}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    {minute.fileCount > 0 && (
+            {files.some((file) => file.on_cloud && file.cloud_file_id) && (
+              <div className="mt-6 border-t border-slate-300 pt-4">
+                <div className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-800">Cloud files</div>
+                <div className="space-y-2">
+                  {files.filter((file) => file.on_cloud && file.cloud_file_id).slice(0, 8).map((file) => (
+                    <div key={file.id} className="flex items-center justify-between gap-3 border border-slate-300 px-3 py-2 text-sm">
+                      <span className="min-w-0 truncate text-slate-950">{file.filename}</span>
                       <button
                         type="button"
-                        onClick={() => onDownloadMinute(minute.minute, device.device_uuid)}
-                        className="inline-flex items-center gap-2 bg-slate-950 px-3 py-2 text-sm font-semibold text-white hover:bg-slate-800"
+                        onClick={() => onDownloadCloudFile(file.cloud_file_id!, file.filename)}
+                        className="font-semibold text-slate-950 underline"
                       >
-                        <Download className="h-4 w-4" />
-                        Download minute
+                        Download
                       </button>
-                    )}
-                  </div>
+                    </div>
+                  ))}
                 </div>
               </div>
-            ))}
-            {!minuteBundles.length && (
-              <div className="border border-dashed border-slate-400 p-6 text-sm text-slate-700">
-                No captured minutes are registered for this device yet.
-              </div>
             )}
-          </div>
-
-          {files.some((file) => file.on_cloud && file.cloud_file_id) && (
-            <div className="mt-6 border-t border-slate-300 pt-4">
-              <div className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-800">Cloud files</div>
-              <div className="space-y-2">
-                {files.filter((file) => file.on_cloud && file.cloud_file_id).slice(0, 8).map((file) => (
-                  <div key={file.id} className="flex items-center justify-between gap-3 border border-slate-300 px-3 py-2 text-sm">
-                    <span className="min-w-0 truncate text-slate-950">{file.filename}</span>
-                    <button
-                      type="button"
-                      onClick={() => onDownloadCloudFile(file.cloud_file_id!, file.filename)}
-                      className="font-semibold text-slate-950 underline"
-                    >
-                      Download
-                    </button>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </section>
-      </div>
+          </section>
+        </div>
       )}
     </article>
   );
@@ -406,6 +395,7 @@ export default function DevicesPage() {
           settings: normalizeSettings(settingsRes?.capture_settings || device.hardware_info?.capture_settings),
         };
       }));
+
       setDeviceFiles(Object.fromEntries(entries.map((entry) => [entry.id, entry.files])));
       setSettings(Object.fromEntries(entries.map((entry) => [entry.id, entry.settings])));
     } catch (err) {
@@ -457,7 +447,6 @@ export default function DevicesPage() {
   }, [toast, user?.token]);
 
   const onlineCount = rows.filter((device) => device.online).length;
-  const totalMinutes = minutes.length;
 
   if (loading && !devices.length) {
     return <div className="border border-slate-300 bg-white p-8 text-sm text-slate-700">Loading devices...</div>;
@@ -490,7 +479,7 @@ export default function DevicesPage() {
           </div>
           <div className="border border-slate-300 bg-slate-50 p-3">
             <div className="text-xs font-semibold uppercase tracking-wide text-slate-700">Captured minutes</div>
-            <div className="mt-1 text-2xl font-semibold text-slate-950">{totalMinutes}</div>
+            <div className="mt-1 text-2xl font-semibold text-slate-950">{minutes.length}</div>
           </div>
           <div className="border border-slate-300 bg-slate-50 p-3">
             <div className="text-xs font-semibold uppercase tracking-wide text-slate-700">Registered devices</div>
