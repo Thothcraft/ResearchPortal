@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import fs from 'fs';
 import path from 'path';
-import { contentTypeForLocalFile, listLocalLabelFiles, localPathForRelative } from '@/lib/localLabelFiles';
+import { MINUTES_DATA_DIR, listLabeledMinuteGroups } from '@/lib/minutes';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -22,6 +22,22 @@ function safeUploadName(relativePath: string): string {
     .filter(Boolean)
     .join('__')
     .replace(/[^A-Za-z0-9._-]+/g, '_');
+}
+
+function isUploadableMinuteFile(filename: string): boolean {
+  const lower = filename.toLowerCase();
+  if (lower.startsWith('.')) return false;
+  if (['manifest.json', 'predictions.json', 'cloud_upload.json'].includes(lower)) return false;
+  return ['.dat', '.bin', '.csv', '.jsonl', '.json', '.mp4'].includes(path.extname(lower));
+}
+
+function contentTypeForMinuteFile(filePath: string): string {
+  const ext = path.extname(filePath).toLowerCase();
+  if (ext === '.csv') return 'text/csv';
+  if (ext === '.json') return 'application/json';
+  if (ext === '.jsonl') return 'application/x-ndjson';
+  if (ext === '.mp4') return 'video/mp4';
+  return 'application/octet-stream';
 }
 
 async function backendJson(pathname: string, authorization: string | null, body: unknown, method = 'POST') {
@@ -59,12 +75,21 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: false, error: 'Select at least one label' }, { status: 400 });
     }
 
-    const selected = listLocalLabelFiles()
+    const selected = Array.from(new Map(
+      listLabeledMinuteGroups()
       .filter((group) => selectedLabels.includes(group.label))
-      .flatMap((group) => group.files);
+      .flatMap((group) => group.minutes.flatMap((minute) => minute.files.map((file) => ({
+        label: group.label,
+        minute: minute.minute,
+        minutePath: minute.path,
+        minuteRelativePath: minute.relativePath,
+        ...file,
+      }))))
+      .map((file) => [file.relativePath, file] as const)
+    ).values());
 
     if (!selected.length) {
-      return NextResponse.json({ success: false, error: 'Selected labels have no local data files' }, { status: 400 });
+      return NextResponse.json({ success: false, error: 'Selected labels have no labeled minutes' }, { status: 400 });
     }
 
     const created = await backendJson('/datasets/create', authorization, {
@@ -79,8 +104,17 @@ export async function POST(request: NextRequest) {
 
     for (const file of selected) {
       try {
-        const filePath = localPathForRelative(file.relativePath);
-        if (!filePath || !fs.existsSync(filePath)) {
+        const filePath = path.join(file.minutePath, file.filename);
+        const resolvedFilePath = path.resolve(filePath);
+        const resolvedRoot = path.resolve(MINUTES_DATA_DIR);
+        if (!resolvedFilePath.startsWith(resolvedRoot)) {
+          errors.push(`${file.relativePath}: invalid path`);
+          continue;
+        }
+        if (!isUploadableMinuteFile(file.filename)) {
+          continue;
+        }
+        if (!fs.existsSync(filePath)) {
           errors.push(`${file.relativePath}: missing`);
           continue;
         }
@@ -93,7 +127,7 @@ export async function POST(request: NextRequest) {
         const upload = await backendJson('/file/upload', authorization, {
           filename: safeUploadName(file.relativePath),
           content,
-          content_type: contentTypeForLocalFile(filePath),
+          content_type: contentTypeForMinuteFile(filePath),
           is_base64: true,
           metadata: {
             labels: [file.label],

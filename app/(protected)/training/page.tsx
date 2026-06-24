@@ -35,6 +35,28 @@ type DeviceFile = {
   upload_requested: boolean;
 };
 
+type MinuteFile = {
+  filename: string;
+  relativePath: string;
+  path: string;
+  size: number;
+  modified: string;
+  contentType: string;
+};
+
+type LocalMinute = {
+  minute: string;
+  minuteName: string;
+  relativePath: string;
+  path: string;
+  modified: string;
+  created: string;
+  labels: string[];
+  fileCount: number;
+  totalSize: number;
+  files: MinuteFile[];
+};
+
 type Dataset = {
   id: number;
   name: string;
@@ -48,16 +70,7 @@ type LabelGroup = {
   label: string;
   cloudFiles: CloudFile[];
   localFiles: Array<DeviceFile & { deviceId: string; deviceName: string }>;
-  localDataFiles: Array<{
-    id: string;
-    label: string;
-    minute: string;
-    filename: string;
-    relativePath: string;
-    size: number;
-    modified: string;
-    contentType: string;
-  }>;
+  localMinutes: LocalMinute[];
 };
 
 function parseLabels(value: unknown): string[] {
@@ -92,7 +105,7 @@ export default function TrainingPage() {
   const [cloudFiles, setCloudFiles] = useState<CloudFile[]>([]);
   const [devices, setDevices] = useState<Device[]>([]);
   const [deviceFiles, setDeviceFiles] = useState<Record<string, DeviceFile[]>>({});
-  const [localLabelGroups, setLocalLabelGroups] = useState<Array<{ label: string; files: LabelGroup['localDataFiles'] }>>([]);
+  const [localLabelGroups, setLocalLabelGroups] = useState<Array<{ label: string; minutes: LocalMinute[]; minuteCount: number; fileCount: number; totalSize: number }>>([]);
   const [datasets, setDatasets] = useState<Dataset[]>([]);
   const [selectedLabels, setSelectedLabels] = useState<string[]>([]);
   const [datasetName, setDatasetName] = useState('');
@@ -107,33 +120,21 @@ export default function TrainingPage() {
         get('/device/list?include_offline=true').catch(() => ({ devices: [] })),
         get('/datasets/list').catch(() => ({ datasets: [] })),
       ]);
-      const scanRes = await get('/device/scan-files?data_path=thoth/data').catch(() => ({ data: { all_files: [] } }));
+      const labelRes = await get('/data/labels').catch(() => ({ labels: [] }));
 
       const remoteDevices = Array.isArray(deviceRes?.devices) ? deviceRes.devices : [];
       setCloudFiles(Array.isArray(fileRes?.files) ? fileRes.files : []);
       setDevices(remoteDevices);
       setDatasets(Array.isArray(datasetRes?.datasets) ? datasetRes.datasets : []);
 
-      const scannedFiles = Array.isArray(scanRes?.data?.all_files) ? scanRes.data.all_files : [];
-      const localGroups = new Map<string, { label: string; files: LabelGroup['localDataFiles'] }>();
-      for (const file of scannedFiles) {
-        const relativePath = String(file?.relative_path || file?.relative_name || file?.name || '');
-        const label = String(file?.label || labelsFromPath(relativePath)[0] || '').trim();
-        if (!label) continue;
-        const existing = localGroups.get(label) || { label, files: [] };
-        existing.files.push({
-          id: String(file?.path || file?.relative_path || file?.name || `${label}-${file?.minute || 'minute'}`),
-          label,
-          minute: String(file?.minute || ''),
-          filename: String(file?.relative_name || file?.name || ''),
-          relativePath,
-          size: Number(file?.size || 0),
-          modified: String(file?.modified || ''),
-          contentType: String(file?.type || 'application/octet-stream'),
-        });
-        localGroups.set(label, existing);
-      }
-      setLocalLabelGroups(Array.from(localGroups.values()).sort((a, b) => a.label.localeCompare(b.label)));
+      const localLabels = Array.isArray(labelRes?.labels) ? labelRes.labels : [];
+      setLocalLabelGroups(localLabels.map((group: any) => ({
+        label: String(group?.label || '').trim(),
+        minutes: Array.isArray(group?.minutes) ? group.minutes : [],
+        minuteCount: Number(group?.minuteCount || 0),
+        fileCount: Number(group?.fileCount || 0),
+        totalSize: Number(group?.totalSize || 0),
+      })).filter((group) => group.label).sort((a, b) => a.label.localeCompare(b.label)));
 
       const fileEntries = await Promise.all(
         remoteDevices.map(async (device: Device) => {
@@ -158,13 +159,13 @@ export default function TrainingPage() {
     const ensure = (label: string) => {
       const existing = groups.get(label);
       if (existing) return existing;
-      const group = { label, cloudFiles: [], localFiles: [], localDataFiles: [] };
+      const group = { label, cloudFiles: [], localFiles: [], localMinutes: [] };
       groups.set(label, group);
       return group;
     };
 
     localLabelGroups.forEach((group) => {
-      ensure(group.label).localDataFiles.push(...group.files);
+      ensure(group.label).localMinutes.push(...group.minutes);
     });
 
     cloudFiles.forEach((file) => {
@@ -193,7 +194,10 @@ export default function TrainingPage() {
 
   const selectedGroups = labelGroups.filter((group) => selectedLabels.includes(group.label));
   const selectedCloudFiles = selectedGroups.flatMap((group) => group.cloudFiles);
-  const selectedLocalDataFiles = selectedGroups.flatMap((group) => group.localDataFiles);
+  const selectedLocalDataFiles = Array.from(new Map(
+    selectedGroups.flatMap((group) => group.localMinutes.flatMap((minute) => minute.files))
+      .map((file) => [file.relativePath, file] as const)
+  ).values());
 
   const toggleLabel = (label: string) => {
     setSelectedLabels((current) => (
@@ -211,7 +215,7 @@ export default function TrainingPage() {
       return;
     }
     if (!selectedLocalDataFiles.length) {
-      toast.info('No local data', 'Selected labels have no files under thoth/data label folders.');
+      toast.info('No local data', 'Selected labels have no labeled minutes under thoth/data.');
       return;
     }
 
@@ -320,7 +324,8 @@ export default function TrainingPage() {
             {labelGroups.map((group) => {
               const selected = selectedLabels.includes(group.label);
               const localOnlyCount = group.localFiles.filter((file) => !file.on_cloud).length;
-              const localDataCount = group.localDataFiles.length;
+              const localMinuteCount = group.localMinutes.length;
+              const localFileCount = group.localMinutes.reduce((sum, minute) => sum + minute.fileCount, 0);
               return (
                 <button
                   key={group.label}
@@ -332,20 +337,20 @@ export default function TrainingPage() {
                     <div>
                       <div className="text-lg font-semibold">{group.label}</div>
                       <div className={`mt-1 text-sm ${selected ? 'text-slate-300' : 'text-slate-500'}`}>
-                        {localDataCount} local files · {group.cloudFiles.length} cloud files · {localOnlyCount} waiting
+                        {localMinuteCount} labeled minutes · {localFileCount} local files · {group.cloudFiles.length} cloud files · {localOnlyCount} waiting
                       </div>
                     </div>
                     {selected && <Check className="h-5 w-5 text-emerald-300" />}
                   </div>
                   <div className={`mt-3 text-xs ${selected ? 'text-slate-400' : 'text-slate-500'}`}>
-                    {humanBytes(group.localDataFiles.reduce((sum, file) => sum + (file.size || 0), 0))}
+                    {humanBytes(group.localMinutes.reduce((sum, minute) => sum + minute.totalSize, 0))}
                   </div>
                 </button>
               );
             })}
             {!labelGroups.length && (
               <div className="rounded-2xl border border-dashed border-slate-300 p-6 text-sm text-slate-500">
-                No labeled folders with data files found under thoth/data.
+                No labeled minutes found under thoth/data.
               </div>
             )}
           </div>

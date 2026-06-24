@@ -1,13 +1,12 @@
 import { NextResponse } from 'next/server';
-import { MINUTES_DATA_DIR } from '@/lib/minutes';
-import { listLocalLabelFiles } from '@/lib/localLabelFiles';
+import { MINUTES_DATA_DIR, listLabeledMinuteGroups } from '@/lib/minutes';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 export async function GET() {
   try {
-    const labels = listLocalLabelFiles();
+    const labels = listLabeledMinuteGroups();
     return NextResponse.json({
       success: true,
       labels,

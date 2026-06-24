@@ -36,6 +36,30 @@ export type MinuteDetail = MinuteSummary & {
   previews: Record<string, string>;
 };
 
+export type MinuteDataFile = {
+  filename: string;
+  relativePath: string;
+  path: string;
+  size: number;
+  modified: string;
+  contentType: string;
+};
+
+export type LabeledMinuteGroup = {
+  label: string;
+  minutes: Array<MinuteSummary & {
+    fileCount: number;
+    totalSize: number;
+    files: MinuteDataFile[];
+  }>;
+  minuteCount: number;
+  fileCount: number;
+  totalSize: number;
+};
+
+const MINUTE_UPLOAD_SKIP_NAMES = new Set(['manifest.json', 'predictions.json', 'cloud_upload.json']);
+const MINUTE_UPLOAD_EXTENSIONS = new Set(['.dat', '.bin', '.csv', '.jsonl', '.json', '.mp4']);
+
 function readTextPreview(filePath: string | null, limit = 12000): string {
   if (!filePath || !fs.existsSync(filePath)) return '';
   try {
@@ -132,6 +156,16 @@ function getMinutePaths(minuteDir: string) {
     predictions: names.includes('predictions.json') ? path.join(minuteDir, 'predictions.json') : null,
     ffmpegLog: names.includes('usb_camera.ffmpeg.log') ? path.join(minuteDir, 'usb_camera.ffmpeg.log') : null,
   };
+}
+
+function contentTypeForMinuteFile(filePath: string): string {
+  const ext = path.extname(filePath).toLowerCase();
+  if (ext === '.csv') return 'text/csv';
+  if (ext === '.json') return 'application/json';
+  if (ext === '.jsonl') return 'application/x-ndjson';
+  if (ext === '.mp4') return 'video/mp4';
+  if (ext === '.bin' || ext === '.dat') return 'application/octet-stream';
+  return 'application/octet-stream';
 }
 
 export function listMinuteSummaries(): MinuteSummary[] {
@@ -268,4 +302,73 @@ export function getMinuteDetail(minute: string): MinuteDetail | null {
       manifest: paths.manifest ? JSON.stringify(readJsonPreview(paths.manifest), null, 2) : '',
     },
   };
+}
+
+export function listMinuteDataFiles(minuteDir: string): MinuteDataFile[] {
+  if (!fs.existsSync(minuteDir) || !fs.statSync(minuteDir).isDirectory()) return [];
+
+  return fs.readdirSync(minuteDir)
+    .sort()
+    .map((filename) => path.join(minuteDir, filename))
+    .filter((filePath) => fs.existsSync(filePath) && fs.statSync(filePath).isFile())
+    .filter((filePath) => {
+      const filename = path.basename(filePath);
+      if (filename.startsWith('.')) return false;
+      if (MINUTE_UPLOAD_SKIP_NAMES.has(filename)) return false;
+      const ext = path.extname(filename).toLowerCase();
+      return MINUTE_UPLOAD_EXTENSIONS.has(ext);
+    })
+    .map((filePath) => {
+      const stat = fs.statSync(filePath);
+      return {
+        filename: path.basename(filePath),
+        relativePath: path.relative(MINUTES_DATA_DIR, filePath).split(path.sep).join('/'),
+        path: filePath,
+        size: stat.size,
+        modified: stat.mtime.toISOString(),
+        contentType: contentTypeForMinuteFile(filePath),
+      };
+    });
+}
+
+export function listLabeledMinuteGroups(): LabeledMinuteGroup[] {
+  const groups = new Map<string, LabeledMinuteGroup>();
+
+  for (const minute of listMinuteSummaries()) {
+    if (!minute.labels.length) continue;
+    const detail = getMinuteDetail(minute.minute);
+    const files = detail
+      ? listMinuteDataFiles(detail.path)
+      : listMinuteDataFiles(minute.path);
+    const fileCount = files.length;
+    const totalSize = files.reduce((sum, file) => sum + file.size, 0);
+
+    for (const label of minute.labels) {
+      const existing = groups.get(label) || {
+        label,
+        minutes: [],
+        minuteCount: 0,
+        fileCount: 0,
+        totalSize: 0,
+      };
+
+      existing.minutes.push({
+        ...minute,
+        fileCount,
+        totalSize,
+        files,
+      });
+      existing.minuteCount += 1;
+      existing.fileCount += fileCount;
+      existing.totalSize += totalSize;
+      groups.set(label, existing);
+    }
+  }
+
+  return Array.from(groups.values())
+    .map((group) => ({
+      ...group,
+      minutes: group.minutes.sort((a, b) => b.minute.localeCompare(a.minute)),
+    }))
+    .sort((a, b) => a.label.localeCompare(b.label));
 }
