@@ -86,6 +86,14 @@ type LocalMinuteSummary = {
     predictions: boolean;
   };
   sizes: Record<string, number>;
+  dataFiles?: Array<{
+    filename: string;
+    relativePath: string;
+    path: string;
+    size: number;
+    modified: string;
+    contentType: string;
+  }>;
 };
 
 const DEFAULT_SENSORS: Record<string, boolean> = {
@@ -290,8 +298,9 @@ function DevicePanel({
             </div>
             <div className="space-y-3">
               {matchedMinutes.map((minute) => {
-                const fileCount = Object.values(minute.files).filter(Boolean).length;
-                const totalSize = Object.values(minute.sizes || {}).reduce((sum, size) => sum + Number(size || 0), 0);
+                const dataFiles = minute.dataFiles || [];
+                const fileCount = dataFiles.length;
+                const totalSize = dataFiles.reduce((sum, file) => sum + Number(file.size || 0), 0);
                 return (
                   <div key={minute.minute} className="border border-slate-300 bg-white p-4">
                     <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
@@ -311,6 +320,15 @@ function DevicePanel({
                             </span>
                           )}
                         </div>
+                        {dataFiles.length > 0 && (
+                          <div className="mt-2 flex flex-wrap gap-2 text-xs text-slate-700">
+                            {dataFiles.slice(0, 6).map((file) => (
+                              <span key={`${minute.minute}:${file.relativePath}`} className="border border-slate-300 bg-slate-50 px-2 py-1">
+                                {file.filename}
+                              </span>
+                            ))}
+                          </div>
+                        )}
                       </div>
                       <div className="flex flex-wrap gap-2">
                         {fileCount > 0 && (

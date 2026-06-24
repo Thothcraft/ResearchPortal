@@ -28,6 +28,7 @@ export type MinuteSummary = {
   uploaded: boolean;
   files: MinuteFiles;
   sizes: Record<string, number>;
+  dataFiles?: MinuteDataFile[];
   manifest?: any;
 };
 
@@ -225,6 +226,7 @@ export function listMinuteSummaries(): MinuteSummary[] {
         csi_timestamped: paths.csiTimestamped ? fs.statSync(paths.csiTimestamped).size : 0,
         csi_serial: paths.csiSerial ? fs.statSync(paths.csiSerial).size : 0,
       },
+      dataFiles: listMinuteDataFiles(minuteDir),
       manifest,
     });
   }
