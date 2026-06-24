@@ -1,11 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import fs from 'fs';
 import path from 'path';
+import { MINUTES_DATA_DIR } from '@/lib/minutes';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-const DATA_DIR = '/home/pi/Desktop/data';
+const DATA_DIR = MINUTES_DATA_DIR;
 
 export async function GET(
   request: NextRequest,

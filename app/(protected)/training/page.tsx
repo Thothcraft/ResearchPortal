@@ -10,7 +10,6 @@ import {
   Download,
   RefreshCw,
   Trash2,
-  UploadCloud,
 } from 'lucide-react';
 
 type CloudFile = {
@@ -49,6 +48,16 @@ type LabelGroup = {
   label: string;
   cloudFiles: CloudFile[];
   localFiles: Array<DeviceFile & { deviceId: string; deviceName: string }>;
+  localDataFiles: Array<{
+    id: string;
+    label: string;
+    minute: string;
+    filename: string;
+    relativePath: string;
+    size: number;
+    modified: string;
+    contentType: string;
+  }>;
 };
 
 function parseLabels(value: unknown): string[] {
@@ -75,13 +84,14 @@ function humanBytes(bytes?: number): string {
 }
 
 export default function TrainingPage() {
-  const { get, post, delete: del } = useApi();
+  const { get, delete: del } = useApi();
   const { user } = useAuth();
   const toast = useToast();
 
   const [cloudFiles, setCloudFiles] = useState<CloudFile[]>([]);
   const [devices, setDevices] = useState<Device[]>([]);
   const [deviceFiles, setDeviceFiles] = useState<Record<string, DeviceFile[]>>({});
+  const [localLabelGroups, setLocalLabelGroups] = useState<Array<{ label: string; files: LabelGroup['localDataFiles'] }>>([]);
   const [datasets, setDatasets] = useState<Dataset[]>([]);
   const [selectedLabels, setSelectedLabels] = useState<string[]>([]);
   const [datasetName, setDatasetName] = useState('');
@@ -96,11 +106,13 @@ export default function TrainingPage() {
         get('/device/list?include_offline=true').catch(() => ({ devices: [] })),
         get('/datasets/list').catch(() => ({ datasets: [] })),
       ]);
+      const localRes = await fetch('/api/data/labels', { cache: 'no-store' }).then((res) => res.json()).catch(() => ({ labels: [] }));
 
       const remoteDevices = Array.isArray(deviceRes?.devices) ? deviceRes.devices : [];
       setCloudFiles(Array.isArray(fileRes?.files) ? fileRes.files : []);
       setDevices(remoteDevices);
       setDatasets(Array.isArray(datasetRes?.datasets) ? datasetRes.datasets : []);
+      setLocalLabelGroups(Array.isArray(localRes?.labels) ? localRes.labels : []);
 
       const fileEntries = await Promise.all(
         remoteDevices.map(async (device: Device) => {
@@ -125,10 +137,14 @@ export default function TrainingPage() {
     const ensure = (label: string) => {
       const existing = groups.get(label);
       if (existing) return existing;
-      const group = { label, cloudFiles: [], localFiles: [] };
+      const group = { label, cloudFiles: [], localFiles: [], localDataFiles: [] };
       groups.set(label, group);
       return group;
     };
+
+    localLabelGroups.forEach((group) => {
+      ensure(group.label).localDataFiles.push(...group.files);
+    });
 
     cloudFiles.forEach((file) => {
       const labels = Array.from(new Set([
@@ -152,11 +168,11 @@ export default function TrainingPage() {
     });
 
     return Array.from(groups.values()).sort((a, b) => a.label.localeCompare(b.label));
-  }, [cloudFiles, deviceFiles, devices]);
+  }, [cloudFiles, deviceFiles, devices, localLabelGroups]);
 
   const selectedGroups = labelGroups.filter((group) => selectedLabels.includes(group.label));
   const selectedCloudFiles = selectedGroups.flatMap((group) => group.cloudFiles);
-  const selectedLocalOnly = selectedGroups.flatMap((group) => group.localFiles.filter((file) => !file.on_cloud));
+  const selectedLocalDataFiles = selectedGroups.flatMap((group) => group.localDataFiles);
 
   const toggleLabel = (label: string) => {
     setSelectedLabels((current) => (
@@ -173,8 +189,8 @@ export default function TrainingPage() {
       toast.info('Select labels', 'Choose at least one label to build a dataset');
       return;
     }
-    if (!selectedCloudFiles.length) {
-      toast.info('No cloud data', 'Selected labels only have local files. Request upload first.');
+    if (!selectedLocalDataFiles.length) {
+      toast.info('No local data', 'Selected labels have no files under thoth/data label folders.');
       return;
     }
 
@@ -182,45 +198,22 @@ export default function TrainingPage() {
     try {
       await deleteAllDatasets();
       const name = datasetName.trim() || selectedLabels.join(' + ');
-      const created = await post('/datasets/create', {
-        name,
-        description: `Combined labels: ${selectedLabels.join(', ')}`,
+      const response = await fetch('/api/data/labels/create-dataset', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(user?.token ? { Authorization: `Bearer ${user.token}` } : {}),
+        },
+        body: JSON.stringify({ name, labels: selectedLabels }),
       });
-      const datasetId = created?.dataset?.id;
-      if (!datasetId) throw new Error('Dataset creation failed');
-
-      const files = selectedCloudFiles.map((file) => {
-        const labels = [
-          ...parseLabels(file.labels),
-          ...parseLabels(file.metadata?.labels),
-          ...labelsFromPath(file.filename),
-        ];
-        const label = labels.find((item) => selectedLabels.includes(item)) || selectedLabels[0];
-        return { file_id: file.file_id, label };
-      });
-      await post(`/datasets/${datasetId}/files`, { files });
-      toast.success('Dataset created', `${name} contains ${files.length} cloud files`);
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || !payload?.success) throw new Error(payload?.error || 'Dataset creation failed');
+      toast.success('Dataset created', `${name} contains ${payload.uploaded_count || selectedLocalDataFiles.length} uploaded files`);
       setSelectedLabels([]);
       setDatasetName('');
       await loadData();
     } catch (err) {
       toast.error('Dataset failed', err instanceof Error ? err.message : 'Unable to create dataset');
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const requestUploadSelected = async () => {
-    if (!selectedLocalOnly.length) {
-      toast.info('No local files', 'Selected labels have no local-only files to request');
-      return;
-    }
-
-    setBusy(true);
-    try {
-      await Promise.all(selectedLocalOnly.map((file) => post(`/device/file/${file.id}/request-upload`, {}).catch(() => null)));
-      toast.success('Upload requested', `${selectedLocalOnly.length} local files will upload on device sync`);
-      await loadData();
     } finally {
       setBusy(false);
     }
@@ -276,7 +269,7 @@ export default function TrainingPage() {
             <div className="text-xs uppercase tracking-[0.22em] text-slate-500">Training</div>
             <h1 className="mt-1 text-3xl font-semibold text-slate-950">Dataset builder</h1>
             <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">
-              Build one dataset by combining existing labeled folders. Creating a new dataset removes the old datasets first.
+              Build one dataset by selecting labels from local folders under thoth/data. Creating a new dataset removes the old datasets first.
             </p>
           </div>
           <button
@@ -306,6 +299,7 @@ export default function TrainingPage() {
             {labelGroups.map((group) => {
               const selected = selectedLabels.includes(group.label);
               const localOnlyCount = group.localFiles.filter((file) => !file.on_cloud).length;
+              const localDataCount = group.localDataFiles.length;
               return (
                 <button
                   key={group.label}
@@ -317,20 +311,20 @@ export default function TrainingPage() {
                     <div>
                       <div className="text-lg font-semibold">{group.label}</div>
                       <div className={`mt-1 text-sm ${selected ? 'text-slate-300' : 'text-slate-500'}`}>
-                        {group.cloudFiles.length} cloud files · {localOnlyCount} local waiting
+                        {localDataCount} local files · {group.cloudFiles.length} cloud files · {localOnlyCount} waiting
                       </div>
                     </div>
                     {selected && <Check className="h-5 w-5 text-emerald-300" />}
                   </div>
                   <div className={`mt-3 text-xs ${selected ? 'text-slate-400' : 'text-slate-500'}`}>
-                    {humanBytes(group.cloudFiles.reduce((sum, file) => sum + (file.size || 0), 0))}
+                    {humanBytes(group.localDataFiles.reduce((sum, file) => sum + (file.size || 0), 0))}
                   </div>
                 </button>
               );
             })}
             {!labelGroups.length && (
               <div className="rounded-2xl border border-dashed border-slate-300 p-6 text-sm text-slate-500">
-                No labeled cloud or local data found.
+                No labeled folders with data files found under thoth/data.
               </div>
             )}
           </div>
@@ -347,27 +341,18 @@ export default function TrainingPage() {
             />
             <div className="mt-4 grid gap-3 text-sm text-slate-600">
               <div className="flex justify-between"><span>Labels</span><span className="font-medium text-slate-950">{selectedLabels.length}</span></div>
+              <div className="flex justify-between"><span>Files to upload</span><span className="font-medium text-slate-950">{selectedLocalDataFiles.length}</span></div>
               <div className="flex justify-between"><span>Cloud files</span><span className="font-medium text-slate-950">{selectedCloudFiles.length}</span></div>
-              <div className="flex justify-between"><span>Local files</span><span className="font-medium text-slate-950">{selectedLocalOnly.length}</span></div>
             </div>
             <div className="mt-5 flex flex-col gap-2">
               <button
                 type="button"
                 onClick={createDataset}
-                disabled={busy || !selectedLabels.length}
+                disabled={busy || !selectedLabels.length || !selectedLocalDataFiles.length}
                 className="inline-flex items-center justify-center gap-2 rounded-xl bg-slate-950 px-4 py-3 text-sm font-semibold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 <Database className="h-4 w-4" />
                 Create dataset
-              </button>
-              <button
-                type="button"
-                onClick={requestUploadSelected}
-                disabled={busy || !selectedLocalOnly.length}
-                className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 px-4 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                <UploadCloud className="h-4 w-4" />
-                Upload selected local data
               </button>
             </div>
           </div>

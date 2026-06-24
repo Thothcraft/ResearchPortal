@@ -1,12 +1,11 @@
 import { NextResponse } from 'next/server';
 import fs from 'fs';
-import path from 'path';
+import { listMinuteSummaries, MINUTES_DATA_DIR } from '@/lib/minutes';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-const DATA_DIR = '/home/pi/Desktop/data';
-const MINUTE_RE = /^\d{8}_\d{4}$/;
+const DATA_DIR = MINUTES_DATA_DIR;
 
 export async function GET() {
   try {
@@ -21,36 +20,20 @@ export async function GET() {
     }[] = [];
 
     if (fs.existsSync(DATA_DIR)) {
-      const items = fs.readdirSync(DATA_DIR);
-      for (const item of items) {
-        const itemPath = path.join(DATA_DIR, item);
-        const stat = fs.statSync(itemPath);
-
-        if (!stat.isDirectory() || !MINUTE_RE.test(item)) continue;
-
-        const names = new Set(fs.readdirSync(itemPath));
-        const manifestPath = path.join(itemPath, 'manifest.json');
-        let manifest: any = null;
-        if (fs.existsSync(manifestPath)) {
-          try {
-            manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
-          } catch {
-            manifest = null;
-          }
-        }
-        const completed = Boolean(manifest?.capture_finished);
+      for (const minute of listMinuteSummaries()) {
+        const stat = fs.statSync(minute.path);
         files.push({
-          name: item,
+          name: minute.minute,
           size: stat.size,
-          modified: stat.mtime.toISOString(),
+          modified: minute.modified,
           type: 'minute-folder',
-          completed,
-          state: completed ? 'ready' : 'collecting',
+          completed: minute.completed,
+          state: minute.state,
           files: {
-            video: names.has('usb_camera.mp4'),
-            radar: Array.from(names).some(name => name.startsWith('mmw_radar_raw_') && name.endsWith('.bin')),
-            csi: names.has('wifi_csi_raw.csv') || names.has('wifi_csi_timestamped.csv') || names.has('wifi_csi_serial_all.jsonl'),
-            manifest: names.has('manifest.json'),
+            video: minute.files.video,
+            radar: minute.files.radar,
+            csi: minute.files.csi,
+            manifest: minute.files.manifest,
           },
         });
       }

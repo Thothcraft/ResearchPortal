@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import fs from 'fs';
 import path from 'path';
-import { MINUTES_DATA_DIR, MINUTE_RE } from '@/lib/minutes';
+import { getMinuteDetail, MINUTE_ID_RE } from '@/lib/minutes';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -43,12 +43,13 @@ export async function PATCH(request: NextRequest) {
 
     for (const item of minutes) {
       const minute = String(item || '');
-      if (!MINUTE_RE.test(minute)) {
+      if (!MINUTE_ID_RE.test(minute)) {
         skipped.push(minute);
         continue;
       }
 
-      const minuteDir = path.join(MINUTES_DATA_DIR, minute);
+      const detail = getMinuteDetail(minute);
+      const minuteDir = detail?.path || '';
       const manifestPath = path.join(minuteDir, 'manifest.json');
       if (!fs.existsSync(minuteDir) || !fs.existsSync(manifestPath)) {
         skipped.push(minute);

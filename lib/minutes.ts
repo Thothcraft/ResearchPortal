@@ -1,8 +1,9 @@
 import fs from 'fs';
 import path from 'path';
 
-export const MINUTES_DATA_DIR = '/home/pi/Desktop/data';
+export const MINUTES_DATA_DIR = process.env.THOTH_DATA_DIR || '/home/pi/Desktop/thoth/data';
 export const MINUTE_RE = /^\d{8}_\d{4}$/;
+export const MINUTE_ID_RE = /^(?:(?<label>[^/\\]+)__)?(?<minute>\d{8}_\d{4})$/;
 
 export type MinuteFiles = {
   video: boolean;
@@ -14,6 +15,8 @@ export type MinuteFiles = {
 
 export type MinuteSummary = {
   minute: string;
+  minuteName: string;
+  relativePath: string;
   path: string;
   modified: string;
   created: string;
@@ -78,6 +81,18 @@ function extractLabels(manifest: any): string[] {
   return cleaned;
 }
 
+function labelsFromMinutePath(relativePath: string): string[] {
+  const parts = relativePath.split(path.sep).filter(Boolean);
+  if (parts.length >= 2 && MINUTE_RE.test(parts[1])) return [parts[0]];
+  return [];
+}
+
+function minuteIdFor(relativePath: string): string {
+  const parts = relativePath.split(path.sep).filter(Boolean);
+  if (parts.length >= 2 && MINUTE_RE.test(parts[1])) return `${parts[0]}__${parts[1]}`;
+  return parts[0] || relativePath;
+}
+
 function extractDeviceInfo(manifest: any, minuteDir: string): { deviceKey: string; deviceLabel: string; uploaded: boolean } {
   const candidates = [
     manifest?.device_name,
@@ -123,17 +138,36 @@ export function listMinuteSummaries(): MinuteSummary[] {
   if (!fs.existsSync(MINUTES_DATA_DIR)) return [];
 
   const minutes: MinuteSummary[] = [];
+  const candidateDirs: Array<{ dir: string; relativePath: string; minuteName: string }> = [];
   for (const item of fs.readdirSync(MINUTES_DATA_DIR)) {
-    const minuteDir = path.join(MINUTES_DATA_DIR, item);
-    if (!fs.statSync(minuteDir).isDirectory() || !MINUTE_RE.test(item)) continue;
+    if (item === 'config' || item.startsWith('.')) continue;
+    const itemPath = path.join(MINUTES_DATA_DIR, item);
+    if (!fs.statSync(itemPath).isDirectory()) continue;
+    if (MINUTE_RE.test(item)) {
+      candidateDirs.push({ dir: itemPath, relativePath: item, minuteName: item });
+      continue;
+    }
+    for (const child of fs.readdirSync(itemPath)) {
+      const childPath = path.join(itemPath, child);
+      if (fs.statSync(childPath).isDirectory() && MINUTE_RE.test(child)) {
+        candidateDirs.push({ dir: childPath, relativePath: path.join(item, child), minuteName: child });
+      }
+    }
+  }
+
+  for (const candidate of candidateDirs) {
+    const minuteDir = candidate.dir;
     const stat = fs.statSync(minuteDir);
     const paths = getMinutePaths(minuteDir);
     const manifest = readJsonPreview(paths.manifest);
     const deviceInfo = extractDeviceInfo(manifest, minuteDir);
-    const labels = extractLabels(manifest);
+    const labels = Array.from(new Set([...labelsFromMinutePath(candidate.relativePath), ...extractLabels(manifest)]));
     const completed = Boolean(manifest?.capture_finished);
+    const minute = minuteIdFor(candidate.relativePath);
     minutes.push({
-      minute: item,
+      minute,
+      minuteName: candidate.minuteName,
+      relativePath: candidate.relativePath,
       path: minuteDir,
       modified: stat.mtime.toISOString(),
       created: stat.birthtime.toISOString(),
@@ -170,18 +204,24 @@ export function getMinuteSummary(minute: string): MinuteSummary | null {
 }
 
 export function getMinuteDetail(minute: string): MinuteDetail | null {
-  if (!MINUTE_RE.test(minute)) return null;
-  const minuteDir = path.join(MINUTES_DATA_DIR, minute);
+  const existingSummary = getMinuteSummary(minute);
+  const parsed = MINUTE_ID_RE.exec(minute);
+  if (!existingSummary && !parsed) return null;
+  const minuteName = existingSummary?.minuteName || parsed?.groups?.minute || minute;
+  const minuteDir = existingSummary?.path || path.join(MINUTES_DATA_DIR, minuteName);
   if (!fs.existsSync(minuteDir) || !fs.statSync(minuteDir).isDirectory()) return null;
 
   const stat = fs.statSync(minuteDir);
   const paths = getMinutePaths(minuteDir);
   const manifest = readJsonPreview(paths.manifest);
   const deviceInfo = extractDeviceInfo(manifest, minuteDir);
-  const labels = extractLabels(manifest);
+  const relativePath = existingSummary?.relativePath || minuteName;
+  const labels = Array.from(new Set([...labelsFromMinutePath(relativePath), ...extractLabels(manifest)]));
   const completed = Boolean(manifest?.capture_finished);
-  const summary = getMinuteSummary(minute) || {
+  const summary = existingSummary || {
     minute,
+    minuteName,
+    relativePath,
     path: minuteDir,
     modified: stat.mtime.toISOString(),
     created: stat.birthtime.toISOString(),

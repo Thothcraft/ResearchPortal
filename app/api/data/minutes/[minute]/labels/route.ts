@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import fs from 'fs';
 import path from 'path';
-import { getMinuteDetail, MINUTES_DATA_DIR, MINUTE_RE } from '@/lib/minutes';
+import { getMinuteDetail, MINUTE_ID_RE } from '@/lib/minutes';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -33,20 +33,19 @@ export async function PATCH(
 ) {
   try {
     const minute = decodeURIComponent(params.minute);
-    if (!MINUTE_RE.test(minute)) {
+    if (!MINUTE_ID_RE.test(minute)) {
       return NextResponse.json({ success: false, error: 'Invalid minute folder' }, { status: 400 });
     }
 
-    const minuteDir = path.join(MINUTES_DATA_DIR, minute);
     const detail = getMinuteDetail(minute);
-    if (!detail || !fs.existsSync(minuteDir)) {
+    if (!detail || !fs.existsSync(detail.path)) {
       return NextResponse.json({ success: false, error: 'Minute folder not found' }, { status: 404 });
     }
 
     const body = await request.json().catch(() => ({}));
     const labels = normalizeLabels(body.labels);
     const replace = Boolean(body.replace);
-    const manifestPath = path.join(minuteDir, 'manifest.json');
+    const manifestPath = path.join(detail.path, 'manifest.json');
     const manifest = fs.existsSync(manifestPath)
       ? JSON.parse(fs.readFileSync(manifestPath, 'utf8'))
       : {};
