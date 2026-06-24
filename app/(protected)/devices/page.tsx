@@ -13,7 +13,6 @@ import {
   FolderOpen,
   RefreshCw,
   SlidersHorizontal,
-  UploadCloud,
 } from 'lucide-react';
 
 type Sensor = {
@@ -66,20 +65,27 @@ type DeviceFileSummary = {
   last_synced?: string;
 };
 
-type ScannedDeviceFile = {
-  minute?: string;
-  name?: string;
-  relative_name?: string;
-  relative_path?: string;
-  size?: number;
-  modified?: string;
-  type?: string;
-  label?: string | null;
-};
-
-type DevicePanelFile = Partial<DeviceFileSummary> & ScannedDeviceFile & {
-  filename: string;
-  source: 'db' | 'scan';
+type LocalMinuteSummary = {
+  minute: string;
+  minuteName: string;
+  relativePath: string;
+  path: string;
+  modified: string;
+  created: string;
+  deviceKey: string;
+  deviceLabel: string;
+  labels: string[];
+  completed: boolean;
+  state: 'ready' | 'collecting';
+  uploaded: boolean;
+  files: {
+    video: boolean;
+    radar: boolean;
+    csi: boolean;
+    manifest: boolean;
+    predictions: boolean;
+  };
+  sizes: Record<string, number>;
 };
 
 const DEFAULT_SENSORS: Record<string, boolean> = {
@@ -95,11 +101,6 @@ const SENSOR_LABELS: Record<string, string> = {
   esp32_csi: 'CSI',
   sense_hat: 'Sense HAT',
 };
-
-function extractMinuteStamp(value: unknown): string | null {
-  const match = String(value || '').match(/\b\d{8}_\d{4}\b/);
-  return match ? match[0] : null;
-}
 
 function humanBytes(bytes?: number): string {
   if (!bytes) return '0 B';
@@ -125,33 +126,29 @@ function isRecent(value?: string | null, windowMs = 10 * 60 * 1000): boolean {
   return Number.isFinite(time) && Date.now() - time <= windowMs;
 }
 
-function mergeDeviceFiles(files: DeviceFileSummary[], scannedFiles: ScannedDeviceFile[]): DevicePanelFile[] {
-  const merged = new Map<string, DevicePanelFile>();
+function normalizeKey(value: unknown): string {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '')
+    .trim();
+}
 
-  for (const file of files) {
-    const key = `db:${file.filename}`;
-    merged.set(key, {
-      ...file,
-      filename: file.filename,
-      source: 'db',
-    });
-  }
-
-  for (const file of scannedFiles) {
-    const filename = String(file.relative_name || file.name || file.relative_path?.split('/').pop() || file.minute || 'file');
-    const key = `scan:${file.name || file.relative_path || file.relative_name || filename}`;
-    const existingKey = `db:${filename}`;
-    const existing = merged.get(existingKey);
-    const nextEntry: DevicePanelFile = {
-      ...(existing || {}),
-      ...file,
-      filename,
-      source: existing ? 'db' : 'scan',
-    };
-    merged.set(existing ? existingKey : key, nextEntry);
-  }
-
-  return Array.from(merged.values());
+function minuteMatchesDevice(device: Device, minute: LocalMinuteSummary): boolean {
+  const candidates = [
+    device.device_uuid,
+    device.device_id,
+    device.device_name,
+    device.hardware_info?.hostname,
+    device.hardware_info?.raspberry_pi_model,
+    device.hardware_info?.device_type,
+  ].map(normalizeKey).filter(Boolean);
+  const minuteCandidates = [
+    minute.deviceKey,
+    minute.deviceLabel,
+    minute.relativePath,
+    minute.minuteName,
+  ].map(normalizeKey).filter(Boolean);
+  return minuteCandidates.some((candidate) => candidates.includes(candidate));
 }
 
 function normalizeSettings(value?: CaptureSettings | null): CaptureSettings {
@@ -164,19 +161,17 @@ function normalizeSettings(value?: CaptureSettings | null): CaptureSettings {
 function DevicePanel({
   device,
   files,
-  scannedFiles,
+  minutes,
   settings,
   onSaveSettings,
-  onRequestUpload,
   onDownloadCloudFile,
   onDownloadMinute,
 }: {
   device: Device;
   files: DeviceFileSummary[];
-  scannedFiles: ScannedDeviceFile[];
+  minutes: LocalMinuteSummary[];
   settings: CaptureSettings;
   onSaveSettings: (deviceId: string, settings: CaptureSettings) => Promise<void>;
-  onRequestUpload: (fileId: number) => Promise<void>;
   onDownloadCloudFile: (fileId: number, filename?: string) => Promise<void>;
   onDownloadMinute: (minute: string, deviceId: string) => Promise<void>;
 }) {
@@ -185,9 +180,11 @@ function DevicePanel({
   const [expanded, setExpanded] = useState(false);
   const [draftLabel, setDraftLabel] = useState(settings.labels.join(', '));
   const [draftSensors, setDraftSensors] = useState<Record<string, boolean>>(settings.sensors);
-  const displayFiles = useMemo(() => mergeDeviceFiles(files, scannedFiles), [files, scannedFiles]);
-  const freshFileActivity = displayFiles.some((file) => isRecent(file.last_synced || file.modified_at || file.modified, 3 * 60 * 1000));
-  const canRequestUpload = files.length > 0;
+  const matchedMinutes = useMemo(() => {
+    const scoped = minutes.filter((minute) => minuteMatchesDevice(device, minute));
+    return scoped.length ? scoped : minutes;
+  }, [device, minutes]);
+  const freshFileActivity = matchedMinutes.some((minute) => isRecent(minute.modified, 3 * 60 * 1000));
 
   useEffect(() => {
     setDraftLabel(settings.labels.join(', '));
@@ -195,28 +192,17 @@ function DevicePanel({
   }, [settings]);
 
   const minuteBundles = useMemo(() => {
-    const grouped = new Map<string, Array<DevicePanelFile>>();
-    displayFiles.forEach((file) => {
-      const minute = extractMinuteStamp(
-        file.filename ||
-        file.relative_path ||
-        file.relative_name ||
-        file.name ||
-        file.minute
-      );
-      if (!minute) return;
-      grouped.set(minute, [...(grouped.get(minute) || []), file]);
-    });
-    return Array.from(grouped.entries())
-        .map(([minute, minuteFiles]) => ({
-          minute,
-          files: minuteFiles,
-          localCount: minuteFiles.filter((file) => Boolean(file.on_device)).length,
-          cloudCount: minuteFiles.filter((file) => Boolean(file.on_cloud)).length,
-          uploadRequested: minuteFiles.some((file) => Boolean(file.upload_requested)),
-        }))
-        .sort((a, b) => b.minute.localeCompare(a.minute));
-  }, [displayFiles]);
+    return matchedMinutes
+      .map((minute) => ({
+        minute: minute.minute,
+        minuteLabel: minute.relativePath,
+        fileCount: Object.values(minute.files).filter(Boolean).length,
+        totalSize: Object.values(minute.sizes || {}).reduce((sum, size) => sum + Number(size || 0), 0),
+        labels: minute.labels,
+        uploaded: minute.uploaded,
+      }))
+      .sort((a, b) => b.minute.localeCompare(a.minute));
+  }, [matchedMinutes]);
 
   const saveSettings = async () => {
     await onSaveSettings(device.device_uuid, {
@@ -324,27 +310,22 @@ function DevicePanel({
                   <div>
                     <div className="font-mono text-base font-semibold text-slate-950">{minute.minute}</div>
                     <div className="mt-1 text-sm text-slate-700">
-                      {minute.files.length} files · {minute.localCount} local · {minute.cloudCount} cloud
+                      {minute.fileCount} files · {humanBytes(minute.totalSize)}
                     </div>
                     <div className="mt-2 flex flex-wrap gap-2 text-xs text-slate-700">
-                      {minute.files.slice(0, 6).map((file) => (
-                        <span
-                          key={String((file as DeviceFileSummary).id || (file as ScannedDeviceFile).relative_path || (file as ScannedDeviceFile).name || (file as ScannedDeviceFile).relative_name || minute.minute)}
-                          className="border border-slate-300 bg-slate-50 px-2 py-1"
-                        >
-                          {String(
-                            (file as DeviceFileSummary).filename ||
-                            (file as ScannedDeviceFile).relative_name ||
-                            (file as ScannedDeviceFile).name ||
-                            (file as ScannedDeviceFile).relative_path ||
-                            'file'
-                          ).split('/').pop()} ({humanBytes((file as DeviceFileSummary).size || (file as ScannedDeviceFile).size)})
+                      {minute.labels.length ? minute.labels.map((label) => (
+                        <span key={`${minute.minute}:${label}`} className="border border-slate-300 bg-slate-50 px-2 py-1">
+                          {label}
+                        </span>
+                      )) : (
+                        <span className="border border-slate-300 bg-slate-50 px-2 py-1">
+                          {minute.minuteLabel}
                         </span>
                       ))}
                     </div>
                   </div>
                   <div className="flex flex-wrap gap-2">
-                    {minute.files.length > 0 && (
+                    {minute.fileCount > 0 && (
                       <button
                         type="button"
                         onClick={() => onDownloadMinute(minute.minute, device.device_uuid)}
@@ -352,20 +333,6 @@ function DevicePanel({
                       >
                         <Download className="h-4 w-4" />
                         Download minute
-                      </button>
-                    )}
-                    {canRequestUpload && minute.files.some((file) => file.source === 'db' && !file.on_cloud) && (
-                      <button
-                        type="button"
-                        onClick={() => Promise.all(
-                          minute.files
-                            .filter((file) => file.source === 'db' && !file.on_cloud && typeof file.id === 'number')
-                            .map((file) => onRequestUpload(file.id as number))
-                        )}
-                        className="inline-flex items-center gap-2 border border-slate-400 px-3 py-2 text-sm font-semibold text-slate-950 hover:bg-slate-100"
-                      >
-                        <UploadCloud className="h-4 w-4" />
-                        Upload local
                       </button>
                     )}
                   </div>
@@ -408,10 +375,10 @@ function DevicePanel({
 export default function DevicesPage() {
   const [devices, setDevices] = useState<Device[]>([]);
   const [deviceFiles, setDeviceFiles] = useState<Record<string, DeviceFileSummary[]>>({});
-  const [scannedFiles, setScannedFiles] = useState<ScannedDeviceFile[]>([]);
+  const [minutes, setMinutes] = useState<LocalMinuteSummary[]>([]);
   const [settings, setSettings] = useState<Record<string, CaptureSettings>>({});
   const [loading, setLoading] = useState(true);
-  const { get, post, put } = useApi();
+  const { get, put } = useApi();
   const { user, isLoading: authLoading } = useAuth();
   const toast = useToast();
 
@@ -423,8 +390,10 @@ export default function DevicesPage() {
       const remoteDevices = Array.isArray(deviceRes?.devices) ? deviceRes.devices : [];
       setDevices(remoteDevices);
 
-      const scanRes = await get('/device/scan-files?data_path=thoth/data').catch(() => ({ data: { all_files: [] } }));
-      setScannedFiles(Array.isArray(scanRes?.data?.all_files) ? scanRes.data.all_files : []);
+      const minutesRes = await fetch('/api/data/minutes', { cache: 'no-store' })
+        .then((response) => response.json())
+        .catch(() => ({ minutes: [] }));
+      setMinutes(Array.isArray(minutesRes?.minutes) ? minutesRes.minutes : []);
 
       const entries = await Promise.all(remoteDevices.map(async (device: Device) => {
         const [fileRes, settingsRes] = await Promise.all([
@@ -466,13 +435,6 @@ export default function DevicesPage() {
     toast.success('Settings applied', 'Ongoing collection will use the updated label and sensors');
   };
 
-  const requestUpload = async (fileId: number) => {
-    const response = await post(`/device/file/${fileId}/request-upload`, {});
-    if (!response?.success) throw new Error(response?.message || 'Upload request failed');
-    toast.success('Upload requested', 'The device will upload this data on sync');
-    await loadData();
-  };
-
   const downloadFromUrl = useCallback(async (url: string, fallbackName: string) => {
     try {
       const response = await fetch(url, {
@@ -495,17 +457,7 @@ export default function DevicesPage() {
   }, [toast, user?.token]);
 
   const onlineCount = rows.filter((device) => device.online).length;
-  const minuteSources = mergeDeviceFiles(Object.values(deviceFiles).flat(), scannedFiles);
-  const totalMinutes = minuteSources.reduce((minutes, file) => {
-    const minute = extractMinuteStamp(
-      file.filename ||
-      file.relative_path ||
-      file.relative_name ||
-      file.name ||
-      file.minute
-    );
-    return minute ? minutes.add(minute) : minutes;
-  }, new Set<string>()).size;
+  const totalMinutes = minutes.length;
 
   if (loading && !devices.length) {
     return <div className="border border-slate-300 bg-white p-8 text-sm text-slate-700">Loading devices...</div>;
@@ -553,10 +505,9 @@ export default function DevicesPage() {
             key={device.device_uuid}
             device={device}
             files={deviceFiles[device.device_uuid] || []}
-            scannedFiles={scannedFiles}
+            minutes={minutes}
             settings={settings[device.device_uuid] || normalizeSettings(device.hardware_info?.capture_settings)}
             onSaveSettings={saveSettings}
-            onRequestUpload={requestUpload}
             onDownloadCloudFile={(fileId, filename = 'file') => downloadFromUrl(`/api/proxy/file/${fileId}`, filename)}
             onDownloadMinute={(minute, deviceId) => downloadFromUrl(`/api/proxy/file/minute/${minute}/download?device_id=${encodeURIComponent(deviceId)}`, `${minute}.zip`)}
           />
