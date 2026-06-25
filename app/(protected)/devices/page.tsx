@@ -79,6 +79,7 @@ type MinutePredictionEntry = {
   status?: string;
   error?: string;
   scores?: Array<number | null>;
+  labels?: string[];
   classes?: string[];
 };
 
@@ -519,7 +520,7 @@ function DevicePanel({
                           <div className="mt-3 flex flex-wrap gap-2 text-xs text-slate-600">
                             {entry.scores.slice(0, 8).map((score, scoreIndex) => (
                               <span key={scoreIndex} className="border border-slate-300 bg-white px-2 py-1">
-                                {entry.classes?.[scoreIndex] || `class ${scoreIndex}`}: {typeof score === 'number' ? `${Math.round(score * 1000) / 10}%` : 'n/a'}
+                                {entry.labels?.[scoreIndex] || entry.classes?.[scoreIndex] || `class ${scoreIndex}`}: {typeof score === 'number' ? `${Math.round(score * 1000) / 10}%` : 'n/a'}
                               </span>
                             ))}
                           </div>
