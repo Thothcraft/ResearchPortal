@@ -25,10 +25,15 @@ function Heatmap({ payload, tracking = false }: { payload: any; tracking?: boole
   const frames = Array.isArray(payload?.frames) && payload.frames.length ? payload.frames : [payload];
   const [frameIndex, setFrameIndex] = useState(0);
   const [playing, setPlaying] = useState(frames.length > 1);
+  const [occupancyThreshold, setOccupancyThreshold] = useState(Number(payload?.occupancy?.threshold_percent ?? 50));
   const latest = frames[Math.min(frameIndex, frames.length - 1)] || payload;
   const confirmed = latest?.detected === true;
   const snr = Number(latest?.snr_db);
   const threshold = Number(latest?.threshold_db ?? payload?.threshold_db);
+  const detectedFrames = Number(payload?.occupancy?.detected_frames) || 0;
+  const evaluatedFrames = Number(payload?.occupancy?.evaluated_frames) || 0;
+  const detectedPercent = evaluatedFrames ? detectedFrames * 100 / evaluatedFrames : 0;
+  const occupancyLabel = evaluatedFrames > 0 && detectedPercent >= occupancyThreshold ? 'occupied' : 'empty';
   useEffect(() => {
     const canvas = ref.current;
     const z = frameImage(latest, payload?.z);
@@ -48,6 +53,7 @@ function Heatmap({ payload, tracking = false }: { payload: any; tracking?: boole
   useEffect(() => {
     setFrameIndex(0);
     setPlaying(frames.length > 1);
+    setOccupancyThreshold(Number(payload?.occupancy?.threshold_percent ?? 50));
   }, [payload, frames.length]);
   useEffect(() => {
     if (!playing || frames.length < 2) return;
@@ -69,8 +75,12 @@ function Heatmap({ payload, tracking = false }: { payload: any; tracking?: boole
         SNR {snr.toFixed(1)} dB / threshold {threshold.toFixed(1)} dB
       </span>}
       {payload?.occupancy && <span className="font-semibold capitalize text-slate-700">
-        Minute: {payload.occupancy.label} ({Math.round(Number(payload.occupancy.ratio || 0) * 100)}% detected)
+        Minute: {occupancyLabel} — {detectedFrames} / {evaluatedFrames} frames detected ({Math.round(detectedPercent * 10) / 10}%)
       </span>}
+      {payload?.occupancy && <label className="flex items-center gap-2 font-medium text-slate-600">
+        Occupied at ≥
+        <input aria-label="Occupancy threshold percentage" type="number" min={0} max={100} step={1} value={occupancyThreshold} onChange={(event) => setOccupancyThreshold(Math.min(100, Math.max(0, Number(event.target.value) || 0)))} className="w-16 rounded-md border border-slate-300 px-2 py-1 text-right" />%
+      </label>}
     </div>}
   </div>;
 }
