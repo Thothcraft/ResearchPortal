@@ -5,6 +5,7 @@ import { useApi } from '@/hooks/useApi';
 import { useToast } from '@/contexts/ToastContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { Brain, Cpu, FolderOpen, RefreshCw, Radar, Wifi, Camera, Mic, Activity } from 'lucide-react';
+import Link from 'next/link';
 
 type Sensor = {
   sensor_type: string;
@@ -70,6 +71,7 @@ export default function HomePage() {
   const [deployments, setDeployments] = useState<Deployment[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
 
   const load = useCallback(async () => {
     if (authLoading || !user?.token) return;
@@ -82,6 +84,7 @@ export default function HomePage() {
       ]);
       setDevices(Array.isArray(deviceRes?.devices) ? deviceRes.devices : []);
       setDeployments(Array.isArray(deployRes?.deployments) ? deployRes.deployments : []);
+      setLastUpdated(new Date());
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to load dashboard';
       setError(message);
@@ -94,6 +97,8 @@ export default function HomePage() {
   useEffect(() => {
     if (authLoading || !user?.token) return;
     load();
+    const timer = window.setInterval(load, 15000);
+    return () => window.clearInterval(timer);
   }, [authLoading, load, user?.token]);
 
   const normalizedDevices = useMemo(
@@ -116,8 +121,8 @@ export default function HomePage() {
   }
 
   return (
-    <div className="space-y-6">
-      <section className="rounded-2xl border border-slate-800 bg-slate-950 p-6 text-slate-100 shadow-sm">
+    <div className="space-y-4 sm:space-y-6">
+      <section className="rounded-2xl border border-slate-800 bg-slate-950 p-4 text-slate-100 shadow-sm sm:p-6">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
           <div>
             <div className="text-xs uppercase tracking-[0.22em] text-slate-500">Home</div>
@@ -126,14 +131,13 @@ export default function HomePage() {
               Live device state comes from Brain. Local sensor data stays on the device unless a minute is explicitly uploaded to cloud.
             </p>
           </div>
-          <button
-            type="button"
-            onClick={load}
-            className="inline-flex items-center gap-2 rounded-xl border border-slate-700 bg-slate-900 px-3.5 py-2 text-sm font-medium text-slate-100 hover:bg-slate-800"
-          >
-            <RefreshCw className="h-4 w-4" />
-            Refresh
-          </button>
+          <div className="grid gap-2 sm:flex sm:items-center">
+            <Link href="/devices" className="inline-flex items-center justify-center rounded-xl bg-cyan-300 px-4 py-2 text-sm font-semibold text-slate-950 hover:bg-cyan-200">Manage devices</Link>
+            <button type="button" onClick={load} disabled={loading} className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-700 bg-slate-900 px-3.5 py-2 text-sm font-medium text-slate-100 hover:bg-slate-800 disabled:opacity-60">
+              <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+              Refresh
+            </button>
+          </div>
         </div>
 
         <div className="mt-5 grid gap-3 sm:grid-cols-3">
@@ -156,10 +160,11 @@ export default function HomePage() {
             {error}
           </div>
         )}
+        {lastUpdated && <div className="mt-3 text-right text-xs text-slate-500">Updated {lastUpdated.toLocaleTimeString()}</div>}
       </section>
 
       <section className="grid gap-6 lg:grid-cols-[1.4fr_0.9fr]">
-        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
           <div className="flex items-center justify-between gap-3">
             <div>
               <div className="text-xs uppercase tracking-[0.18em] text-slate-500">Device status</div>
@@ -195,6 +200,7 @@ export default function HomePage() {
                     <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs text-slate-500">No sensors reported</span>
                   )}
                 </div>
+                <Link href="/devices" className="mt-4 inline-flex text-sm font-semibold text-cyan-700 hover:text-cyan-900">View captures and controls →</Link>
               </article>
             ))}
             {!normalizedDevices.length && (
@@ -206,7 +212,7 @@ export default function HomePage() {
         </div>
 
         <div className="space-y-6">
-          <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
             <div className="flex items-center justify-between gap-3">
               <div>
                 <div className="text-xs uppercase tracking-[0.18em] text-slate-500">Primary device</div>
@@ -234,7 +240,7 @@ export default function HomePage() {
             )}
           </section>
 
-          <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
             <div className="flex items-center justify-between gap-3">
               <div>
                 <div className="text-xs uppercase tracking-[0.18em] text-slate-500">Deployments</div>

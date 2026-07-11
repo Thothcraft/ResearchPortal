@@ -14,6 +14,7 @@ import {
   Download,
   FolderOpen,
   RefreshCw,
+  Search,
   SlidersHorizontal,
   X,
 } from 'lucide-react';
@@ -66,6 +67,16 @@ type DeviceFileSummary = {
   cloud_file_id?: number | null;
   upload_requested: boolean;
   last_synced?: string;
+  label?: string | null;
+  labels?: string[];
+  occupancy?: {
+    label?: string;
+    detected_frames?: number;
+    evaluated_frames?: number;
+    ratio?: number;
+    threshold_percent?: number;
+  } | null;
+  metadata?: { label?: string; labels?: string[] };
 };
 
 type MinutePredictionEntry = {
@@ -107,6 +118,7 @@ type LocalMinuteSummary = {
   deviceKey: string;
   deviceLabel: string;
   labels: string[];
+  occupancy?: DeviceFileSummary['occupancy'];
   completed: boolean;
   state: 'ready' | 'collecting';
   uploaded: boolean;
@@ -220,6 +232,17 @@ function normalizeSettings(value?: CaptureSettings | null): CaptureSettings {
   };
 }
 
+function labelsForFile(file: DeviceFileSummary): string[] {
+  const candidates = [
+    ...(Array.isArray(file.labels) ? file.labels : []),
+    ...(Array.isArray(file.metadata?.labels) ? file.metadata.labels : []),
+    file.label,
+    file.metadata?.label,
+    file.occupancy?.label,
+  ];
+  return Array.from(new Set(candidates.map((value) => String(value || '').trim()).filter(Boolean)));
+}
+
 function DevicePanel({
   device,
   files,
@@ -250,8 +273,7 @@ function DevicePanel({
   const [predictionsError, setPredictionsError] = useState('');
 
   const matchedMinutes = useMemo(() => {
-    const scoped = minutes.filter((minute) => matchesDevice(device, minute));
-    return scoped.length ? scoped : minutes;
+    return minutes.filter((minute) => matchesDevice(device, minute));
   }, [device, minutes]);
 
   useEffect(() => {
@@ -286,27 +308,26 @@ function DevicePanel({
   const modalEntries = predictionEntries(minutePredictions);
 
   return (
-    <article className={`border border-slate-300 ${device.online ? 'bg-white' : 'bg-slate-100 opacity-75 grayscale'}`}>
+    <article className={`overflow-hidden rounded-2xl border border-slate-200 shadow-sm transition ${device.online ? 'bg-white' : 'bg-slate-50 opacity-80'}`}>
       <button
         type="button"
         onClick={() => setExpanded((current) => !current)}
-        className="flex w-full flex-col gap-4 border-b border-slate-300 p-5 text-left lg:flex-row lg:items-start lg:justify-between"
+        className="flex w-full flex-col gap-4 border-b border-slate-200 p-4 text-left transition hover:bg-slate-50 sm:p-5 lg:flex-row lg:items-start lg:justify-between"
       >
         <div className="flex items-start gap-3">
-          <div className="bg-slate-950 p-3 text-white">
+          <div className="shrink-0 rounded-xl bg-slate-950 p-3 text-white">
             <Cpu className="h-5 w-5" />
           </div>
           <div>
             <div className="text-xs font-semibold uppercase tracking-wide text-slate-700">{device.device_type || hardware.device_type || 'device'}</div>
             <h2 className="mt-1 text-2xl font-semibold text-slate-950">{device.device_name || device.device_id}</h2>
             <div className="mt-2 flex flex-wrap gap-2 text-sm text-slate-700">
-              <span className={`border px-2 py-1 font-medium ${device.online ? 'border-emerald-700 bg-emerald-50 text-emerald-800' : 'border-slate-400 bg-slate-100 text-slate-700'}`}>
+              <span className={`rounded-full border px-2.5 py-1 font-medium ${device.online ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-slate-300 bg-slate-100 text-slate-700'}`}>
                 {device.online ? 'Online' : 'Offline'}
               </span>
-              <span className="border border-slate-300 bg-white px-2 py-1">IP {device.ip_address || 'N/A'}</span>
-              <span className="border border-slate-300 bg-white px-2 py-1">Last seen {device.last_seen ? new Date(parseServerTime(device.last_seen)).toLocaleString() : 'N/A'}</span>
-              <span className="border border-slate-300 bg-white px-2 py-1">{matchedMinutes.length} captured minutes</span>
-              <span className="border border-slate-300 bg-white px-2 py-1">{expanded ? 'Expanded' : 'Collapsed'}</span>
+              <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1">IP {device.ip_address || 'N/A'}</span>
+              <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1">Last seen {device.last_seen ? new Date(parseServerTime(device.last_seen)).toLocaleString() : 'N/A'}</span>
+              <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1">{matchedMinutes.length} captured minutes</span>
             </div>
           </div>
         </div>
@@ -320,7 +341,7 @@ function DevicePanel({
 
       {expanded && (
         <div className="grid gap-0 lg:grid-cols-[360px_1fr]">
-          <section className="border-b border-slate-300 p-5 lg:border-b-0 lg:border-r">
+          <section className="border-b border-slate-200 p-4 sm:p-5 lg:border-b-0 lg:border-r">
             <div className="mb-4 flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-slate-800">
               <SlidersHorizontal className="h-4 w-4" />
               Ongoing collection
@@ -372,7 +393,7 @@ function DevicePanel({
             </div>
           </section>
 
-          <section className="p-5">
+          <section className="min-w-0 p-4 sm:p-5">
             <div className="mb-4 flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-slate-800">
               <FolderOpen className="h-4 w-4" />
               Captured minutes
@@ -383,7 +404,7 @@ function DevicePanel({
                 const fileCount = dataFiles.length;
                 const totalSize = dataFiles.reduce((sum, file) => sum + Number(file.size || 0), 0);
                 return (
-                  <div key={minute.minute} className="border border-slate-300 bg-white p-4">
+                  <div key={minute.minute} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
                     <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                       <div>
                         <div className="font-mono text-base font-semibold text-slate-950">{minute.minute}</div>
@@ -406,6 +427,16 @@ function DevicePanel({
                             </span>
                           )}
                         </div>
+                        <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+                          <span className={`rounded-full px-2.5 py-1 font-semibold ${minute.uploaded ? 'bg-blue-50 text-blue-700' : 'bg-amber-50 text-amber-800'}`}>
+                            {minute.uploaded ? 'Uploaded' : 'On device only'}
+                          </span>
+                          {!!minute.occupancy?.evaluated_frames && (
+                            <span className="text-slate-600">
+                              {minute.occupancy.detected_frames || 0} / {minute.occupancy.evaluated_frames} detected
+                            </span>
+                          )}
+                        </div>
                         {dataFiles.length > 0 && (
                           <div className="mt-2 flex flex-wrap gap-2 text-xs text-slate-700">
                             {dataFiles.slice(0, 6).map((file) => (
@@ -416,11 +447,11 @@ function DevicePanel({
                           </div>
                         )}
                       </div>
-                      <div className="flex flex-wrap gap-2">
+                      <div className="grid w-full gap-2 sm:flex sm:w-auto sm:flex-wrap">
                         <button
                           type="button"
                           onClick={() => onUploadMinute(minute.minute, device.device_uuid).catch((error) => window.alert(error instanceof Error ? error.message : 'Upload request failed'))}
-                          className="inline-flex items-center gap-2 border border-cyan-700 bg-cyan-50 px-3 py-2 text-sm font-semibold text-cyan-950 hover:bg-cyan-100"
+                          className="inline-flex items-center justify-center gap-2 rounded-lg border border-cyan-700 bg-cyan-50 px-3 py-2 text-sm font-semibold text-cyan-950 hover:bg-cyan-100"
                         >
                           <BarChart3 className="h-4 w-4" />
                           Upload and view
@@ -429,7 +460,7 @@ function DevicePanel({
                           <button
                             type="button"
                             onClick={() => openPredictions(minute)}
-                            className="inline-flex items-center gap-2 border border-cyan-700 bg-cyan-50 px-3 py-2 text-sm font-semibold text-cyan-950 hover:bg-cyan-100"
+                            className="inline-flex items-center justify-center gap-2 rounded-lg border border-cyan-700 bg-cyan-50 px-3 py-2 text-sm font-semibold text-cyan-950 hover:bg-cyan-100"
                           >
                             <BarChart3 className="h-4 w-4" />
                             Predictions
@@ -439,7 +470,7 @@ function DevicePanel({
                           <button
                             type="button"
                             onClick={() => onDownloadMinute(minute.minute, device.device_uuid)}
-                            className="inline-flex items-center gap-2 bg-slate-950 px-3 py-2 text-sm font-semibold text-white hover:bg-slate-800"
+                            className="inline-flex items-center justify-center gap-2 rounded-lg bg-slate-950 px-3 py-2 text-sm font-semibold text-white hover:bg-slate-800"
                           >
                             <Download className="h-4 w-4" />
                             Download minute
@@ -565,6 +596,8 @@ export default function DevicesPage() {
   const [minutes, setMinutes] = useState<LocalMinuteSummary[]>([]);
   const [settings, setSettings] = useState<Record<string, CaptureSettings>>({});
   const [loading, setLoading] = useState(true);
+  const [query, setQuery] = useState('');
+  const [onlineOnly, setOnlineOnly] = useState(false);
   const { get, put } = useApi();
   const { user, isLoading: authLoading } = useAuth();
   const toast = useToast();
@@ -602,7 +635,8 @@ export default function DevicesPage() {
           created: file.created_at || '',
           deviceKey: entry.id,
           deviceLabel: entry.id,
-          labels: [],
+          labels: labelsForFile(file),
+          occupancy: file.occupancy,
           completed: true,
           state: 'ready' as const,
           uploaded: file.on_cloud,
@@ -627,6 +661,15 @@ export default function DevicesPage() {
   }, [authLoading, loadData, user?.token]);
 
   const rows = useMemo(() => devices.map((device) => ({ ...device, online: Boolean(device.online) })), [devices]);
+  const visibleRows = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    return rows.filter((device) => {
+      if (onlineOnly && !device.online) return false;
+      if (!needle) return true;
+      return [device.device_name, device.device_id, device.device_uuid, device.ip_address, device.hardware_info?.hostname]
+        .some((value) => String(value || '').toLowerCase().includes(needle));
+    });
+  }, [onlineOnly, query, rows]);
 
   const saveSettings = async (deviceId: string, nextSettings: CaptureSettings) => {
     const response = await put(`/device/${deviceId}/capture-settings`, nextSettings);
@@ -663,8 +706,8 @@ export default function DevicesPage() {
   }
 
   return (
-    <div className="space-y-6 text-slate-950">
-      <section className="border border-slate-300 bg-white p-5">
+    <div className="space-y-4 text-slate-950 sm:space-y-6">
+      <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
           <div>
             <div className="text-xs font-semibold uppercase tracking-wide text-slate-700">Devices</div>
@@ -676,30 +719,40 @@ export default function DevicesPage() {
           <button
             type="button"
             onClick={() => loadData(true)}
-            className="inline-flex items-center gap-2 border border-slate-400 px-3 py-2 text-sm font-semibold text-slate-950 hover:bg-slate-100"
+            className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-950 hover:bg-slate-100"
           >
             <RefreshCw className="h-4 w-4" />
             Refresh
           </button>
         </div>
         <div className="mt-5 grid gap-3 sm:grid-cols-3">
-          <div className="border border-slate-300 bg-slate-50 p-3">
+          <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
             <div className="text-xs font-semibold uppercase tracking-wide text-slate-700">Online</div>
             <div className="mt-1 text-2xl font-semibold text-slate-950">{onlineCount}/{rows.length}</div>
           </div>
-          <div className="border border-slate-300 bg-slate-50 p-3">
+          <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
             <div className="text-xs font-semibold uppercase tracking-wide text-slate-700">Captured minutes</div>
             <div className="mt-1 text-2xl font-semibold text-slate-950">{minutes.length}</div>
           </div>
-          <div className="border border-slate-300 bg-slate-50 p-3">
+          <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
             <div className="text-xs font-semibold uppercase tracking-wide text-slate-700">Registered devices</div>
             <div className="mt-1 text-2xl font-semibold text-slate-950">{rows.length}</div>
           </div>
         </div>
+        <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_auto]">
+          <label className="relative block">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+            <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search devices by name, host, IP…" className="w-full rounded-xl border border-slate-300 py-2.5 pl-10 pr-3 text-sm outline-none focus:border-cyan-600 focus:ring-2 focus:ring-cyan-100" />
+          </label>
+          <label className="flex items-center justify-between gap-3 rounded-xl border border-slate-300 px-3 py-2.5 text-sm font-medium sm:justify-start">
+            Online only
+            <input type="checkbox" checked={onlineOnly} onChange={(event) => setOnlineOnly(event.target.checked)} className="h-4 w-4 accent-cyan-600" />
+          </label>
+        </div>
       </section>
 
       <div className="space-y-5">
-        {rows.map((device) => (
+        {visibleRows.map((device) => (
           <DevicePanel
             key={device.device_uuid}
             device={device}
@@ -719,9 +772,9 @@ export default function DevicesPage() {
             }}
           />
         ))}
-        {!rows.length && (
-          <div className="border border-dashed border-slate-400 bg-white p-8 text-sm text-slate-700">
-            No devices are registered yet.
+        {!visibleRows.length && (
+          <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-8 text-center text-sm text-slate-700">
+            {rows.length ? 'No devices match the current filters.' : 'No devices are registered yet.'}
           </div>
         )}
       </div>
