@@ -6,11 +6,32 @@ import { useAuth } from '@/contexts/AuthContext';
 
 type Asset = { file_id: number; filename: string; kind?: string; content_type?: string };
 
-function Heatmap({ payload }: { payload: any }) {
+function frameImage(frame: any, fallback: any) {
+  if (Array.isArray(frame?.z)) return frame.z;
+  if (!Array.isArray(frame?.z_shape) || !Array.isArray(frame?.z_sparse)) return fallback;
+  const rows = Number(frame.z_shape[0]) || 0;
+  const columns = Number(frame.z_shape[1]) || 0;
+  const image = Array.from({ length: rows }, () => Array(columns).fill(0));
+  frame.z_sparse.forEach((cell: unknown) => {
+    if (!Array.isArray(cell)) return;
+    const row = Number(cell[0]), column = Number(cell[1]);
+    if (image[row] && column >= 0 && column < columns) image[row][column] = Number(cell[2]) || 0;
+  });
+  return image;
+}
+
+function Heatmap({ payload, tracking = false }: { payload: any; tracking?: boolean }) {
   const ref = useRef<HTMLCanvasElement>(null);
+  const frames = Array.isArray(payload?.frames) && payload.frames.length ? payload.frames : [payload];
+  const [frameIndex, setFrameIndex] = useState(0);
+  const [playing, setPlaying] = useState(frames.length > 1);
+  const latest = frames[Math.min(frameIndex, frames.length - 1)] || payload;
+  const confirmed = latest?.detected === true;
+  const snr = Number(latest?.snr_db);
+  const threshold = Number(latest?.threshold_db ?? payload?.threshold_db);
   useEffect(() => {
     const canvas = ref.current;
-    const z = payload?.z || payload?.frames?.at(-1)?.z;
+    const z = frameImage(latest, payload?.z);
     if (!canvas || !Array.isArray(z) || !z.length) return;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
@@ -23,8 +44,35 @@ function Heatmap({ payload }: { payload: any }) {
       ctx.fillStyle = `hsl(${240 - t * 240} 90% 50%)`;
       ctx.fillRect(x * canvas.width / cols, y * canvas.height / rows, canvas.width / cols + 1, canvas.height / rows + 1);
     }));
-  }, [payload]);
-  return <canvas ref={ref} width={640} height={360} className="h-auto w-full bg-slate-950" />;
+  }, [latest, payload]);
+  useEffect(() => {
+    setFrameIndex(0);
+    setPlaying(frames.length > 1);
+  }, [payload, frames.length]);
+  useEffect(() => {
+    if (!playing || frames.length < 2) return;
+    const timer = window.setInterval(() => setFrameIndex((current) => (current + 1) % frames.length), Number(payload?.frame_interval_ms) || 120);
+    return () => window.clearInterval(timer);
+  }, [frames.length, payload?.frame_interval_ms, playing]);
+  return <div className="space-y-3">
+    <canvas ref={ref} width={640} height={360} className="h-auto w-full bg-slate-950" />
+    {frames.length > 1 && <div className="flex items-center gap-3 text-xs text-slate-600">
+      <button type="button" onClick={() => setPlaying((value) => !value)} className="rounded-md border border-slate-300 bg-white px-3 py-1.5 font-semibold hover:bg-slate-50">{playing ? 'Pause' : 'Play'}</button>
+      <input aria-label="Radar frame" type="range" min={0} max={frames.length - 1} value={frameIndex} onChange={(event) => { setPlaying(false); setFrameIndex(Number(event.target.value)); }} className="min-w-0 flex-1 accent-cyan-600" />
+      <span className="w-20 text-right font-mono">{frameIndex + 1} / {frames.length}</span>
+    </div>}
+    {tracking && <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+      <span className={`rounded-full px-2.5 py-1 font-semibold ${confirmed ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-600'}`}>
+        {confirmed ? 'Target detected' : 'No current target'}
+      </span>
+      {Number.isFinite(snr) && Number.isFinite(threshold) && <span className="font-mono text-slate-600">
+        SNR {snr.toFixed(1)} dB / threshold {threshold.toFixed(1)} dB
+      </span>}
+      {payload?.occupancy && <span className="font-semibold capitalize text-slate-700">
+        Minute: {payload.occupancy.label} ({Math.round(Number(payload.occupancy.ratio || 0) * 100)}% detected)
+      </span>}
+    </div>}
+  </div>;
 }
 
 function LinePlot({ points }: { points: number[] }) {
@@ -63,13 +111,18 @@ export default function CaptureViewerPage() {
     setWaiting(viewable.length < 1);
   }, [params.deviceId, params.minute, user?.token, videoUrl]);
 
-  useEffect(() => { load(); const timer = window.setInterval(load, 5000); return () => window.clearInterval(timer); }, [load]);
+  useEffect(() => {
+    load();
+    if (!waiting) return;
+    const timer = window.setInterval(load, 5000);
+    return () => window.clearInterval(timer);
+  }, [load, waiting]);
 
   const plots = ['range-doppler', 'azimuth-range', 'azimuth-doppler', 'xy-tracking'];
   return <div className="space-y-6 text-slate-950">
     <header className="border border-slate-300 bg-white p-5"><div className="text-xs font-semibold uppercase text-slate-600">Uploaded capture</div><h1 className="mt-1 font-mono text-2xl font-semibold">{params.minute}</h1><p className="mt-2 text-sm text-slate-700">Device {params.deviceId}</p></header>
     {waiting && <div className="border border-cyan-300 bg-cyan-50 p-4 text-sm">Waiting for the online Pi to upload and prepare this minute. This page refreshes automatically.</div>}
-    <div className="grid gap-5 lg:grid-cols-2">{plots.map((plot) => <section key={plot} className="border border-slate-300 bg-white p-4"><h2 className="mb-3 font-semibold">{plot.replaceAll('-', ' ')}</h2>{documents[`radar-${plot}`] ? <Heatmap payload={documents[`radar-${plot}`]} /> : <div className="p-8 text-sm text-slate-500">Not available</div>}</section>)}</div>
+    <div className="grid gap-5 lg:grid-cols-2">{plots.map((plot) => <section key={plot} className="border border-slate-300 bg-white p-4"><h2 className="mb-3 font-semibold">{plot.replaceAll('-', ' ')}</h2>{documents[`radar-${plot}`] ? <Heatmap payload={documents[`radar-${plot}`]} tracking={plot === 'xy-tracking'} /> : <div className="p-8 text-sm text-slate-500">Not available</div>}</section>)}</div>
     <section className="border border-slate-300 bg-white p-4"><h2 className="mb-3 font-semibold">CSI amplitude</h2>{documents['csi-plot'] ? <LinePlot points={documents['csi-plot'].points || []} /> : <div className="p-8 text-sm text-slate-500">Not available</div>}</section>
     <section className="border border-slate-300 bg-white p-4"><h2 className="mb-3 font-semibold">Camera video</h2>{videoUrl ? <video controls src={videoUrl} className="max-h-[70vh] w-full bg-black" /> : <div className="p-8 text-sm text-slate-500">No camera video in this minute.</div>}</section>
     <div className="text-xs text-slate-500">{assets.length} cloud assets</div>
