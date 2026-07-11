@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useApi } from '@/hooks/useApi';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/contexts/ToastContext';
+import { useRouter } from 'next/navigation';
 import {
   Activity,
   BarChart3,
@@ -227,6 +228,7 @@ function DevicePanel({
   onSaveSettings,
   onDownloadCloudFile,
   onDownloadMinute,
+  onUploadMinute,
 }: {
   device: Device;
   files: DeviceFileSummary[];
@@ -235,6 +237,7 @@ function DevicePanel({
   onSaveSettings: (deviceId: string, settings: CaptureSettings) => Promise<void>;
   onDownloadCloudFile: (fileId: number, filename?: string) => Promise<void>;
   onDownloadMinute: (minute: string, deviceId: string) => Promise<void>;
+  onUploadMinute: (minute: string, deviceId: string) => Promise<void>;
 }) {
   const hardware = device.hardware_info || {};
   const sensors = hardware.sensors || hardware.available_sensors || [];
@@ -250,8 +253,6 @@ function DevicePanel({
     const scoped = minutes.filter((minute) => matchesDevice(device, minute));
     return scoped.length ? scoped : minutes;
   }, [device, minutes]);
-
-  const freshFileActivity = matchedMinutes.some((minute) => isRecent(minute.modified, 3 * 60 * 1000));
 
   useEffect(() => {
     setDraftLabel(settings.labels.join(', '));
@@ -285,7 +286,7 @@ function DevicePanel({
   const modalEntries = predictionEntries(minutePredictions);
 
   return (
-    <article className={`border border-slate-300 ${(device.online || freshFileActivity) ? 'bg-white' : 'bg-slate-100 opacity-75 grayscale'}`}>
+    <article className={`border border-slate-300 ${device.online ? 'bg-white' : 'bg-slate-100 opacity-75 grayscale'}`}>
       <button
         type="button"
         onClick={() => setExpanded((current) => !current)}
@@ -299,8 +300,8 @@ function DevicePanel({
             <div className="text-xs font-semibold uppercase tracking-wide text-slate-700">{device.device_type || hardware.device_type || 'device'}</div>
             <h2 className="mt-1 text-2xl font-semibold text-slate-950">{device.device_name || device.device_id}</h2>
             <div className="mt-2 flex flex-wrap gap-2 text-sm text-slate-700">
-              <span className={`border px-2 py-1 font-medium ${(device.online || freshFileActivity) ? 'border-emerald-700 bg-emerald-50 text-emerald-800' : 'border-slate-400 bg-slate-100 text-slate-700'}`}>
-                {(device.online || freshFileActivity) ? 'Online' : 'Offline'}
+              <span className={`border px-2 py-1 font-medium ${device.online ? 'border-emerald-700 bg-emerald-50 text-emerald-800' : 'border-slate-400 bg-slate-100 text-slate-700'}`}>
+                {device.online ? 'Online' : 'Offline'}
               </span>
               <span className="border border-slate-300 bg-white px-2 py-1">IP {device.ip_address || 'N/A'}</span>
               <span className="border border-slate-300 bg-white px-2 py-1">Last seen {device.last_seen ? new Date(parseServerTime(device.last_seen)).toLocaleString() : 'N/A'}</span>
@@ -387,7 +388,12 @@ function DevicePanel({
                       <div>
                         <div className="font-mono text-base font-semibold text-slate-950">{minute.minute}</div>
                         <div className="mt-1 text-sm text-slate-700">
-                          {fileCount} files · {humanBytes(totalSize)}
+                          {new Date(parseServerTime(minute.created || minute.modified)).toLocaleString()} · {fileCount} item · {humanBytes(totalSize)}
+                        </div>
+                        <div className="mt-2 flex flex-wrap gap-2 text-xs font-medium text-slate-700">
+                          {Object.entries(minute.files).filter(([key, present]) => present && !['manifest', 'predictions'].includes(key)).map(([sensor]) => (
+                            <span key={`${minute.minute}:${sensor}`} className="border border-cyan-300 bg-cyan-50 px-2 py-1">{sensor.replaceAll('_', ' ')}</span>
+                          ))}
                         </div>
                         <div className="mt-2 flex flex-wrap gap-2 text-xs text-slate-700">
                           {minute.labels.length ? minute.labels.map((label) => (
@@ -411,6 +417,14 @@ function DevicePanel({
                         )}
                       </div>
                       <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={() => onUploadMinute(minute.minute, device.device_uuid).catch((error) => window.alert(error instanceof Error ? error.message : 'Upload request failed'))}
+                          className="inline-flex items-center gap-2 border border-cyan-700 bg-cyan-50 px-3 py-2 text-sm font-semibold text-cyan-950 hover:bg-cyan-100"
+                        >
+                          <BarChart3 className="h-4 w-4" />
+                          Upload and view
+                        </button>
                         {minute.files.predictions && (
                           <button
                             type="button"
@@ -554,6 +568,7 @@ export default function DevicesPage() {
   const { get, put } = useApi();
   const { user, isLoading: authLoading } = useAuth();
   const toast = useToast();
+  const router = useRouter();
 
   const loadData = useCallback(async (showLoading = false) => {
     if (authLoading || !user?.token) return;
@@ -562,11 +577,6 @@ export default function DevicesPage() {
       const deviceRes = await get('/device/list?include_offline=true').catch(() => ({ devices: [] }));
       const remoteDevices = Array.isArray(deviceRes?.devices) ? deviceRes.devices : [];
       setDevices(remoteDevices);
-
-      const minutesRes = await fetch('/api/data/minutes', { cache: 'no-store' })
-        .then((response) => response.json())
-        .catch(() => ({ minutes: [] }));
-      setMinutes(Array.isArray(minutesRes?.minutes) ? minutesRes.minutes : []);
 
       const entries = await Promise.all(remoteDevices.map(async (device: Device) => {
         const [fileRes, settingsRes] = await Promise.all([
@@ -581,6 +591,26 @@ export default function DevicesPage() {
       }));
 
       setDeviceFiles(Object.fromEntries(entries.map((entry) => [entry.id, entry.files])));
+      setMinutes(entries.flatMap((entry) => entry.files.map((file: DeviceFileSummary) => {
+        const sensors = String(file.file_type || '').split(':')[1]?.split(',').filter(Boolean) || [];
+        return {
+          minute: file.filename,
+          minuteName: file.filename,
+          relativePath: file.filename,
+          path: '',
+          modified: file.modified_at || file.last_synced || '',
+          created: file.created_at || '',
+          deviceKey: entry.id,
+          deviceLabel: entry.id,
+          labels: [],
+          completed: true,
+          state: 'ready' as const,
+          uploaded: file.on_cloud,
+          files: { video: sensors.includes('video'), radar: sensors.includes('radar'), csi: sensors.includes('csi'), manifest: true, predictions: false },
+          sizes: { total: Number(file.size || 0) },
+          dataFiles: [{ filename: file.filename, relativePath: file.filename, path: '', size: Number(file.size || 0), modified: file.modified_at || '', contentType: 'capture/minute' }],
+        };
+      })));
       setSettings(Object.fromEntries(entries.map((entry) => [entry.id, entry.settings])));
     } catch (err) {
       toast.error('Load failed', err instanceof Error ? err.message : 'Unable to load devices');
@@ -596,11 +626,7 @@ export default function DevicesPage() {
     return () => window.clearInterval(timer);
   }, [authLoading, loadData, user?.token]);
 
-  const rows = useMemo(() => devices.map((device) => {
-    const files = deviceFiles[device.device_uuid] || [];
-    const freshFileActivity = files.some((file) => isRecent(file.last_synced || file.modified_at, 15 * 60 * 1000));
-    return { ...device, online: Boolean(device.online || isRecent(device.last_seen, 15 * 60 * 1000) || freshFileActivity) };
-  }), [deviceFiles, devices]);
+  const rows = useMemo(() => devices.map((device) => ({ ...device, online: Boolean(device.online) })), [devices]);
 
   const saveSettings = async (deviceId: string, nextSettings: CaptureSettings) => {
     const response = await put(`/device/${deviceId}/capture-settings`, nextSettings);
@@ -683,6 +709,14 @@ export default function DevicesPage() {
             onSaveSettings={saveSettings}
             onDownloadCloudFile={(fileId, filename = 'file') => downloadFromUrl(`/api/proxy/file/${fileId}`, filename)}
             onDownloadMinute={(minute, deviceId) => downloadFromUrl(`/api/proxy/file/minute/${minute}/download?device_id=${encodeURIComponent(deviceId)}`, `${minute}.zip`)}
+            onUploadMinute={async (minute, deviceId) => {
+              const response = await fetch(`/api/proxy/device/${encodeURIComponent(deviceId)}/captures/${encodeURIComponent(minute)}/request-upload`, {
+                method: 'POST',
+                headers: user?.token ? { Authorization: `Bearer ${user.token}` } : undefined,
+              });
+              if (!response.ok) throw new Error(await response.text());
+              router.push(`/captures/${encodeURIComponent(deviceId)}/${encodeURIComponent(minute)}`);
+            }}
           />
         ))}
         {!rows.length && (

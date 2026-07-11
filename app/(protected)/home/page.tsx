@@ -59,12 +59,7 @@ function parseServerTime(value?: string | null): number {
 }
 
 const isDeviceOnline = (device: Device): boolean => {
-  if (device.online) return true;
-  if (device.last_seen) {
-    const lastSeenTime = parseServerTime(device.last_seen);
-    if (Number.isFinite(lastSeenTime) && Date.now() - lastSeenTime <= 15 * 60 * 1000) return true;
-  }
-  return false;
+  return Boolean(device.online);
 };
 
 export default function HomePage() {
