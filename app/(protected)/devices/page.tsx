@@ -4,7 +4,6 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useApi } from '@/hooks/useApi';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/contexts/ToastContext';
-import { useRouter } from 'next/navigation';
 import {
   Activity,
   BarChart3,
@@ -219,6 +218,7 @@ function DevicePanel({
   const [draftLabel, setDraftLabel] = useState(settings.labels.join(', '));
   const [draftSensors, setDraftSensors] = useState<Record<string, boolean>>(settings.sensors);
   const [draftName, setDraftName] = useState(device.device_name || device.device_id);
+  const [openMinute, setOpenMinute] = useState<string | null>(null);
 
   const matchedMinutes = useMemo(() => {
     return minutes.filter((minute) => matchesDevice(device, minute));
@@ -265,9 +265,10 @@ function DevicePanel({
       </button>
 
       {expanded && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-3 sm:p-8" onClick={() => setExpanded(false)}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-3 sm:p-8" onClick={() => { setExpanded(false); setOpenMinute(null); }}>
           <div className="max-h-[94vh] w-full max-w-6xl overflow-y-auto rounded-xl bg-[#f4f1e9]" onClick={(event) => event.stopPropagation()}>
-          <header className="sticky top-0 z-10 flex items-center justify-between border-b border-slate-300 bg-[#f4f1e9] p-4 sm:p-5"><div><div className="text-xs font-semibold uppercase tracking-wider text-slate-600">Device</div><h2 className="text-2xl font-semibold">{device.device_name || device.device_id}</h2></div><button type="button" aria-label="Close device" onClick={() => setExpanded(false)}><X className="h-6 w-6"/></button></header>
+          <header className="sticky top-0 z-10 flex items-center justify-between border-b border-slate-300 bg-[#f4f1e9] p-4 sm:p-5"><div className="flex items-center gap-4">{openMinute && <button type="button" onClick={() => setOpenMinute(null)} className="rounded-full border border-slate-400 px-3 py-1.5 text-sm font-semibold">← Back</button>}<div><div className="text-xs font-semibold uppercase tracking-wider text-slate-600">{openMinute ? 'Captured minute' : 'Device'}</div><h2 className="text-2xl font-semibold">{openMinute || device.device_name || device.device_id}</h2></div></div><button type="button" aria-label="Close device" onClick={() => { setExpanded(false); setOpenMinute(null); }}><X className="h-6 w-6"/></button></header>
+          {openMinute ? <iframe title={`Captured minute ${openMinute}`} src={`/captures/${encodeURIComponent(device.device_uuid)}/${encodeURIComponent(openMinute)}?embedded=1`} className="h-[calc(94vh-82px)] w-full border-0"/> : <>
           <div className="grid gap-0 lg:grid-cols-[360px_1fr]">
           <section className="border-b border-slate-200 p-4 sm:p-5 lg:border-b-0 lg:border-r">
             <div className="mb-6"><label className="text-xs font-semibold uppercase tracking-wide text-slate-700">Device name</label><div className="mt-2 flex gap-2"><input value={draftName} onChange={(event) => setDraftName(event.target.value)} className="min-w-0 flex-1 border border-slate-400 bg-white px-3 py-2"/><button type="button" onClick={() => onRename(device.device_uuid, draftName)} className="inline-flex items-center gap-2 bg-slate-950 px-3 text-sm font-semibold text-white"><Pencil className="h-4 w-4"/>Save</button></div><button type="button" onClick={() => onRemove(device.device_uuid)} className="mt-3 inline-flex items-center gap-2 text-sm font-semibold text-red-700"><Trash2 className="h-4 w-4"/>Remove device</button></div>
@@ -379,7 +380,7 @@ function DevicePanel({
                       <div className="grid w-full gap-2 sm:flex sm:w-auto sm:flex-wrap">
                         <button
                           type="button"
-                          onClick={() => onUploadMinute(minute.minute, device.device_uuid).catch((error) => window.alert(error instanceof Error ? error.message : 'Upload request failed'))}
+                          onClick={() => onUploadMinute(minute.minute, device.device_uuid).then(() => setOpenMinute(minute.minute)).catch((error) => window.alert(error instanceof Error ? error.message : 'Upload request failed'))}
                           className="inline-flex items-center justify-center gap-2 rounded-lg border border-cyan-700 bg-cyan-50 px-3 py-2 text-sm font-semibold text-cyan-950 hover:bg-cyan-100"
                         >
                           <BarChart3 className="h-4 w-4" />
@@ -427,7 +428,8 @@ function DevicePanel({
               </div>
             )}
           </section>
-          </div></div>
+          </div></>}
+          </div>
         </div>
       )}
     </article>
@@ -445,7 +447,6 @@ export default function DevicesPage() {
   const { get, put, delete: del } = useApi();
   const { user, isLoading: authLoading } = useAuth();
   const toast = useToast();
-  const router = useRouter();
 
   const loadData = useCallback(async (showLoading = false) => {
     if (authLoading || !user?.token) return;
@@ -629,7 +630,7 @@ export default function DevicesPage() {
                 headers: user?.token ? { Authorization: `Bearer ${user.token}` } : undefined,
               });
               if (!response.ok) throw new Error(await response.text());
-              router.push(`/captures/${encodeURIComponent(deviceId)}/${encodeURIComponent(minute)}`);
+              return;
             }}
           />
         ))}
