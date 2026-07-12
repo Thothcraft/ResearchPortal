@@ -8,6 +8,7 @@ export const MINUTE_ID_RE = /^(?:(?<label>[^/\\]+)__)?(?<minute>\d{8}_\d{4})$/;
 export type MinuteFiles = {
   video: boolean;
   radar: boolean;
+  xy_tracking?: boolean;
   csi: boolean;
   manifest: boolean;
   predictions: boolean;
@@ -166,6 +167,7 @@ function getMinutePaths(minuteDir: string) {
   return {
     video: names.includes('usb_camera.mp4') ? path.join(minuteDir, 'usb_camera.mp4') : null,
     radar: radar ? path.join(minuteDir, radar) : null,
+    xyTracking: names.includes('xy-tracking.json') ? path.join(minuteDir, 'xy-tracking.json') : null,
     csiCsv: names.includes('wifi_csi_raw.csv') ? path.join(minuteDir, 'wifi_csi_raw.csv') : null,
     csiTimestamped: names.includes('wifi_csi_timestamped.csv') ? path.join(minuteDir, 'wifi_csi_timestamped.csv') : null,
     csiSerial: names.includes('wifi_csi_serial_all.jsonl') ? path.join(minuteDir, 'wifi_csi_serial_all.jsonl') : null,
@@ -231,6 +233,7 @@ export function listMinuteSummaries(): MinuteSummary[] {
       files: {
         video: !!paths.video,
         radar: !!paths.radar,
+        xy_tracking: !!paths.xyTracking,
         csi: !!(paths.csiCsv || paths.csiTimestamped || paths.csiSerial),
         manifest: !!paths.manifest,
         predictions: !!paths.predictions,
@@ -283,13 +286,14 @@ export function getMinuteDetail(minute: string): MinuteDetail | null {
     completed,
     state: completed ? 'ready' : 'collecting',
     uploaded: deviceInfo.uploaded,
-    files: {
-      video: !!paths.video,
-      radar: !!paths.radar,
-      csi: !!(paths.csiCsv || paths.csiTimestamped || paths.csiSerial),
-      manifest: !!paths.manifest,
-      predictions: !!paths.predictions,
-    },
+      files: {
+        video: !!paths.video,
+        radar: !!paths.radar,
+        xy_tracking: !!paths.xyTracking,
+        csi: !!(paths.csiCsv || paths.csiTimestamped || paths.csiSerial),
+        manifest: !!paths.manifest,
+        predictions: !!paths.predictions,
+      },
     sizes: {
       video: paths.video ? fs.statSync(paths.video).size : 0,
       radar: paths.radar ? fs.statSync(paths.radar).size : 0,
@@ -302,25 +306,27 @@ export function getMinuteDetail(minute: string): MinuteDetail | null {
 
   return {
     ...summary,
-    filePaths: {
-      video: paths.video,
-      radar: paths.radar,
-      csi_csv: paths.csiCsv,
-      csi_timestamped: paths.csiTimestamped,
-      csi_serial: paths.csiSerial,
-      manifest: paths.manifest,
+      filePaths: {
+        video: paths.video,
+        radar: paths.radar,
+        xy_tracking: paths.xyTracking,
+        csi_csv: paths.csiCsv,
+        csi_timestamped: paths.csiTimestamped,
+        csi_serial: paths.csiSerial,
+        manifest: paths.manifest,
       predictions: paths.predictions,
       ffmpeg_log: paths.ffmpegLog,
     },
     predictions: readJsonPreview(paths.predictions),
-    previews: {
-      csi_csv: readTextPreview(paths.csiCsv),
-      csi_timestamped: readTextPreview(paths.csiTimestamped),
-      csi_serial: readTextPreview(paths.csiSerial),
-      ffmpeg_log: readTextPreview(paths.ffmpegLog),
-      manifest: paths.manifest ? JSON.stringify(readJsonPreview(paths.manifest), null, 2) : '',
-      predictions: paths.predictions ? JSON.stringify(readJsonPreview(paths.predictions), null, 2) : '',
-    },
+      previews: {
+        csi_csv: readTextPreview(paths.csiCsv),
+        csi_timestamped: readTextPreview(paths.csiTimestamped),
+        csi_serial: readTextPreview(paths.csiSerial),
+        xy_tracking: readTextPreview(paths.xyTracking),
+        ffmpeg_log: readTextPreview(paths.ffmpegLog),
+        manifest: paths.manifest ? JSON.stringify(readJsonPreview(paths.manifest), null, 2) : '',
+        predictions: paths.predictions ? JSON.stringify(readJsonPreview(paths.predictions), null, 2) : '',
+      },
   };
 }
 

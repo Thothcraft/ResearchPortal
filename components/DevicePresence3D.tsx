@@ -7,9 +7,18 @@ type Props = {
 
 export default function DevicePresence3D({ address, online }: Props) {
   const host = address.trim();
-  const source = host
-    ? `${host.startsWith('http') ? host : `http://${host}:5000`}/presence?embed=1`
-    : '';
+  let source = '';
+  if (host) {
+    try {
+      const url = new URL(host.includes('://') ? host : `http://${host}`);
+      if (!url.port) {
+        url.port = '5000';
+      }
+      source = `${url.origin}/presence?embed=1`;
+    } catch {
+      source = host.startsWith('http') ? `${host.replace(/\/$/, '')}/presence?embed=1` : `http://${host}:5000/presence?embed=1`;
+    }
+  }
 
   return (
     <section className="border-b border-slate-200 bg-slate-950">

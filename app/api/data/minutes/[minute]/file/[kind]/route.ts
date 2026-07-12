@@ -22,6 +22,8 @@ export async function GET(
     const fileMap: Record<string, string | null> = {
       video: detail.filePaths.video,
       radar: detail.filePaths.radar,
+      xy_tracking: detail.filePaths.xy_tracking || null,
+      'xy-tracking': detail.filePaths.xy_tracking || null,
       csi_csv: detail.filePaths.csi_csv,
       csi_timestamped: detail.filePaths.csi_timestamped,
       csi_serial: detail.filePaths.csi_serial,

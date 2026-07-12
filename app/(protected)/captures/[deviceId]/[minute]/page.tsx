@@ -64,7 +64,7 @@ function Heatmap({ payload, tracking = false }: { payload: any; tracking?: boole
     <canvas ref={ref} width={640} height={360} className="h-auto w-full bg-slate-950" />
     {frames.length > 1 && <div className="flex items-center gap-3 text-xs text-slate-600">
       <button type="button" onClick={() => setPlaying((value) => !value)} className="rounded-md border border-slate-300 bg-white px-3 py-1.5 font-semibold hover:bg-slate-50">{playing ? 'Pause' : 'Play'}</button>
-      <input aria-label="Radar frame" type="range" min={0} max={frames.length - 1} value={frameIndex} onChange={(event) => { setPlaying(false); setFrameIndex(Number(event.target.value)); }} className="min-w-0 flex-1 accent-cyan-600" />
+      <input aria-label="Localization frame" type="range" min={0} max={frames.length - 1} value={frameIndex} onChange={(event) => { setPlaying(false); setFrameIndex(Number(event.target.value)); }} className="min-w-0 flex-1 accent-cyan-600" />
       <span className="w-20 text-right font-mono">{frameIndex + 1} / {frames.length}</span>
     </div>}
     {tracking && <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
@@ -103,16 +103,16 @@ export default function CaptureViewerPage() {
   const load = useCallback(async () => {
     if (!user?.token) return;
     const headers = { Authorization: `Bearer ${user.token}` };
-    const response = await fetch(`/api/proxy/file/minute/${encodeURIComponent(params.minute)}/assets?device_id=${encodeURIComponent(params.deviceId)}`, { headers, cache: 'no-store' });
-    const data = await response.json();
-    const next: Asset[] = Array.isArray(data.assets) ? data.assets : [];
-    setAssets(next);
-    const viewable = next.filter((asset) => asset.kind?.startsWith('radar-') || asset.kind === 'csi-plot');
-    const entries = await Promise.all(viewable.map(async (asset) => {
-      const result = await fetch(`/api/proxy/file/${asset.file_id}?download=false`, { headers, cache: 'no-store' });
-      return [asset.kind!, await result.json()] as const;
-    }));
-    setDocuments(Object.fromEntries(entries));
+  const response = await fetch(`/api/proxy/file/minute/${encodeURIComponent(params.minute)}/assets?device_id=${encodeURIComponent(params.deviceId)}`, { headers, cache: 'no-store' });
+  const data = await response.json();
+  const next: Asset[] = Array.isArray(data.assets) ? data.assets : [];
+  setAssets(next);
+  const viewable = next.filter((asset) => asset.kind === 'xy-tracking' || asset.kind === 'xy_tracking');
+  const entries = await Promise.all(viewable.map(async (asset) => {
+    const result = await fetch(`/api/proxy/file/${asset.file_id}?download=false`, { headers, cache: 'no-store' });
+    return [asset.kind!, await result.json()] as const;
+  }));
+  setDocuments(Object.fromEntries(entries));
     const video = next.find((asset) => asset.content_type?.startsWith('video/') || /\.mp4$/i.test(asset.filename));
     if (video && !videoUrl) {
       const result = await fetch(`/api/proxy/file/${video.file_id}?download=false`, { headers });
@@ -128,12 +128,10 @@ export default function CaptureViewerPage() {
     return () => window.clearInterval(timer);
   }, [load, waiting]);
 
-  const plots = ['range-doppler', 'azimuth-range', 'azimuth-doppler', 'xy-tracking'];
   return <div className="space-y-6 text-slate-950">
     <header className="border border-slate-300 bg-white p-5"><div className="text-xs font-semibold uppercase text-slate-600">Uploaded capture</div><h1 className="mt-1 font-mono text-2xl font-semibold">{params.minute}</h1><p className="mt-2 text-sm text-slate-700">Device {params.deviceId}</p></header>
     {waiting && <div className="border border-cyan-300 bg-cyan-50 p-4 text-sm">Waiting for the online Pi to upload and prepare this minute. This page refreshes automatically.</div>}
-    <div className="grid gap-5 lg:grid-cols-2">{plots.map((plot) => <section key={plot} className="border border-slate-300 bg-white p-4"><h2 className="mb-3 font-semibold">{plot.replaceAll('-', ' ')}</h2>{documents[`radar-${plot}`] ? <Heatmap payload={documents[`radar-${plot}`]} tracking={plot === 'xy-tracking'} /> : <div className="p-8 text-sm text-slate-500">Not available</div>}</section>)}</div>
-    <section className="border border-slate-300 bg-white p-4"><h2 className="mb-3 font-semibold">CSI amplitude</h2>{documents['csi-plot'] ? <LinePlot points={documents['csi-plot'].points || []} /> : <div className="p-8 text-sm text-slate-500">Not available</div>}</section>
+    <section className="border border-slate-300 bg-white p-4"><h2 className="mb-3 font-semibold">X / Y localization</h2>{documents['xy-tracking'] || documents['xy_tracking'] ? <Heatmap payload={documents['xy-tracking'] || documents['xy_tracking']} tracking /> : <div className="p-8 text-sm text-slate-500">Not available</div>}</section>
     <section className="border border-slate-300 bg-white p-4"><h2 className="mb-3 font-semibold">Camera video</h2>{videoUrl ? <video controls src={videoUrl} className="max-h-[70vh] w-full bg-black" /> : <div className="p-8 text-sm text-slate-500">No camera video in this minute.</div>}</section>
     <div className="text-xs text-slate-500">{assets.length} cloud assets</div>
   </div>;

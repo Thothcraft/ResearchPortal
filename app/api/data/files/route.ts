@@ -32,6 +32,7 @@ export async function GET() {
           files: {
             video: minute.files.video,
             radar: minute.files.radar,
+            xy_tracking: minute.files.xy_tracking,
             csi: minute.files.csi,
             manifest: minute.files.manifest,
           },

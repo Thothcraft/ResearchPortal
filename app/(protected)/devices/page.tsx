@@ -121,7 +121,7 @@ const DEFAULT_SENSORS: Record<string, boolean> = {
 
 const SENSOR_LABELS: Record<string, string> = {
   usb_camera: 'Camera',
-  dreamhat_radar: 'Radar',
+  dreamhat_radar: 'Localization',
   esp32_csi: 'CSI',
   sense_hat: 'Sense HAT',
 };
@@ -343,7 +343,7 @@ function DevicePanel({
                         </div>
                         <div className="mt-2 flex flex-wrap gap-2 text-xs font-medium text-slate-700">
                           {Object.entries(minute.files).filter(([key, present]) => present && !['manifest', 'predictions'].includes(key)).map(([sensor]) => (
-                            <span key={`${minute.minute}:${sensor}`} className="border border-cyan-300 bg-cyan-50 px-2 py-1">{sensor.replaceAll('_', ' ')}</span>
+                            <span key={`${minute.minute}:${sensor}`} className="border border-cyan-300 bg-cyan-50 px-2 py-1">{sensor === 'radar' ? 'localization' : sensor.replaceAll('_', ' ')}</span>
                           ))}
                         </div>
                         <div className="mt-2 flex flex-wrap gap-2 text-xs text-slate-700">
