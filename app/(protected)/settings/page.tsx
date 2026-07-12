@@ -29,7 +29,6 @@ export default function SettingsPage() {
       email: true,
       push: false,
       deviceAlerts: true,
-      trainingComplete: true,
     },
     privacy: {
       shareData: false,
@@ -106,7 +105,6 @@ export default function SettingsPage() {
             { key: 'email', label: 'Email Notifications', desc: 'Receive updates via email' },
             { key: 'push', label: 'Push Notifications', desc: 'Browser push notifications' },
             { key: 'deviceAlerts', label: 'Device Alerts', desc: 'Get notified when devices go offline' },
-            { key: 'trainingComplete', label: 'Training Complete', desc: 'Notify when model training finishes' },
           ].map((item) => (
             <div key={item.key} className="flex items-center justify-between py-2">
               <div>

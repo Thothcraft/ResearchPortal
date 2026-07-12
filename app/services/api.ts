@@ -343,7 +343,6 @@ class ApiService {
     return response.data;
   }
 
-  // Federated Learning
   async startFederatedTraining(config: {
     session_name: string;
     num_rounds: number;

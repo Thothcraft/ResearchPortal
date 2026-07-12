@@ -28,15 +28,6 @@ type Device = {
   };
 };
 
-type Deployment = {
-  deployment_id: string;
-  model_name: string;
-  model_type?: string;
-  device_name?: string;
-  status?: string;
-  created_at?: string;
-};
-
 const getSensorIcon = (sensorType: string) => {
   switch ((sensorType || '').toLowerCase()) {
     case 'camera':
@@ -68,7 +59,6 @@ export default function HomePage() {
   const { user, isLoading: authLoading } = useAuth();
   const toast = useToast();
   const [devices, setDevices] = useState<Device[]>([]);
-  const [deployments, setDeployments] = useState<Deployment[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
@@ -78,12 +68,8 @@ export default function HomePage() {
     setLoading(true);
     setError(null);
     try {
-      const [deviceRes, deployRes] = await Promise.all([
-        get('/device/list?include_offline=true').catch(() => ({ devices: [] })),
-        get('/datasets/models/deployments').catch(() => ({ deployments: [] })),
-      ]);
+      const deviceRes = await get('/device/list?include_offline=true').catch(() => ({ devices: [] }));
       setDevices(Array.isArray(deviceRes?.devices) ? deviceRes.devices : []);
-      setDeployments(Array.isArray(deployRes?.deployments) ? deployRes.deployments : []);
       setLastUpdated(new Date());
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to load dashboard';
@@ -150,8 +136,8 @@ export default function HomePage() {
             <div className="mt-1 text-2xl font-semibold text-white">{normalizedDevices.length}</div>
           </div>
           <div className="rounded-xl bg-white/5 p-4">
-            <div className="text-xs uppercase tracking-wide text-slate-500">Deployments</div>
-            <div className="mt-1 text-2xl font-semibold text-cyan-300">{deployments.length}</div>
+            <div className="text-xs uppercase tracking-wide text-slate-500">Live presence</div>
+            <div className="mt-1 text-2xl font-semibold text-cyan-300">{onlineDevices.length ? 'Ready' : 'Offline'}</div>
           </div>
         </div>
 
@@ -243,24 +229,17 @@ export default function HomePage() {
           <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
             <div className="flex items-center justify-between gap-3">
               <div>
-                <div className="text-xs uppercase tracking-[0.18em] text-slate-500">Deployments</div>
-                <h2 className="mt-1 text-2xl font-semibold text-slate-950">Recent model deliveries</h2>
+                <div className="text-xs uppercase tracking-[0.18em] text-slate-500">Spatial view</div>
+                <h2 className="mt-1 text-2xl font-semibold text-slate-950">Live room presence</h2>
               </div>
               <FolderOpen className="h-5 w-5 text-slate-400" />
             </div>
-            <div className="mt-4 space-y-2">
-              {deployments.slice(0, 6).map((deployment) => (
-                <div key={deployment.deployment_id} className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
-                  <div className="text-sm font-medium text-slate-950">{deployment.model_name}</div>
-                  <div className="mt-1 text-xs text-slate-500">{deployment.device_name || 'Unknown device'} · {deployment.status || 'pending'}</div>
-                </div>
-              ))}
-              {!deployments.length && (
-                <div className="rounded-2xl border border-dashed border-slate-200 p-4 text-sm text-slate-500">
-                  No deployments yet.
-                </div>
-              )}
-            </div>
+            <p className="mt-4 text-sm leading-6 text-slate-600">
+              Open an online device to view persistent presence, motion energy, target dimensions, and editable room calibration.
+            </p>
+            <Link href="/devices" className="mt-4 inline-flex rounded-xl bg-slate-950 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800">
+              Open live presence
+            </Link>
           </section>
         </div>
       </section>

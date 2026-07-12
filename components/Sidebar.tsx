@@ -7,13 +7,11 @@ import { useAuth } from '@/contexts/AuthContext';
 import {
   Home,
   Monitor,
-  Brain,
   Settings,
   LogOut,
   MessageCircle,
   ChevronLeft,
   ChevronRight,
-  Workflow,
   Users,
   BookOpen,
   Shield,
@@ -34,7 +32,6 @@ export default function Sidebar() {
   const baseItems = [
     { name: 'Home', href: '/home', icon: Home, description: 'Statistics & Overview' },
     { name: 'Devices', href: '/devices', icon: Monitor, description: 'Online/Offline Devices' },
-    { name: 'Training', href: '/training', icon: Brain, description: 'Model Training' },
     { name: 'Chatbot', href: '/chatbot', icon: MessageCircle, description: 'AI Assistant' },
   ];
 

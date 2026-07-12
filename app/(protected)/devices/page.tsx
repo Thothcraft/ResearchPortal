@@ -5,6 +5,7 @@ import { useApi } from '@/hooks/useApi';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/contexts/ToastContext';
 import { useRouter } from 'next/navigation';
+import DevicePresence3D from '@/components/DevicePresence3D';
 import {
   Activity,
   BarChart3,
@@ -16,7 +17,6 @@ import {
   RefreshCw,
   Search,
   SlidersHorizontal,
-  X,
 } from 'lucide-react';
 
 type Sensor = {
@@ -77,35 +77,6 @@ type DeviceFileSummary = {
     threshold_percent?: number;
   } | null;
   metadata?: { label?: string; labels?: string[] };
-};
-
-type MinutePredictionEntry = {
-  minute?: string;
-  model_name?: string;
-  model?: string;
-  deployment_name?: string;
-  data_type?: string;
-  prediction?: string | number | boolean | null;
-  probability?: number | null;
-  confidence?: number | null;
-  status?: string;
-  error?: string;
-  scores?: Array<number | null>;
-  labels?: string[];
-  classes?: string[];
-};
-
-type MinutePredictions = {
-  minute?: string;
-  generated_at?: string;
-  source?: string;
-  models_root?: string;
-  timeline?: MinutePredictionEntry[];
-  deployed_models?: MinutePredictionEntry[];
-  labels?: string[];
-  status?: string;
-  error?: string;
-  prediction?: string | number | boolean | null;
 };
 
 type LocalMinuteSummary = {
@@ -199,32 +170,6 @@ function matchesDevice(device: Device, minute: LocalMinuteSummary): boolean {
   return minuteKeys.some((key) => deviceKeys.includes(key));
 }
 
-function predictionEntries(predictions?: MinutePredictions | null): MinutePredictionEntry[] {
-  if (!predictions) return [];
-  if (Array.isArray(predictions.timeline) && predictions.timeline.length) return predictions.timeline;
-  if (Array.isArray(predictions.deployed_models) && predictions.deployed_models.length) return predictions.deployed_models;
-  if (predictions.prediction || predictions.status || predictions.error) return [predictions as MinutePredictionEntry];
-  return [];
-}
-
-function predictionName(entry: MinutePredictionEntry): string {
-  return String(entry.model_name || entry.model || entry.deployment_name || 'Model');
-}
-
-function predictionValue(entry: MinutePredictionEntry): string {
-  if (entry.status === 'skipped') return 'Skipped';
-  if (entry.status === 'error') return 'Error';
-  if (entry.prediction === true) return 'occupied';
-  if (entry.prediction === false) return 'empty';
-  if (entry.prediction === null || entry.prediction === undefined || entry.prediction === '') return 'No prediction';
-  return String(entry.prediction);
-}
-
-function probabilityValue(entry: MinutePredictionEntry): number | null {
-  const value = typeof entry.confidence === 'number' ? entry.confidence : entry.probability;
-  return typeof value === 'number' && Number.isFinite(value) ? value : null;
-}
-
 function normalizeSettings(value?: CaptureSettings | null): CaptureSettings {
   return {
     labels: Array.isArray(value?.labels) ? value!.labels.map(String).filter(Boolean) : [],
@@ -267,10 +212,6 @@ function DevicePanel({
   const [expanded, setExpanded] = useState(false);
   const [draftLabel, setDraftLabel] = useState(settings.labels.join(', '));
   const [draftSensors, setDraftSensors] = useState<Record<string, boolean>>(settings.sensors);
-  const [predictionMinute, setPredictionMinute] = useState<LocalMinuteSummary | null>(null);
-  const [minutePredictions, setMinutePredictions] = useState<MinutePredictions | null>(null);
-  const [predictionsLoading, setPredictionsLoading] = useState(false);
-  const [predictionsError, setPredictionsError] = useState('');
 
   const matchedMinutes = useMemo(() => {
     return minutes.filter((minute) => matchesDevice(device, minute));
@@ -287,25 +228,6 @@ function DevicePanel({
       sensors: { ...DEFAULT_SENSORS, ...draftSensors },
     });
   };
-
-  const openPredictions = async (minute: LocalMinuteSummary) => {
-    setPredictionMinute(minute);
-    setMinutePredictions(null);
-    setPredictionsError('');
-    setPredictionsLoading(true);
-    try {
-      const response = await fetch(`/api/data/minutes/${encodeURIComponent(minute.minute)}`, { cache: 'no-store' });
-      const data = await response.json();
-      if (!response.ok || !data.success) throw new Error(data.error || 'Failed to load predictions');
-      setMinutePredictions(data.minute?.predictions || null);
-    } catch (err) {
-      setPredictionsError(err instanceof Error ? err.message : 'Failed to load predictions');
-    } finally {
-      setPredictionsLoading(false);
-    }
-  };
-
-  const modalEntries = predictionEntries(minutePredictions);
 
   return (
     <article className={`overflow-hidden rounded-2xl border border-slate-200 shadow-sm transition ${device.online ? 'bg-white' : 'bg-slate-50 opacity-80'}`}>
@@ -340,7 +262,9 @@ function DevicePanel({
       </button>
 
       {expanded && (
-        <div className="grid gap-0 lg:grid-cols-[360px_1fr]">
+        <div>
+          <DevicePresence3D address={device.ip_address || ''} online={device.online} />
+          <div className="grid gap-0 lg:grid-cols-[360px_1fr]">
           <section className="border-b border-slate-200 p-4 sm:p-5 lg:border-b-0 lg:border-r">
             <div className="mb-4 flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-slate-800">
               <SlidersHorizontal className="h-4 w-4" />
@@ -456,16 +380,6 @@ function DevicePanel({
                           <BarChart3 className="h-4 w-4" />
                           Upload and view
                         </button>
-                        {minute.files.predictions && (
-                          <button
-                            type="button"
-                            onClick={() => openPredictions(minute)}
-                            className="inline-flex items-center justify-center gap-2 rounded-lg border border-cyan-700 bg-cyan-50 px-3 py-2 text-sm font-semibold text-cyan-950 hover:bg-cyan-100"
-                          >
-                            <BarChart3 className="h-4 w-4" />
-                            Predictions
-                          </button>
-                        )}
                         {fileCount > 0 && (
                           <button
                             type="button"
@@ -508,81 +422,6 @@ function DevicePanel({
               </div>
             )}
           </section>
-        </div>
-      )}
-      {predictionMinute && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4">
-          <div className="max-h-[85vh] w-full max-w-4xl overflow-y-auto border border-slate-300 bg-white shadow-2xl">
-            <div className="flex items-start justify-between gap-4 border-b border-slate-300 p-5">
-              <div>
-                <div className="text-xs font-semibold uppercase tracking-wide text-slate-600">Minute predictions</div>
-                <h3 className="mt-1 font-mono text-2xl font-semibold text-slate-950">{predictionMinute.minuteName || predictionMinute.minute}</h3>
-                {minutePredictions?.generated_at && (
-                  <div className="mt-1 text-sm text-slate-600">Generated {new Date(minutePredictions.generated_at).toLocaleString()}</div>
-                )}
-              </div>
-              <button
-                type="button"
-                onClick={() => setPredictionMinute(null)}
-                className="border border-slate-300 p-2 text-slate-700 hover:bg-slate-100"
-                aria-label="Close predictions"
-              >
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-
-            <div className="p-5">
-              {predictionsLoading && <div className="border border-slate-300 bg-slate-50 p-4 text-sm text-slate-700">Loading predictions...</div>}
-              {predictionsError && <div className="border border-red-300 bg-red-50 p-4 text-sm text-red-700">{predictionsError}</div>}
-
-              {!predictionsLoading && !predictionsError && modalEntries.length > 0 && (
-                <div className="grid gap-3 md:grid-cols-2">
-                  {modalEntries.map((entry, index) => {
-                    const probability = probabilityValue(entry);
-                    const isError = entry.status === 'error';
-                    const isSkipped = entry.status === 'skipped';
-                    return (
-                      <article key={`${predictionMinute.minute}:${predictionName(entry)}:${index}`} className="border border-slate-300 bg-slate-50 p-4">
-                        <div className="flex items-start justify-between gap-3">
-                          <div>
-                            <div className="text-sm font-semibold text-slate-950">{predictionName(entry)}</div>
-                            <div className="mt-1 text-xs uppercase tracking-wide text-slate-600">{entry.data_type || 'model'} · {entry.status || 'ok'}</div>
-                          </div>
-                          <span className={`border px-2 py-1 text-xs font-semibold ${isError ? 'border-red-300 bg-red-50 text-red-700' : isSkipped ? 'border-amber-300 bg-amber-50 text-amber-800' : 'border-emerald-300 bg-emerald-50 text-emerald-800'}`}>
-                            {predictionValue(entry)}
-                          </span>
-                        </div>
-                        <div className="mt-4 h-2 bg-slate-200">
-                          <div
-                            className={`h-2 ${isError ? 'bg-red-500' : isSkipped ? 'bg-amber-400' : 'bg-cyan-600'}`}
-                            style={{ width: `${Math.max(3, Math.min(100, (probability ?? 0) * 100))}%` }}
-                          />
-                        </div>
-                        <div className="mt-2 text-sm text-slate-700">
-                          {probability === null ? 'No probability reported' : `${Math.round(probability * 1000) / 10}% probability`}
-                        </div>
-                        {!!entry.scores?.length && (
-                          <div className="mt-3 flex flex-wrap gap-2 text-xs text-slate-600">
-                            {entry.scores.slice(0, 8).map((score, scoreIndex) => (
-                              <span key={scoreIndex} className="border border-slate-300 bg-white px-2 py-1">
-                                {entry.labels?.[scoreIndex] || entry.classes?.[scoreIndex] || `class ${scoreIndex}`}: {typeof score === 'number' ? `${Math.round(score * 1000) / 10}%` : 'n/a'}
-                              </span>
-                            ))}
-                          </div>
-                        )}
-                        {entry.error && <div className="mt-3 border border-red-200 bg-white p-2 text-xs text-red-700">{entry.error}</div>}
-                      </article>
-                    );
-                  })}
-                </div>
-              )}
-
-              {!predictionsLoading && !predictionsError && modalEntries.length === 0 && (
-                <div className="border border-dashed border-slate-300 bg-slate-50 p-6 text-sm text-slate-700">
-                  This minute has a predictions file, but it does not contain model entries yet.
-                </div>
-              )}
-            </div>
           </div>
         </div>
       )}
