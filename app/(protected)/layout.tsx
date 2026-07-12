@@ -64,7 +64,7 @@ export default function ProtectedLayout({
         <span className="rounded-lg bg-slate-950 px-2 py-1 text-sm font-bold text-white">T</span>
         <span className="ml-2 font-semibold text-slate-950">Thoth Portal</span>
       </header>
-      <main className="min-h-screen px-3 pb-24 pt-3 transition-all sm:px-4 md:ml-64 md:p-6">
+      <main className="portal-main min-h-screen px-3 pb-24 pt-3 transition-all sm:px-4 md:ml-64 md:p-8">
         {children}
       </main>
       <MobileNavigation />
