@@ -193,6 +193,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const logout = () => {
+    navigator.serviceWorker?.ready.then((registration) => registration.active?.postMessage('CLEAR_PRIVATE_CACHE')).catch(() => undefined);
     localStorage.removeItem('auth_token');
     localStorage.removeItem('user');
     setUser(null);

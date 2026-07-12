@@ -5,6 +5,8 @@ import { useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import Sidebar from '@/components/Sidebar';
 import { KeyboardShortcuts } from '@/components/KeyboardShortcuts';
+import MobileNavigation from '@/components/MobileNavigation';
+import PWAStatus from '@/components/PWAStatus';
 
 export default function ProtectedLayout({
   children,
@@ -57,10 +59,16 @@ export default function ProtectedLayout({
 
   return (
     <div className="min-h-screen" style={{ background: 'var(--bg-primary)' }}>
-      <Sidebar />
-      <main className="ml-64 min-h-screen transition-all duration-300">
+      <div className="hidden md:block"><Sidebar /></div>
+      <header className="sticky top-0 z-30 flex h-14 items-center border-b border-slate-200 bg-white/95 px-4 backdrop-blur md:hidden">
+        <span className="rounded-lg bg-slate-950 px-2 py-1 text-sm font-bold text-white">T</span>
+        <span className="ml-2 font-semibold text-slate-950">Thoth Portal</span>
+      </header>
+      <main className="min-h-screen px-3 pb-24 pt-3 transition-all sm:px-4 md:ml-64 md:p-6">
         {children}
       </main>
+      <MobileNavigation />
+      <PWAStatus />
       <KeyboardShortcuts isOpen={showShortcuts} onClose={() => setShowShortcuts(false)} />
     </div>
   );

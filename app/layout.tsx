@@ -11,14 +11,15 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "ThothCraft Research Portal",
-  description: "IoT Device Management and Research Platform",
+  title: "Thoth Portal",
+  description: "Monitor Raspberry Pi–based Thoth wireless sensing devices.",
+  manifest: "/manifest.json",
 };
 
 export const viewport: Viewport = {
   width: 'device-width',
   initialScale: 1,
-  themeColor: '#ffffff',
+  themeColor: '#0f172a',
 };
 
 export default function RootLayout({

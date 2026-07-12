@@ -24,6 +24,11 @@ export default function Sidebar() {
   const pathname = usePathname();
   const { logout, user } = useAuth();
   const [collapsed, setCollapsed] = useState(false);
+  const signOut = async () => {
+    const registration = await navigator.serviceWorker?.ready.catch(() => null);
+    registration?.active?.postMessage('CLEAR_PRIVATE_CACHE');
+    logout();
+  };
 
   // Base items for all users
   const baseItems = [
@@ -147,7 +152,7 @@ export default function Sidebar() {
           </div>
         )}
         <button
-          onClick={logout}
+          onClick={signOut}
           className={cn(
             'flex items-center gap-3 w-full px-3 py-2.5 rounded-lg transition-colors',
             collapsed && 'justify-center'
