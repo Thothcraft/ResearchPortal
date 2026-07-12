@@ -5,7 +5,6 @@ import { useApi } from '@/hooks/useApi';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/contexts/ToastContext';
 import { useRouter } from 'next/navigation';
-import DevicePresence3D from '@/components/DevicePresence3D';
 import {
   Activity,
   BarChart3,
@@ -17,6 +16,9 @@ import {
   RefreshCw,
   Search,
   SlidersHorizontal,
+  Pencil,
+  Trash2,
+  X,
 } from 'lucide-react';
 
 type Sensor = {
@@ -197,6 +199,8 @@ function DevicePanel({
   onDownloadCloudFile,
   onDownloadMinute,
   onUploadMinute,
+  onRename,
+  onRemove,
 }: {
   device: Device;
   files: DeviceFileSummary[];
@@ -206,12 +210,15 @@ function DevicePanel({
   onDownloadCloudFile: (fileId: number, filename?: string) => Promise<void>;
   onDownloadMinute: (minute: string, deviceId: string) => Promise<void>;
   onUploadMinute: (minute: string, deviceId: string) => Promise<void>;
+  onRename: (deviceId: string, name: string) => Promise<void>;
+  onRemove: (deviceId: string) => Promise<void>;
 }) {
   const hardware = device.hardware_info || {};
   const sensors = hardware.sensors || hardware.available_sensors || [];
   const [expanded, setExpanded] = useState(false);
   const [draftLabel, setDraftLabel] = useState(settings.labels.join(', '));
   const [draftSensors, setDraftSensors] = useState<Record<string, boolean>>(settings.sensors);
+  const [draftName, setDraftName] = useState(device.device_name || device.device_id);
 
   const matchedMinutes = useMemo(() => {
     return minutes.filter((minute) => matchesDevice(device, minute));
@@ -241,7 +248,6 @@ function DevicePanel({
             <Cpu className="h-5 w-5" />
           </div>
           <div>
-            <div className="text-xs font-semibold uppercase tracking-wide text-slate-700">{device.device_type || hardware.device_type || 'device'}</div>
             <h2 className="mt-1 text-2xl font-semibold text-slate-950">{device.device_name || device.device_id}</h2>
             <div className="mt-2 flex flex-wrap gap-2 text-sm text-slate-700">
               <span className={`rounded-full border px-2.5 py-1 font-medium ${device.online ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-slate-300 bg-slate-100 text-slate-700'}`}>
@@ -254,18 +260,17 @@ function DevicePanel({
           </div>
         </div>
         <div className="flex items-center gap-3">
-          {hardware.raspberry_pi_model && (
-            <div className="max-w-sm text-sm font-medium text-slate-800">{hardware.raspberry_pi_model}</div>
-          )}
           {expanded ? <ChevronDown className="h-5 w-5 text-slate-700" /> : <ChevronRight className="h-5 w-5 text-slate-700" />}
         </div>
       </button>
 
       {expanded && (
-        <div>
-          <DevicePresence3D address={device.ip_address || ''} online={device.online} />
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-3 sm:p-8" onClick={() => setExpanded(false)}>
+          <div className="max-h-[94vh] w-full max-w-6xl overflow-y-auto rounded-xl bg-[#f4f1e9]" onClick={(event) => event.stopPropagation()}>
+          <header className="sticky top-0 z-10 flex items-center justify-between border-b border-slate-300 bg-[#f4f1e9] p-4 sm:p-5"><div><div className="text-xs font-semibold uppercase tracking-wider text-slate-600">Device</div><h2 className="text-2xl font-semibold">{device.device_name || device.device_id}</h2></div><button type="button" aria-label="Close device" onClick={() => setExpanded(false)}><X className="h-6 w-6"/></button></header>
           <div className="grid gap-0 lg:grid-cols-[360px_1fr]">
           <section className="border-b border-slate-200 p-4 sm:p-5 lg:border-b-0 lg:border-r">
+            <div className="mb-6"><label className="text-xs font-semibold uppercase tracking-wide text-slate-700">Device name</label><div className="mt-2 flex gap-2"><input value={draftName} onChange={(event) => setDraftName(event.target.value)} className="min-w-0 flex-1 border border-slate-400 bg-white px-3 py-2"/><button type="button" onClick={() => onRename(device.device_uuid, draftName)} className="inline-flex items-center gap-2 bg-slate-950 px-3 text-sm font-semibold text-white"><Pencil className="h-4 w-4"/>Save</button></div><button type="button" onClick={() => onRemove(device.device_uuid)} className="mt-3 inline-flex items-center gap-2 text-sm font-semibold text-red-700"><Trash2 className="h-4 w-4"/>Remove device</button></div>
             <div className="mb-4 flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-slate-800">
               <SlidersHorizontal className="h-4 w-4" />
               Ongoing collection
@@ -422,7 +427,7 @@ function DevicePanel({
               </div>
             )}
           </section>
-          </div>
+          </div></div>
         </div>
       )}
     </article>
@@ -437,7 +442,7 @@ export default function DevicesPage() {
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState('');
   const [onlineOnly, setOnlineOnly] = useState(false);
-  const { get, put } = useApi();
+  const { get, put, delete: del } = useApi();
   const { user, isLoading: authLoading } = useAuth();
   const toast = useToast();
   const router = useRouter();
@@ -515,6 +520,21 @@ export default function DevicesPage() {
     if (!response?.success) throw new Error(response?.message || 'Unable to save settings');
     setSettings((current) => ({ ...current, [deviceId]: normalizeSettings(response.capture_settings) }));
     toast.success('Settings applied', 'Ongoing collection will use the updated label and sensors');
+  };
+
+  const renameDevice = async (deviceId: string, name: string) => {
+    const cleanName = name.trim();
+    if (!cleanName) return;
+    await put(`/device/${deviceId}`, { device_name: cleanName });
+    setDevices((current) => current.map((device) => device.device_uuid === deviceId ? { ...device, device_name: cleanName } : device));
+    toast.success('Device renamed', cleanName);
+  };
+
+  const removeDevice = async (deviceId: string) => {
+    if (!window.confirm('Remove this device from the portal? Collected files will not be deleted.')) return;
+    await del(`/device/${deviceId}`);
+    setDevices((current) => current.filter((device) => device.device_uuid !== deviceId));
+    toast.success('Device removed');
   };
 
   const downloadFromUrl = useCallback(async (url: string, fallbackName: string) => {
@@ -599,6 +619,8 @@ export default function DevicesPage() {
             minutes={minutes}
             settings={settings[device.device_uuid] || normalizeSettings(device.hardware_info?.capture_settings)}
             onSaveSettings={saveSettings}
+            onRename={renameDevice}
+            onRemove={removeDevice}
             onDownloadCloudFile={(fileId, filename = 'file') => downloadFromUrl(`/api/proxy/file/${fileId}`, filename)}
             onDownloadMinute={(minute, deviceId) => downloadFromUrl(`/api/proxy/file/minute/${minute}/download?device_id=${encodeURIComponent(deviceId)}`, `${minute}.zip`)}
             onUploadMinute={async (minute, deviceId) => {
