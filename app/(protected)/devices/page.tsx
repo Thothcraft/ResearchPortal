@@ -82,6 +82,7 @@ type DeviceFileSummary = {
     ratio?: number;
     threshold_percent?: number;
   } | null;
+  progress?: any;
   metadata?: { label?: string; labels?: string[] };
 };
 
@@ -103,7 +104,7 @@ type LocalMinuteSummary = {
     storagePercent: number;
     predictionPercent: number;
     chunkSeconds?: number | null;
-    chunks: Array<{ index: number; state: 'waiting' | 'collecting' | 'stored' | 'analyzing' | 'occupied' | 'empty' | 'error'; location?: any; ratio?: number; score?: number; error?: string }>;
+    chunks: Array<{ index: number; state: 'waiting' | 'collecting' | 'stored' | 'analyzing' | 'occupied' | 'empty' | 'error'; prediction?: string; location?: any; ratio?: number; score?: number; detectedFrames?: number; evaluatedFrames?: number; error?: string }>;
   };
   completed: boolean;
   state: 'ready' | 'collecting';
@@ -206,6 +207,35 @@ function labelsForFile(file: DeviceFileSummary): string[] {
     file.occupancy?.label,
   ];
   return Array.from(new Set(candidates.map((value) => String(value || '').trim()).filter(Boolean)));
+}
+
+function normalizeProgress(value: any): NonNullable<LocalMinuteSummary['progress']> {
+  const allowedStates = new Set(['waiting', 'collecting', 'stored', 'analyzing', 'occupied', 'empty', 'error']);
+  const sourceChunks = Array.isArray(value?.chunks) ? value.chunks : [];
+  const chunks = Array.from({ length: 6 }, (_, index) => {
+    const source = sourceChunks.find((chunk: any) => Number(chunk?.index) === index) || {};
+    const state = allowedStates.has(String(source.state)) ? source.state : 'waiting';
+    return {
+      index,
+      state,
+      prediction: source.prediction == null ? undefined : String(source.prediction),
+      location: source.location,
+      ratio: source.ratio == null ? undefined : Number(source.ratio),
+      score: source.score == null ? undefined : Number(source.score),
+      detectedFrames: source.detected_frames == null ? source.detectedFrames : Number(source.detected_frames),
+      evaluatedFrames: source.evaluated_frames == null ? source.evaluatedFrames : Number(source.evaluated_frames),
+      error: source.error == null ? undefined : String(source.error),
+    } as NonNullable<LocalMinuteSummary['progress']>['chunks'][number];
+  });
+  return {
+    expectedChunks: 6,
+    storedChunks: Number(value?.stored_chunks ?? value?.storedChunks ?? 0),
+    analyzedChunks: Number(value?.analyzed_chunks ?? value?.analyzedChunks ?? 0),
+    storagePercent: Number(value?.storage_percent ?? value?.storagePercent ?? 0),
+    predictionPercent: Number(value?.prediction_percent ?? value?.predictionPercent ?? 0),
+    chunkSeconds: Number(value?.chunk_seconds ?? value?.chunkSeconds ?? 10),
+    chunks,
+  };
 }
 
 function DevicePanel({
@@ -409,36 +439,15 @@ function DevicePanel({
                           <span className={`rounded-full px-2.5 py-1 font-semibold ${minute.uploaded ? 'bg-blue-50 text-blue-700' : 'bg-amber-50 text-amber-800'}`}>
                             {minute.uploaded ? 'Uploaded' : 'On device only'}
                           </span>
-                          {!!minute.occupancy?.evaluated_frames && (
-                            <span className="text-slate-600">
-                              {minute.occupancy.detected_frames || 0} / {minute.occupancy.evaluated_frames} detected
-                            </span>
-                          )}
                         </div>
                         {minute.progress && (
-                          <div className="mt-3 max-w-xl space-y-2">
-                            <div className="flex items-center justify-between text-[11px] uppercase tracking-wide text-slate-500">
-                              <span>Storage</span>
-                              <span>{Math.round(minute.progress.storagePercent)}%</span>
-                            </div>
-                            <div className="h-2 overflow-hidden rounded-full bg-slate-200">
-                              <div className="h-full rounded-full bg-cyan-500" style={{ width: `${minute.progress.storagePercent}%` }} />
-                            </div>
-                            <div className="flex items-center justify-between text-[11px] uppercase tracking-wide text-slate-500">
-                              <span>Predictions</span>
-                              <span>{Math.round(minute.progress.predictionPercent)}%</span>
-                            </div>
-                            <div className="h-2 overflow-hidden rounded-full bg-slate-200">
-                              <div className="h-full rounded-full bg-emerald-500" style={{ width: `${minute.progress.predictionPercent}%` }} />
-                            </div>
-                            <div className="flex items-start gap-2 pt-1" aria-label="Chunk prediction timeline">
+                          <div className="mt-3 flex max-w-xl items-start gap-2" aria-label="Chunk timeline">
                               {minute.progress.chunks.slice(0, 6).map((chunk) => {
                                 const color = chunk.state === 'occupied' ? 'bg-emerald-500' : chunk.state === 'empty' ? 'bg-red-500' : chunk.state === 'collecting' ? 'animate-pulse bg-blue-500' : ['stored', 'analyzing'].includes(chunk.state) ? 'animate-pulse bg-cyan-500' : chunk.state === 'error' ? 'bg-amber-500' : 'bg-slate-300';
                                 const location = Array.isArray(chunk.location) ? chunk.location.join(', ') : chunk.location ? `${chunk.location.x ?? '?'}, ${chunk.location.y ?? '?'}` : 'n/a';
-                                const detail = [`Chunk ${chunk.index + 1}`, chunk.ratio == null ? null : `ratio ${(chunk.ratio * 100).toFixed(1)}%`, `coordinates ${location}`, chunk.score == null ? null : `confidence ${chunk.score}`, chunk.error].filter(Boolean).join(' · ');
+                                const detail = [`Chunk ${chunk.index + 1}`, chunk.prediction || chunk.state, chunk.detectedFrames == null || chunk.evaluatedFrames == null ? null : `${chunk.detectedFrames} / ${chunk.evaluatedFrames} frames`, chunk.ratio == null ? null : `ratio ${(chunk.ratio * 100).toFixed(1)}%`, `coordinates ${location}`, chunk.score == null ? null : `confidence ${chunk.score}`, chunk.error].filter(Boolean).join(' · ');
                                 return <div key={chunk.index} className="min-w-0 flex-1 text-center" title={detail}><div role="img" tabIndex={0} title={detail} aria-label={detail} className={`mx-auto h-3 w-3 rounded-full ring-2 ring-white ${color}`} /></div>;
                               })}
-                            </div>
                           </div>
                         )}
                         {dataFiles.length > 0 && (
@@ -556,15 +565,7 @@ export default function DevicesPage() {
           deviceLabel: entry.id,
           labels: labelsForFile(file),
           occupancy: file.occupancy,
-          progress: {
-            expectedChunks: 6,
-            storedChunks: 0,
-            analyzedChunks: 0,
-            storagePercent: 0,
-            predictionPercent: 0,
-            chunkSeconds: 10,
-            chunks: Array.from({ length: 6 }, (_, index) => ({ index, state: 'waiting' as const })),
-          },
+          progress: normalizeProgress(file.progress),
           completed: true,
           state: 'ready' as const,
           uploaded: file.on_cloud,
@@ -584,7 +585,7 @@ export default function DevicesPage() {
   useEffect(() => {
     if (authLoading || !user?.token) return;
     loadData(true);
-    const timer = window.setInterval(() => loadData(false), 10000);
+    const timer = window.setInterval(() => loadData(false), 2500);
     return () => window.clearInterval(timer);
   }, [authLoading, loadData, user?.token]);
 
