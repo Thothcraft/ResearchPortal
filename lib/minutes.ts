@@ -38,7 +38,7 @@ export type MinuteSummary = {
     chunkSeconds?: number | null;
     chunks: Array<{
       index: number;
-      state: 'waiting' | 'analyzing' | 'occupied' | 'empty' | 'error';
+      state: 'waiting' | 'collecting' | 'stored' | 'analyzing' | 'occupied' | 'empty' | 'error';
       stored: boolean;
       analyzed: boolean;
       prediction?: unknown;
@@ -200,7 +200,7 @@ function getMinuteProgress(paths: ReturnType<typeof getMinutePaths>, manifest: a
   const radarBins = Array.isArray(paths.radarBins) ? paths.radarBins : [];
   const radarCsvs = Array.isArray(paths.radarCsvs) ? paths.radarCsvs : [];
   const predictions = paths.predictions && fs.existsSync(paths.predictions) ? readJsonPreview(paths.predictions) : null;
-  const expectedChunks = Number(manifest?.expected_chunks || 0) || Math.max(radarBins.length, radarCsvs.length, Array.isArray(predictions?.timeline) ? predictions.timeline.length : 0, 1);
+  const expectedChunks = Math.max(6, Number(manifest?.expected_chunks || 0) || radarBins.length || radarCsvs.length || (Array.isArray(predictions?.timeline) ? predictions.timeline.length : 0));
   const storedChunks = Math.min(radarBins.length, radarCsvs.length);
   const analyzedChunks = Array.isArray(predictions?.timeline) ? predictions.timeline.length : 0;
   const predictionByIndex = new Map<number, any>((predictions?.timeline || []).map((entry: any): [number, any] => [Number(entry?.chunk_index), entry]));
@@ -209,12 +209,15 @@ function getMinuteProgress(paths: ReturnType<typeof getMinutePaths>, manifest: a
     const prediction = predictionByIndex.get(index);
     const recorded = index < storedChunks;
     const manifestChunk = manifestByIndex.get(index);
-    const state = manifestChunk?.status === 'error'
+    const manifestState = String(manifestChunk?.status || '');
+    const state: NonNullable<MinuteSummary['progress']>['chunks'][number]['state'] = manifestState === 'error'
       ? 'error'
       : prediction
         ? (prediction.occupied === true ? 'occupied' : 'empty')
-        : recorded ? 'analyzing' : 'waiting';
-    return { index, state, stored: recorded, analyzed: Boolean(prediction), prediction: prediction?.prediction, location: prediction?.location };
+        : manifestState === 'collecting' ? 'collecting'
+        : manifestState === 'stored' ? 'stored'
+        : manifestState === 'analyzing' || recorded ? 'analyzing' : 'waiting';
+    return { index, state, stored: recorded, analyzed: Boolean(prediction), prediction: prediction?.prediction, location: prediction?.location, ratio: prediction?.ratio, score: prediction?.score, error: manifestChunk?.error };
   });
   return {
     expectedChunks,

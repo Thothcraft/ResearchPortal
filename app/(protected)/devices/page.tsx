@@ -30,6 +30,11 @@ type Sensor = {
 type CaptureSettings = {
   labels: string[];
   sensors: Record<string, boolean>;
+  radar_detection_threshold_db: number;
+  occupancy_threshold_percent: number;
+  auto_occupancy_label_enabled: boolean;
+  revision: number;
+  updated_at?: string | null;
 };
 
 type DeviceHardwareInfo = {
@@ -98,7 +103,7 @@ type LocalMinuteSummary = {
     storagePercent: number;
     predictionPercent: number;
     chunkSeconds?: number | null;
-    chunks: Array<{ index: number; state: 'waiting' | 'analyzing' | 'occupied' | 'empty' | 'error'; location?: any }>;
+    chunks: Array<{ index: number; state: 'waiting' | 'collecting' | 'stored' | 'analyzing' | 'occupied' | 'empty' | 'error'; location?: any; ratio?: number; score?: number; error?: string }>;
   };
   completed: boolean;
   state: 'ready' | 'collecting';
@@ -184,6 +189,11 @@ function normalizeSettings(value?: CaptureSettings | null): CaptureSettings {
   return {
     labels: Array.isArray(value?.labels) ? value!.labels.map(String).filter(Boolean) : [],
     sensors: { ...DEFAULT_SENSORS, ...(value?.sensors || {}) },
+    radar_detection_threshold_db: Number(value?.radar_detection_threshold_db ?? 8),
+    occupancy_threshold_percent: Number(value?.occupancy_threshold_percent ?? 50),
+    auto_occupancy_label_enabled: value?.auto_occupancy_label_enabled !== false,
+    revision: Number(value?.revision || 0),
+    updated_at: value?.updated_at || null,
   };
 }
 
@@ -226,6 +236,9 @@ function DevicePanel({
   const [expanded, setExpanded] = useState(false);
   const [draftLabel, setDraftLabel] = useState(settings.labels.join(', '));
   const [draftSensors, setDraftSensors] = useState<Record<string, boolean>>(settings.sensors);
+  const [draftRadarThreshold, setDraftRadarThreshold] = useState(settings.radar_detection_threshold_db);
+  const [draftOccupancyThreshold, setDraftOccupancyThreshold] = useState(settings.occupancy_threshold_percent);
+  const [draftAutoLabel, setDraftAutoLabel] = useState(settings.auto_occupancy_label_enabled);
   const [draftName, setDraftName] = useState(device.device_name || device.device_id);
   const [openMinute, setOpenMinute] = useState<string | null>(null);
 
@@ -236,12 +249,20 @@ function DevicePanel({
   useEffect(() => {
     setDraftLabel(settings.labels.join(', '));
     setDraftSensors(settings.sensors);
+    setDraftRadarThreshold(settings.radar_detection_threshold_db);
+    setDraftOccupancyThreshold(settings.occupancy_threshold_percent);
+    setDraftAutoLabel(settings.auto_occupancy_label_enabled);
   }, [settings]);
 
   const saveSettings = async () => {
     await onSaveSettings(device.device_uuid, {
       labels: draftLabel.split(',').map((label) => label.trim()).filter(Boolean),
       sensors: { ...DEFAULT_SENSORS, ...draftSensors },
+      radar_detection_threshold_db: draftRadarThreshold,
+      occupancy_threshold_percent: draftOccupancyThreshold,
+      auto_occupancy_label_enabled: draftAutoLabel,
+      revision: settings.revision,
+      updated_at: settings.updated_at,
     });
   };
 
@@ -307,6 +328,24 @@ function DevicePanel({
                 </label>
               ))}
             </div>
+            <label className="mt-5 block text-sm font-medium text-slate-950">
+              Radar detection threshold
+              <div className="mt-2 flex items-center gap-3">
+                <input type="range" min="0" max="40" step="0.5" value={draftRadarThreshold} onChange={(event) => setDraftRadarThreshold(Number(event.target.value))} className="min-w-0 flex-1 accent-slate-950" />
+                <output className="w-16 text-right font-mono text-xs">{draftRadarThreshold.toFixed(1)} dB</output>
+              </div>
+            </label>
+            <label className="mt-5 flex items-center justify-between gap-4 border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-950">
+              <span>Automatic occupancy labels</span>
+              <input type="checkbox" checked={draftAutoLabel} onChange={(event) => setDraftAutoLabel(event.target.checked)} className="h-5 w-5" />
+            </label>
+            <label className="mt-5 block text-sm font-medium text-slate-950">
+              Occupied-frame threshold
+              <div className="mt-2 flex items-center gap-3">
+                <input type="range" min="0" max="100" step="1" value={draftOccupancyThreshold} onChange={(event) => setDraftOccupancyThreshold(Number(event.target.value))} className="min-w-0 flex-1 accent-slate-950" />
+                <output className="w-16 text-right font-mono text-xs">{draftOccupancyThreshold.toFixed(0)}%</output>
+              </div>
+            </label>
             <button
               type="button"
               onClick={saveSettings}
@@ -393,10 +432,11 @@ function DevicePanel({
                               <div className="h-full rounded-full bg-emerald-500" style={{ width: `${minute.progress.predictionPercent}%` }} />
                             </div>
                             <div className="flex items-start gap-2 pt-1" aria-label="Chunk prediction timeline">
-                              {minute.progress.chunks.map((chunk) => {
-                                const color = chunk.state === 'occupied' ? 'bg-emerald-500' : chunk.state === 'empty' ? 'bg-red-500' : chunk.state === 'analyzing' ? 'animate-pulse bg-cyan-500' : chunk.state === 'error' ? 'bg-amber-500' : 'bg-slate-200';
-                                const offset = minute.progress?.chunkSeconds ? `${Math.round(chunk.index * minute.progress.chunkSeconds)}s` : `${chunk.index + 1}`;
-                                return <div key={chunk.index} className="min-w-0 flex-1 text-center" title={`Chunk ${chunk.index + 1}: ${chunk.state}`}><div className={`mx-auto h-3 w-3 rounded-full ring-2 ring-white ${color}`} /><div className="mt-1 truncate text-[9px] font-semibold uppercase text-slate-600">{chunk.state}</div><div className="mt-1 text-[9px] text-slate-400">{offset}</div></div>;
+                              {minute.progress.chunks.slice(0, 6).map((chunk) => {
+                                const color = chunk.state === 'occupied' ? 'bg-emerald-500' : chunk.state === 'empty' ? 'bg-red-500' : chunk.state === 'collecting' ? 'animate-pulse bg-blue-500' : ['stored', 'analyzing'].includes(chunk.state) ? 'animate-pulse bg-cyan-500' : chunk.state === 'error' ? 'bg-amber-500' : 'bg-slate-300';
+                                const location = Array.isArray(chunk.location) ? chunk.location.join(', ') : chunk.location ? `${chunk.location.x ?? '?'}, ${chunk.location.y ?? '?'}` : 'n/a';
+                                const detail = [`Chunk ${chunk.index + 1}`, chunk.ratio == null ? null : `ratio ${(chunk.ratio * 100).toFixed(1)}%`, `coordinates ${location}`, chunk.score == null ? null : `confidence ${chunk.score}`, chunk.error].filter(Boolean).join(' · ');
+                                return <div key={chunk.index} className="min-w-0 flex-1 text-center" title={detail}><div role="img" tabIndex={0} title={detail} aria-label={detail} className={`mx-auto h-3 w-3 rounded-full ring-2 ring-white ${color}`} /></div>;
                               })}
                             </div>
                           </div>
@@ -516,6 +556,15 @@ export default function DevicesPage() {
           deviceLabel: entry.id,
           labels: labelsForFile(file),
           occupancy: file.occupancy,
+          progress: {
+            expectedChunks: 6,
+            storedChunks: 0,
+            analyzedChunks: 0,
+            storagePercent: 0,
+            predictionPercent: 0,
+            chunkSeconds: 10,
+            chunks: Array.from({ length: 6 }, (_, index) => ({ index, state: 'waiting' as const })),
+          },
           completed: true,
           state: 'ready' as const,
           uploaded: file.on_cloud,
@@ -554,7 +603,7 @@ export default function DevicesPage() {
     const response = await put(`/device/${deviceId}/capture-settings`, nextSettings);
     if (!response?.success) throw new Error(response?.message || 'Unable to save settings');
     setSettings((current) => ({ ...current, [deviceId]: normalizeSettings(response.capture_settings) }));
-    toast.success('Settings applied', 'Ongoing collection will use the updated label and sensors');
+    toast.success('Saved', 'The device will apply processing changes at the next chunk boundary');
   };
 
   const renameDevice = async (deviceId: string, name: string) => {
