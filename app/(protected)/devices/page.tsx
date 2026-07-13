@@ -394,7 +394,7 @@ function DevicePanel({
                             </div>
                             <div className="flex items-start gap-2 pt-1" aria-label="Chunk prediction timeline">
                               {minute.progress.chunks.map((chunk) => {
-                                const color = chunk.state === 'occupied' ? 'bg-emerald-500' : chunk.state === 'empty' ? 'bg-slate-500' : chunk.state === 'analyzing' ? 'animate-pulse bg-cyan-500' : chunk.state === 'error' ? 'bg-red-500' : 'bg-slate-200';
+                                const color = chunk.state === 'occupied' ? 'bg-emerald-500' : chunk.state === 'empty' ? 'bg-red-500' : chunk.state === 'analyzing' ? 'animate-pulse bg-cyan-500' : chunk.state === 'error' ? 'bg-amber-500' : 'bg-slate-200';
                                 const offset = minute.progress?.chunkSeconds ? `${Math.round(chunk.index * minute.progress.chunkSeconds)}s` : `${chunk.index + 1}`;
                                 return <div key={chunk.index} className="min-w-0 flex-1 text-center" title={`Chunk ${chunk.index + 1}: ${chunk.state}`}><div className={`mx-auto h-3 w-3 rounded-full ring-2 ring-white ${color}`} /><div className="mt-1 truncate text-[9px] font-semibold uppercase text-slate-600">{chunk.state}</div><div className="mt-1 text-[9px] text-slate-400">{offset}</div></div>;
                               })}
