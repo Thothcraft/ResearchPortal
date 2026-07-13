@@ -36,6 +36,14 @@ export type MinuteSummary = {
     storagePercent: number;
     predictionPercent: number;
     chunkSeconds?: number | null;
+    chunks: Array<{
+      index: number;
+      state: 'waiting' | 'analyzing' | 'occupied' | 'empty' | 'error';
+      stored: boolean;
+      analyzed: boolean;
+      prediction?: unknown;
+      location?: any;
+    }>;
   };
   dataFiles?: MinuteDataFile[];
   manifest?: any;
@@ -195,6 +203,19 @@ function getMinuteProgress(paths: ReturnType<typeof getMinutePaths>, manifest: a
   const expectedChunks = Number(manifest?.expected_chunks || 0) || Math.max(radarBins.length, radarCsvs.length, Array.isArray(predictions?.timeline) ? predictions.timeline.length : 0, 1);
   const storedChunks = Math.min(radarBins.length, radarCsvs.length);
   const analyzedChunks = Array.isArray(predictions?.timeline) ? predictions.timeline.length : 0;
+  const predictionByIndex = new Map<number, any>((predictions?.timeline || []).map((entry: any): [number, any] => [Number(entry?.chunk_index), entry]));
+  const manifestByIndex = new Map<number, any>((manifest?.outputs?.radar?.chunks || []).map((entry: any): [number, any] => [Number(entry?.chunk_index), entry]));
+  const chunks = Array.from({ length: expectedChunks }, (_, index) => {
+    const prediction = predictionByIndex.get(index);
+    const recorded = index < storedChunks;
+    const manifestChunk = manifestByIndex.get(index);
+    const state = manifestChunk?.status === 'error'
+      ? 'error'
+      : prediction
+        ? (prediction.occupied === true ? 'occupied' : 'empty')
+        : recorded ? 'analyzing' : 'waiting';
+    return { index, state, stored: recorded, analyzed: Boolean(prediction), prediction: prediction?.prediction, location: prediction?.location };
+  });
   return {
     expectedChunks,
     storedChunks,
@@ -202,6 +223,7 @@ function getMinuteProgress(paths: ReturnType<typeof getMinutePaths>, manifest: a
     storagePercent: Math.min(100, (storedChunks / expectedChunks) * 100),
     predictionPercent: Math.min(100, (analyzedChunks / expectedChunks) * 100),
     chunkSeconds: Number(manifest?.chunk_seconds || 0) || null,
+    chunks,
   };
 }
 
