@@ -585,7 +585,7 @@ export default function DevicesPage() {
   useEffect(() => {
     if (authLoading || !user?.token) return;
     loadData(true);
-    const timer = window.setInterval(() => loadData(false), 2500);
+    const timer = window.setInterval(() => loadData(false), 1000);
     return () => window.clearInterval(timer);
   }, [authLoading, loadData, user?.token]);
 
