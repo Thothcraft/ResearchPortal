@@ -91,6 +91,14 @@ type LocalMinuteSummary = {
   deviceLabel: string;
   labels: string[];
   occupancy?: DeviceFileSummary['occupancy'];
+  progress?: {
+    expectedChunks: number;
+    storedChunks: number;
+    analyzedChunks: number;
+    storagePercent: number;
+    predictionPercent: number;
+    chunkSeconds?: number | null;
+  };
   completed: boolean;
   state: 'ready' | 'collecting';
   uploaded: boolean;
@@ -121,7 +129,7 @@ const DEFAULT_SENSORS: Record<string, boolean> = {
 
 const SENSOR_LABELS: Record<string, string> = {
   usb_camera: 'Camera',
-  dreamhat_radar: 'Localization',
+  dreamhat_radar: 'Radar',
   esp32_csi: 'CSI',
   sense_hat: 'Sense HAT',
 };
@@ -341,9 +349,9 @@ function DevicePanel({
                         <div className="mt-1 text-sm text-slate-700">
                           {new Date(parseServerTime(minute.created || minute.modified)).toLocaleString()} · {fileCount} item · {humanBytes(totalSize)}
                         </div>
-                        <div className="mt-2 flex flex-wrap gap-2 text-xs font-medium text-slate-700">
+                          <div className="mt-2 flex flex-wrap gap-2 text-xs font-medium text-slate-700">
                           {Object.entries(minute.files).filter(([key, present]) => present && !['manifest', 'predictions'].includes(key)).map(([sensor]) => (
-                            <span key={`${minute.minute}:${sensor}`} className="border border-cyan-300 bg-cyan-50 px-2 py-1">{sensor === 'radar' ? 'localization' : sensor.replaceAll('_', ' ')}</span>
+                            <span key={`${minute.minute}:${sensor}`} className="border border-cyan-300 bg-cyan-50 px-2 py-1">{sensor === 'radar' ? 'radar' : sensor.replaceAll('_', ' ')}</span>
                           ))}
                         </div>
                         <div className="mt-2 flex flex-wrap gap-2 text-xs text-slate-700">
@@ -367,6 +375,24 @@ function DevicePanel({
                             </span>
                           )}
                         </div>
+                        {minute.progress && (
+                          <div className="mt-3 max-w-xl space-y-2">
+                            <div className="flex items-center justify-between text-[11px] uppercase tracking-wide text-slate-500">
+                              <span>Storage</span>
+                              <span>{Math.round(minute.progress.storagePercent)}%</span>
+                            </div>
+                            <div className="h-2 overflow-hidden rounded-full bg-slate-200">
+                              <div className="h-full rounded-full bg-cyan-500" style={{ width: `${minute.progress.storagePercent}%` }} />
+                            </div>
+                            <div className="flex items-center justify-between text-[11px] uppercase tracking-wide text-slate-500">
+                              <span>Predictions</span>
+                              <span>{Math.round(minute.progress.predictionPercent)}%</span>
+                            </div>
+                            <div className="h-2 overflow-hidden rounded-full bg-slate-200">
+                              <div className="h-full rounded-full bg-emerald-500" style={{ width: `${minute.progress.predictionPercent}%` }} />
+                            </div>
+                          </div>
+                        )}
                         {dataFiles.length > 0 && (
                           <div className="mt-2 flex flex-wrap gap-2 text-xs text-slate-700">
                             {dataFiles.slice(0, 6).map((file) => (

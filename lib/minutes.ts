@@ -29,6 +29,14 @@ export type MinuteSummary = {
   uploaded: boolean;
   files: MinuteFiles;
   sizes: Record<string, number>;
+  progress?: {
+    expectedChunks: number;
+    storedChunks: number;
+    analyzedChunks: number;
+    storagePercent: number;
+    predictionPercent: number;
+    chunkSeconds?: number | null;
+  };
   dataFiles?: MinuteDataFile[];
   manifest?: any;
 };
@@ -163,10 +171,13 @@ function extractDeviceInfo(manifest: any, minuteDir: string): { deviceKey: strin
 
 function getMinutePaths(minuteDir: string) {
   const names = fs.existsSync(minuteDir) ? fs.readdirSync(minuteDir) : [];
-  const radar = names.find((name) => name.startsWith('mmw_radar_raw_') && name.endsWith('.bin')) || null;
+  const radarBins = names.filter((name) => name.startsWith('mmw_radar_raw_') && name.endsWith('.bin')).sort();
+  const radarCsvs = names.filter((name) => name.startsWith('mmw_radar_xy_') && name.endsWith('.csv')).sort();
   return {
     video: names.includes('usb_camera.mp4') ? path.join(minuteDir, 'usb_camera.mp4') : null,
-    radar: radar ? path.join(minuteDir, radar) : null,
+    radar: radarBins.length ? path.join(minuteDir, radarBins[0]) : null,
+    radarBins: radarBins.map((name) => path.join(minuteDir, name)),
+    radarCsvs: radarCsvs.map((name) => path.join(minuteDir, name)),
     xyTracking: names.includes('xy-tracking.json') ? path.join(minuteDir, 'xy-tracking.json') : null,
     csiCsv: names.includes('wifi_csi_raw.csv') ? path.join(minuteDir, 'wifi_csi_raw.csv') : null,
     csiTimestamped: names.includes('wifi_csi_timestamped.csv') ? path.join(minuteDir, 'wifi_csi_timestamped.csv') : null,
@@ -174,6 +185,23 @@ function getMinutePaths(minuteDir: string) {
     manifest: names.includes('manifest.json') ? path.join(minuteDir, 'manifest.json') : null,
     predictions: names.includes('predictions.json') ? path.join(minuteDir, 'predictions.json') : null,
     ffmpegLog: names.includes('usb_camera.ffmpeg.log') ? path.join(minuteDir, 'usb_camera.ffmpeg.log') : null,
+  };
+}
+
+function getMinuteProgress(paths: ReturnType<typeof getMinutePaths>, manifest: any): MinuteSummary['progress'] {
+  const radarBins = Array.isArray(paths.radarBins) ? paths.radarBins : [];
+  const radarCsvs = Array.isArray(paths.radarCsvs) ? paths.radarCsvs : [];
+  const predictions = paths.predictions && fs.existsSync(paths.predictions) ? readJsonPreview(paths.predictions) : null;
+  const expectedChunks = Number(manifest?.expected_chunks || 0) || Math.max(radarBins.length, radarCsvs.length, Array.isArray(predictions?.timeline) ? predictions.timeline.length : 0, 1);
+  const storedChunks = Math.min(radarBins.length, radarCsvs.length);
+  const analyzedChunks = Array.isArray(predictions?.timeline) ? predictions.timeline.length : 0;
+  return {
+    expectedChunks,
+    storedChunks,
+    analyzedChunks,
+    storagePercent: Math.min(100, (storedChunks / expectedChunks) * 100),
+    predictionPercent: Math.min(100, (analyzedChunks / expectedChunks) * 100),
+    chunkSeconds: Number(manifest?.chunk_seconds || 0) || null,
   };
 }
 
@@ -217,6 +245,7 @@ export function listMinuteSummaries(): MinuteSummary[] {
     const labels = Array.from(new Set([...labelsFromMinutePath(candidate.relativePath), ...extractLabels(manifest)]));
     const completed = Boolean(manifest?.capture_finished);
     const minute = minuteIdFor(candidate.relativePath);
+    const progress = getMinuteProgress(paths, manifest);
     minutes.push({
       minute,
       minuteName: candidate.minuteName,
@@ -245,6 +274,7 @@ export function listMinuteSummaries(): MinuteSummary[] {
         csi_timestamped: paths.csiTimestamped ? fs.statSync(paths.csiTimestamped).size : 0,
         csi_serial: paths.csiSerial ? fs.statSync(paths.csiSerial).size : 0,
       },
+      progress,
       dataFiles: listMinuteDataFiles(minuteDir),
       manifest,
     });
@@ -273,6 +303,7 @@ export function getMinuteDetail(minute: string): MinuteDetail | null {
   const relativePath = existingSummary?.relativePath || minuteName;
   const labels = Array.from(new Set([...labelsFromMinutePath(relativePath), ...extractLabels(manifest)]));
   const completed = Boolean(manifest?.capture_finished);
+  const progress = getMinuteProgress(paths, manifest);
   const summary = existingSummary || {
     minute,
     minuteName,
@@ -299,20 +330,21 @@ export function getMinuteDetail(minute: string): MinuteDetail | null {
       radar: paths.radar ? fs.statSync(paths.radar).size : 0,
       csi_csv: paths.csiCsv ? fs.statSync(paths.csiCsv).size : 0,
         csi_timestamped: paths.csiTimestamped ? fs.statSync(paths.csiTimestamped).size : 0,
-        csi_serial: paths.csiSerial ? fs.statSync(paths.csiSerial).size : 0,
-      },
+      csi_serial: paths.csiSerial ? fs.statSync(paths.csiSerial).size : 0,
+    },
+    progress,
     manifest,
   };
 
   return {
     ...summary,
-      filePaths: {
-        video: paths.video,
-        radar: paths.radar,
-        xy_tracking: paths.xyTracking,
-        csi_csv: paths.csiCsv,
-        csi_timestamped: paths.csiTimestamped,
-        csi_serial: paths.csiSerial,
+    filePaths: {
+      video: paths.video,
+      radar: paths.radar,
+      xy_tracking: paths.xyTracking,
+      csi_csv: paths.csiCsv,
+      csi_timestamped: paths.csiTimestamped,
+      csi_serial: paths.csiSerial,
         manifest: paths.manifest,
       predictions: paths.predictions,
       ffmpeg_log: paths.ffmpegLog,

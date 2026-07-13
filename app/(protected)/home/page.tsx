@@ -84,7 +84,7 @@ export default function HomePage() {
   useEffect(() => {
     if (authLoading || !user?.token) return;
     load();
-    const timer = window.setInterval(load, 15000);
+    const timer = window.setInterval(load, 5000);
     return () => window.clearInterval(timer);
   }, [authLoading, load, user?.token]);
 
@@ -214,7 +214,7 @@ export default function HomePage() {
                 <div className="mt-3 text-xs uppercase tracking-wide text-slate-500">Sensors</div>
                 <div className="mt-2 flex flex-wrap gap-2">
                   {latestSensors.length ? latestSensors.map((sensor) => (
-                    <span key={sensor.sensor_type} className="rounded-full bg-white px-2.5 py-1 text-xs text-slate-700">{String(sensor.name || sensor.sensor_type || '').replace(/radar/gi, 'localization')}</span>
+                    <span key={sensor.sensor_type} className="rounded-full bg-white px-2.5 py-1 text-xs text-slate-700">{String(sensor.name || sensor.sensor_type || '').replace(/localization/gi, 'radar')}</span>
                   )) : (
                     <span className="rounded-full bg-white px-2.5 py-1 text-xs text-slate-500">None reported</span>
                   )}

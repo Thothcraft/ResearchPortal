@@ -123,10 +123,9 @@ export default function CaptureViewerPage() {
 
   useEffect(() => {
     load();
-    if (!waiting) return;
-    const timer = window.setInterval(load, 5000);
+    const timer = window.setInterval(load, 2500);
     return () => window.clearInterval(timer);
-  }, [load, waiting]);
+  }, [load]);
 
   return <div className="space-y-6 text-slate-950">
     <header className="border border-slate-300 bg-white p-5"><div className="text-xs font-semibold uppercase text-slate-600">Uploaded capture</div><h1 className="mt-1 font-mono text-2xl font-semibold">{params.minute}</h1><p className="mt-2 text-sm text-slate-700">Device {params.deviceId}</p></header>
