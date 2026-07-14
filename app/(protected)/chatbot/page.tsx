@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect } from 'react';
 import { useApi } from '@/hooks/useApi';
+import { useAuth } from '@/contexts/AuthContext';
 import {
   Send,
   Bot,
@@ -43,6 +44,7 @@ export default function ChatbotPage() {
   const [chatId, setChatId] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const { post, get } = useApi();
+  const { user } = useAuth();
 
   // Fetch system stats for context
   useEffect(() => {
@@ -168,6 +170,10 @@ export default function ChatbotPage() {
       },
     ]);
   };
+
+  if (user?.plan !== 'research') {
+    return <div className="m-8 rounded-xl border border-amber-700 bg-slate-900 p-8 text-white"><h1 className="text-2xl font-semibold">Research assistant</h1><p className="mt-3 text-slate-300">The account-scoped contextual assistant is available on the Research plan.</p><a href="/pricing" className="mt-5 inline-block rounded-lg bg-indigo-500 px-4 py-2 font-semibold">View Research pricing</a></div>;
+  }
 
   return (
     <div className="flex flex-col h-[calc(100vh-2rem)] p-8">

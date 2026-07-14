@@ -65,6 +65,10 @@ export default function SettingsPage() {
   };
 
   const openCheckout = async (plan: 'home' | 'pro' | 'research') => {
+    if (user?.plan && user.plan !== 'free') {
+      await openBillingPortal();
+      return;
+    }
     setBillingLoading(plan);
     setBillingError('');
     try {

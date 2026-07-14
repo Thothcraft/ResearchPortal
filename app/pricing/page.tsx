@@ -20,6 +20,11 @@ export default function PricingPage() {
 
   const checkout = async (plan: 'home' | 'pro' | 'research') => {
     try {
+      if (user?.plan && user.plan !== 'free') {
+        const portal = await post('/stripe/billing-portal', {});
+        window.location.assign(portal.url);
+        return;
+      }
       const result = await post(`/stripe/create-checkout-session?plan=${plan}&billing_period=${period}`, {});
       window.location.assign(result.url);
     } catch (reason) {
