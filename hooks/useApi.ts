@@ -57,7 +57,11 @@ export const useApi = () => {
       }
 
       const errorData = await response.json().catch(() => ({}));
-      throw new Error(errorData.detail || errorData.error || `HTTP error! Status: ${response.status}`);
+      const requestError = new Error(
+        errorData.detail || errorData.error || `HTTP error! Status: ${response.status}`
+      ) as ApiError;
+      requestError.status = response.status;
+      throw requestError;
     }
 
     return response.json();

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useApi } from '@/hooks/useApi';
+import type { ApiError } from '@/hooks/useApi';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/contexts/ToastContext';
 import {
@@ -704,11 +705,21 @@ export default function DevicesPage() {
   }, [onlineOnly, query, rows]);
 
   const saveSettings = async (deviceId: string, nextSettings: CaptureSettings) => {
-    const response = await put(`/device/${deviceId}/capture-settings`, nextSettings);
+    let submitted = nextSettings;
+    let response;
+    try {
+      response = await put(`/device/${deviceId}/capture-settings`, submitted);
+    } catch (error) {
+      if ((error as ApiError)?.status !== 409) throw error;
+      const latestResponse = await get(`/device/${deviceId}/capture-settings`);
+      const latest = normalizeSettings(latestResponse?.capture_settings);
+      submitted = { ...nextSettings, revision: latest.revision, updated_at: latest.updated_at };
+      response = await put(`/device/${deviceId}/capture-settings`, submitted);
+    }
     if (!response?.success) throw new Error(response?.message || 'Unable to save settings');
     const readback = await get(`/device/${deviceId}/capture-settings`);
     const canonical = normalizeSettings(readback?.capture_settings || response.capture_settings);
-    if (canonical.revision <= nextSettings.revision) throw new Error('Brain did not persist a new settings revision');
+    if (canonical.revision <= submitted.revision) throw new Error('Brain did not persist a new settings revision');
     setSettings((current) => ({ ...current, [deviceId]: canonical }));
     toast.success('Saved', 'The device will apply processing changes at the next chunk boundary');
     return canonical;
