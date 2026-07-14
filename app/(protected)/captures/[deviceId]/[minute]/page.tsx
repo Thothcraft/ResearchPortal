@@ -6,10 +6,17 @@ import { useAuth } from '@/contexts/AuthContext';
 
 type Asset = { file_id: number; filename: string; kind?: string; content_type?: string };
 
-function chunkDotStyle(state: string, ratioValue?: number, progressValue?: number) {
+function chunkDotStyle(state: string, classification?: string | number, ratioValue?: number, progressValue?: number, yellowThreshold = 20, greenThreshold = 60) {
+  if (typeof classification === 'number') {
+    progressValue = ratioValue;
+    ratioValue = classification;
+    classification = undefined;
+  }
   const ratio = Math.max(0, Math.min(1, Number(ratioValue) || 0));
   const progress = Math.max(0, Math.min(1, Number(progressValue) || 0));
-  const background = state === 'occupied' ? `hsl(145 72% ${82 - ratio * 44}%)` : state === 'empty' ? `hsl(4 78% ${44 + ratio * 40}%)` : state === 'collecting' ? `hsl(217 88% ${82 - progress * 38}%)` : ['stored', 'analyzing'].includes(state) ? `hsl(190 82% ${80 - progress * 35}%)` : state === 'error' ? 'hsl(38 92% 52%)' : 'hsl(215 16% 78%)';
+  const completed = state === 'occupied' || state === 'empty';
+  const region = classification || (completed ? (ratio * 100 >= greenThreshold ? 'green' : ratio * 100 >= yellowThreshold ? 'yellow' : 'red') : null);
+  const background = region === 'green' ? 'hsl(145 68% 39%)' : region === 'yellow' ? 'hsl(44 94% 52%)' : region === 'red' ? 'hsl(4 76% 51%)' : state === 'collecting' ? `hsl(217 88% ${82 - progress * 38}%)` : ['stored', 'analyzing'].includes(state) ? `hsl(190 82% ${80 - progress * 35}%)` : state === 'error' ? 'hsl(38 92% 52%)' : 'hsl(215 16% 78%)';
   return { background, boxShadow: `0 0 0 1px color-mix(in srgb, ${background} 55%, transparent)`, transition: 'background-color .45s ease, box-shadow .45s ease' };
 }
 
@@ -191,7 +198,7 @@ export default function CaptureViewerPage() {
 
   return <div className="space-y-6 text-slate-950">
     <header className="border border-slate-300 bg-white p-5"><div className="text-xs font-semibold uppercase text-slate-600">Live capture metadata</div><h1 className="mt-1 font-mono text-2xl font-semibold">{params.minute}</h1><p className="mt-2 text-sm text-slate-700">Device {params.deviceId}</p></header>
-    {waiting && <div className="border border-cyan-300 bg-cyan-50 p-4 text-sm">Files are not uploaded. Live predictions and chunk metadata continue updating from the device.</div>}
+    {waiting && <div className="sr-only" role="status">Live metadata is updating while capture files remain on the device.</div>}
     <section className="border border-slate-300 bg-white p-4"><div className="flex items-start gap-2" aria-label="Chunk timeline">{Array.from({ length: expectedChunks }, (_, index) => { const live: any = liveByIndex.get(index); const entry: any = predictionByIndex.get(index); const chunk: any = manifestByIndex.get(index); const pending = String(live?.state || chunk?.status || 'waiting'); const state = live?.state || (entry ? (entry.occupied === true ? 'occupied' : 'empty') : pending); const locationValue = live?.location ?? entry?.location; const location = Array.isArray(locationValue) ? locationValue.join(', ') : locationValue ? `${locationValue.x ?? '?'}, ${locationValue.y ?? '?'}` : 'n/a'; const detectedFrames = live?.detected_frames ?? live?.detectedFrames ?? entry?.detected_frames ?? chunk?.detected_frames; const evaluatedFrames = live?.evaluated_frames ?? live?.evaluatedFrames ?? entry?.evaluated_frames ?? chunk?.evaluated_frames; const ratio = live?.ratio ?? entry?.ratio; const progress = live?.progress ?? chunk?.progress; const score = live?.score ?? entry?.score; const labels = live?.labels ?? entry?.labels ?? chunk?.labels; const activityLabels = live?.activity_labels ?? live?.activityLabels ?? entry?.activity_labels ?? chunk?.activity_labels; const people = live?.people_count ?? live?.peopleCount ?? entry?.people_count ?? chunk?.people_count; const detail = [`Chunk ${index + 1}`, live?.prediction || entry?.prediction || state, people == null ? null : `${people} people`, Array.isArray(labels) && labels.length ? `labels ${labels.join(', ')}` : null, Array.isArray(activityLabels) && activityLabels.length ? `activity ${activityLabels.join(', ')}` : null, detectedFrames == null || evaluatedFrames == null ? null : `${detectedFrames} / ${evaluatedFrames} frames`, ratio == null ? null : `ratio ${(Number(ratio) * 100).toFixed(1)}%`, `coordinates ${location}`, score == null ? null : `confidence ${score}`, live?.error || chunk?.error].filter(Boolean).join(' · '); return <div key={index} className="min-w-0 flex-1 text-center" title={detail}><div role="img" tabIndex={0} title={detail} aria-label={detail} className="mx-auto h-3 w-3 rounded-full ring-2 ring-white" style={chunkDotStyle(state, ratio, progress)} /></div>; })}</div></section>
     <section className="border border-slate-300 bg-white p-4"><h2 className="mb-3 font-semibold">X / Y localization</h2>{documents['xy-tracking'] || documents['xy_tracking'] ? <Heatmap payload={documents['xy-tracking'] || documents['xy_tracking']} tracking /> : <div className="p-8 text-sm text-slate-500">Not available</div>}</section>
     <section className="border border-slate-300 bg-white p-4"><h2 className="mb-3 font-semibold">Camera video</h2>{videoUrl ? <video controls src={videoUrl} className="max-h-[70vh] w-full bg-black" /> : <div className="p-8 text-sm text-slate-500">No camera video in this minute.</div>}</section>

@@ -42,6 +42,7 @@ export type MinuteSummary = {
       stored: boolean;
       analyzed: boolean;
       prediction?: unknown;
+      classification?: 'red' | 'yellow' | 'green';
       location?: any;
       ratio?: number;
       score?: number;
@@ -222,7 +223,7 @@ function getMinuteProgress(paths: ReturnType<typeof getMinutePaths>, manifest: a
         : manifestState === 'collecting' ? 'collecting'
         : manifestState === 'stored' ? 'stored'
         : manifestState === 'analyzing' || recorded ? 'analyzing' : 'waiting';
-    return { index, state, stored: recorded, analyzed: Boolean(prediction), prediction: prediction?.prediction, location: prediction?.location, ratio: prediction?.ratio, score: prediction?.score, detectedFrames: prediction?.detected_frames ?? manifestChunk?.detected_frames, evaluatedFrames: prediction?.evaluated_frames ?? manifestChunk?.evaluated_frames, error: manifestChunk?.error };
+    return { index, state, stored: recorded, analyzed: Boolean(prediction), prediction: prediction?.prediction, classification: prediction?.classification, location: prediction?.location, ratio: prediction?.ratio, score: prediction?.score, detectedFrames: prediction?.detected_frames ?? manifestChunk?.detected_frames, evaluatedFrames: prediction?.evaluated_frames ?? manifestChunk?.evaluated_frames, error: manifestChunk?.error };
   });
   return {
     expectedChunks,

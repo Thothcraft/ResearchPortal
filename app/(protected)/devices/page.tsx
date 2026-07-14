@@ -32,6 +32,8 @@ type CaptureSettings = {
   sensors: Record<string, boolean>;
   radar_detection_threshold_db: number;
   occupancy_threshold_percent: number;
+  yellow_threshold_percent: number;
+  green_threshold_percent: number;
   auto_occupancy_label_enabled: boolean;
   chunk_seconds: number;
   system_mode: 'responsive' | 'balanced' | 'precision';
@@ -39,6 +41,7 @@ type CaptureSettings = {
   prediction_label_style: 'occupancy' | 'presence';
   people_count_label_enabled: boolean;
   sleep_study_enabled: boolean;
+  calibrations?: Record<string, unknown>;
   revision: number;
   updated_at?: string | null;
 };
@@ -87,6 +90,7 @@ type DeviceFileSummary = {
     evaluated_frames?: number;
     ratio?: number;
     threshold_percent?: number;
+    classification?: 'red' | 'yellow' | 'green';
   } | null;
   progress?: any;
   metadata?: { label?: string; labels?: string[] };
@@ -110,7 +114,7 @@ type LocalMinuteSummary = {
     storagePercent: number;
     predictionPercent: number;
     chunkSeconds?: number | null;
-    chunks: Array<{ index: number; state: 'waiting' | 'collecting' | 'stored' | 'analyzing' | 'occupied' | 'empty' | 'error'; prediction?: string; location?: any; ratio?: number; progress?: number; score?: number; detectedFrames?: number; evaluatedFrames?: number; targetCount?: number; peopleCount?: number; targets?: any[]; labels?: string[]; activityLabels?: string[]; activity?: any; join?: any; error?: string }>;
+    chunks: Array<{ index: number; state: 'waiting' | 'collecting' | 'stored' | 'analyzing' | 'occupied' | 'empty' | 'error'; classification?: 'red' | 'yellow' | 'green'; prediction?: string; location?: any; ratio?: number; progress?: number; score?: number; detectedFrames?: number; evaluatedFrames?: number; targetCount?: number; peopleCount?: number; targets?: any[]; labels?: string[]; activityLabels?: string[]; activity?: any; join?: any; error?: string }>;
   };
   completed: boolean;
   state: 'ready' | 'collecting';
@@ -198,6 +202,8 @@ function normalizeSettings(value?: CaptureSettings | null): CaptureSettings {
     sensors: { ...DEFAULT_SENSORS, ...(value?.sensors || {}) },
     radar_detection_threshold_db: Number(value?.radar_detection_threshold_db ?? 8),
     occupancy_threshold_percent: Number(value?.occupancy_threshold_percent ?? 50),
+    yellow_threshold_percent: Number(value?.yellow_threshold_percent ?? 20),
+    green_threshold_percent: Number(value?.green_threshold_percent ?? 60),
     auto_occupancy_label_enabled: value?.auto_occupancy_label_enabled !== false,
     chunk_seconds: Math.min(30, Math.max(2, Number(value?.chunk_seconds ?? 10))),
     system_mode: value?.system_mode === 'responsive' || value?.system_mode === 'precision' ? value.system_mode : 'balanced',
@@ -205,6 +211,7 @@ function normalizeSettings(value?: CaptureSettings | null): CaptureSettings {
     prediction_label_style: value?.prediction_label_style === 'presence' ? 'presence' : 'occupancy',
     people_count_label_enabled: value?.people_count_label_enabled === true,
     sleep_study_enabled: value?.sleep_study_enabled === true,
+    calibrations: value?.calibrations || {},
     revision: Number(value?.revision || 0),
     updated_at: value?.updated_at || null,
   };
@@ -231,6 +238,7 @@ function normalizeProgress(value: any): NonNullable<LocalMinuteSummary['progress
     return {
       index,
       state,
+      classification: ['red', 'yellow', 'green'].includes(String(source.classification ?? source.occupancy?.classification)) ? (source.classification ?? source.occupancy.classification) : undefined,
       prediction: source.prediction == null ? undefined : String(source.prediction),
       location: source.location,
       ratio: source.ratio == null ? undefined : Number(source.ratio),
@@ -259,11 +267,14 @@ function normalizeProgress(value: any): NonNullable<LocalMinuteSummary['progress
   };
 }
 
-function chunkDotStyle(state: string, ratioValue?: number, progressValue?: number) {
+function chunkDotStyle(state: string, classification?: string, ratioValue?: number, progressValue?: number, yellowThreshold = 20, greenThreshold = 60) {
   const ratio = Math.max(0, Math.min(1, Number(ratioValue) || 0));
   const progress = Math.max(0, Math.min(1, Number(progressValue) || 0));
-  const background = state === 'occupied' ? `hsl(145 72% ${82 - ratio * 44}%)`
-    : state === 'empty' ? `hsl(4 78% ${44 + ratio * 40}%)`
+  const completed = state === 'occupied' || state === 'empty';
+  const region = classification || (completed ? (ratio * 100 >= greenThreshold ? 'green' : ratio * 100 >= yellowThreshold ? 'yellow' : 'red') : null);
+  const background = region === 'green' ? 'hsl(145 68% 39%)'
+    : region === 'yellow' ? 'hsl(44 94% 52%)'
+      : region === 'red' ? 'hsl(4 76% 51%)'
       : state === 'collecting' ? `hsl(217 88% ${82 - progress * 38}%)`
         : ['stored', 'analyzing'].includes(state) ? `hsl(190 82% ${80 - progress * 35}%)`
           : state === 'error' ? 'hsl(38 92% 52%)' : 'hsl(215 16% 78%)';
@@ -300,6 +311,8 @@ function DevicePanel({
   const [draftSensors, setDraftSensors] = useState<Record<string, boolean>>(settings.sensors);
   const [draftRadarThreshold, setDraftRadarThreshold] = useState(settings.radar_detection_threshold_db);
   const [draftOccupancyThreshold, setDraftOccupancyThreshold] = useState(settings.occupancy_threshold_percent);
+  const [draftYellowThreshold, setDraftYellowThreshold] = useState(settings.yellow_threshold_percent);
+  const [draftGreenThreshold, setDraftGreenThreshold] = useState(settings.green_threshold_percent);
   const [draftAutoLabel, setDraftAutoLabel] = useState(settings.auto_occupancy_label_enabled);
   const [draftChunkSeconds, setDraftChunkSeconds] = useState(settings.chunk_seconds);
   const [draftSystemMode, setDraftSystemMode] = useState(settings.system_mode);
@@ -318,6 +331,8 @@ function DevicePanel({
     setDraftSensors(settings.sensors);
     setDraftRadarThreshold(settings.radar_detection_threshold_db);
     setDraftOccupancyThreshold(settings.occupancy_threshold_percent);
+    setDraftYellowThreshold(settings.yellow_threshold_percent);
+    setDraftGreenThreshold(settings.green_threshold_percent);
     setDraftAutoLabel(settings.auto_occupancy_label_enabled);
     setDraftChunkSeconds(settings.chunk_seconds);
     setDraftSystemMode(settings.system_mode);
@@ -332,6 +347,8 @@ function DevicePanel({
       sensors: { ...DEFAULT_SENSORS, ...draftSensors },
       radar_detection_threshold_db: draftRadarThreshold,
       occupancy_threshold_percent: draftOccupancyThreshold,
+      yellow_threshold_percent: draftYellowThreshold,
+      green_threshold_percent: draftGreenThreshold,
       auto_occupancy_label_enabled: draftAutoLabel,
       chunk_seconds: draftChunkSeconds,
       system_mode: draftSystemMode,
@@ -339,6 +356,7 @@ function DevicePanel({
       prediction_label_style: draftPredictionStyle,
       people_count_label_enabled: draftPeopleLabels,
       sleep_study_enabled: false,
+      calibrations: settings.calibrations || {},
       revision: settings.revision,
       updated_at: settings.updated_at,
     });
@@ -417,13 +435,12 @@ function DevicePanel({
               <span>Automatic occupancy labels</span>
               <input type="checkbox" checked={draftAutoLabel} onChange={(event) => setDraftAutoLabel(event.target.checked)} className="h-5 w-5" />
             </label>
-            <label className="mt-5 block text-sm font-medium text-slate-950">
-              Occupied-frame threshold
-              <div className="mt-2 flex items-center gap-3">
-                <input type="range" min="0" max="100" step="1" value={draftOccupancyThreshold} onChange={(event) => setDraftOccupancyThreshold(Number(event.target.value))} className="min-w-0 flex-1 accent-slate-950" />
-                <output className="w-16 text-right font-mono text-xs">{draftOccupancyThreshold.toFixed(0)}%</output>
-              </div>
-            </label>
+            <fieldset className="mt-5 border border-slate-300 bg-white p-3">
+              <legend className="px-1 text-sm font-semibold text-slate-950">Detection regions</legend>
+              <label className="mt-2 block text-sm font-medium text-slate-950">Yellow begins<div className="mt-2 flex items-center gap-3"><input type="range" min="0" max="99" step="1" value={draftYellowThreshold} onChange={(event) => setDraftYellowThreshold(Number(event.target.value))} className="min-w-0 flex-1 accent-amber-500" /><output className="w-16 text-right font-mono text-xs">{draftYellowThreshold.toFixed(0)}%</output></div></label>
+              <label className="mt-3 block text-sm font-medium text-slate-950">Green begins<div className="mt-2 flex items-center gap-3"><input type="range" min="1" max="100" step="1" value={draftGreenThreshold} onChange={(event) => setDraftGreenThreshold(Number(event.target.value))} className="min-w-0 flex-1 accent-emerald-600" /><output className="w-16 text-right font-mono text-xs">{draftGreenThreshold.toFixed(0)}%</output></div></label>
+              {draftYellowThreshold >= draftGreenThreshold && <p className="mt-2 text-xs font-semibold text-red-700">Yellow must be lower than green.</p>}
+            </fieldset>
             <div className="mt-5 grid grid-cols-2 gap-3">
               <label className="block text-sm font-medium text-slate-950">Seconds per chunk
                 <input type="number" min="2" max="30" step="0.5" value={draftChunkSeconds} onChange={(event) => setDraftChunkSeconds(Math.min(30, Math.max(2, Number(event.target.value) || 10)))} className="mt-2 w-full border border-slate-400 bg-white px-3 py-2" />
@@ -442,6 +459,7 @@ function DevicePanel({
             <button
               type="button"
               onClick={saveSettings}
+              disabled={draftYellowThreshold >= draftGreenThreshold}
               className="mt-5 w-full bg-slate-950 px-4 py-3 text-sm font-semibold text-white hover:bg-slate-800"
             >
               Apply to current and next minutes
@@ -509,7 +527,7 @@ function DevicePanel({
                                 const location = Array.isArray(chunk.location) ? chunk.location.join(', ') : chunk.location ? `${chunk.location.x ?? '?'}, ${chunk.location.y ?? '?'}` : 'n/a';
                                 const targetDetail = chunk.targets?.length ? chunk.targets.map((target: any) => `T${target.id} (${Number(target.position?.[0]).toFixed(2)}, ${Number(target.position?.[1]).toFixed(2)} ±${Number(target.position_error_m || 0).toFixed(2)}m)`).join(', ') : null;
                                 const detail = [`Chunk ${chunk.index + 1}`, chunk.prediction || chunk.state, `${chunk.peopleCount || 0} people`, chunk.labels?.length ? `labels ${chunk.labels.join(', ')}` : null, chunk.activityLabels?.length ? `activity ${chunk.activityLabels.join(', ')}` : null, chunk.detectedFrames == null || chunk.evaluatedFrames == null ? null : `${chunk.detectedFrames} / ${chunk.evaluatedFrames} frames`, chunk.ratio == null ? null : `ratio ${(chunk.ratio * 100).toFixed(1)}%`, `coordinates ${location}`, targetDetail, chunk.score == null ? null : `confidence ${chunk.score}`, chunk.error].filter(Boolean).join(' · ');
-                                return <div key={chunk.index} className="min-w-0 flex-1 text-center" title={detail}><div role="img" tabIndex={0} title={detail} aria-label={detail} className="mx-auto h-3 w-3 rounded-full ring-2 ring-white" style={chunkDotStyle(chunk.state, chunk.ratio, chunk.progress)} /></div>;
+                                return <div key={chunk.index} className="min-w-0 flex-1 text-center" title={detail}><div role="img" tabIndex={0} title={detail} aria-label={detail} className="mx-auto h-3 w-3 rounded-full ring-2 ring-white" style={chunkDotStyle(chunk.state, chunk.classification, chunk.ratio, chunk.progress, settings.yellow_threshold_percent, settings.green_threshold_percent)} /></div>;
                               })}
                           </div>
                         )}
@@ -611,7 +629,7 @@ export default function DevicesPage() {
         ]);
         return {
           id: device.device_uuid,
-          files: Array.isArray(fileRes?.files) ? fileRes.files : [],
+          files: Array.isArray(fileRes?.files) ? fileRes.files.filter((file: DeviceFileSummary) => file.on_device === true) : [],
           settings: normalizeSettings(settingsRes?.capture_settings || device.hardware_info?.capture_settings),
         };
       }));
