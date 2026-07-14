@@ -15,7 +15,7 @@ type User = {
 type AuthContextType = {
   user: User;
   login: (username: string, password: string) => Promise<boolean>;
-  register: (username: string, password: string) => Promise<{ success: boolean; message: string }>;
+  register: (username: string, email: string, password: string) => Promise<{ success: boolean; message: string }>;
   logout: () => void;
   isAuthenticated: boolean;
   isLoading: boolean;
@@ -164,7 +164,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  const register = async (username: string, password: string): Promise<{ success: boolean; message: string }> => {
+  const register = async (username: string, email: string, password: string): Promise<{ success: boolean; message: string }> => {
     setIsLoading(true);
     setError(null);
 
@@ -179,6 +179,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         },
         body: JSON.stringify({
           username,
+          email,
           password
         }),
       });
