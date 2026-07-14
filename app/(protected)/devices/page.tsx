@@ -110,7 +110,7 @@ type LocalMinuteSummary = {
     storagePercent: number;
     predictionPercent: number;
     chunkSeconds?: number | null;
-    chunks: Array<{ index: number; state: 'waiting' | 'collecting' | 'stored' | 'analyzing' | 'occupied' | 'empty' | 'error'; prediction?: string; location?: any; ratio?: number; progress?: number; score?: number; detectedFrames?: number; evaluatedFrames?: number; targetCount?: number; peopleCount?: number; targets?: any[]; labels?: string[]; sleepProximity?: any; join?: any; error?: string }>;
+    chunks: Array<{ index: number; state: 'waiting' | 'collecting' | 'stored' | 'analyzing' | 'occupied' | 'empty' | 'error'; prediction?: string; location?: any; ratio?: number; progress?: number; score?: number; detectedFrames?: number; evaluatedFrames?: number; targetCount?: number; peopleCount?: number; targets?: any[]; labels?: string[]; activityLabels?: string[]; activity?: any; join?: any; error?: string }>;
   };
   completed: boolean;
   state: 'ready' | 'collecting';
@@ -242,7 +242,8 @@ function normalizeProgress(value: any): NonNullable<LocalMinuteSummary['progress
       peopleCount: Number(source.people_count ?? source.peopleCount ?? source.target_count ?? 0),
       targets: Array.isArray(source.targets) ? source.targets : [],
       labels: Array.isArray(source.labels) ? source.labels.map(String) : [],
-      sleepProximity: source.sleep_proximity ?? source.sleepProximity,
+      activityLabels: Array.isArray(source.activity_labels ?? source.activityLabels) ? (source.activity_labels ?? source.activityLabels).map(String) : [],
+      activity: source.activity,
       join: source.join,
       error: source.error == null ? undefined : String(source.error),
     } as NonNullable<LocalMinuteSummary['progress']>['chunks'][number];
@@ -305,7 +306,6 @@ function DevicePanel({
   const [draftVoteChunks, setDraftVoteChunks] = useState(settings.occupancy_vote_chunks);
   const [draftPredictionStyle, setDraftPredictionStyle] = useState(settings.prediction_label_style);
   const [draftPeopleLabels, setDraftPeopleLabels] = useState(settings.people_count_label_enabled);
-  const [draftSleepStudy, setDraftSleepStudy] = useState(settings.sleep_study_enabled);
   const [draftName, setDraftName] = useState(device.device_name || device.device_id);
   const [openMinute, setOpenMinute] = useState<string | null>(null);
 
@@ -324,7 +324,6 @@ function DevicePanel({
     setDraftVoteChunks(settings.occupancy_vote_chunks);
     setDraftPredictionStyle(settings.prediction_label_style);
     setDraftPeopleLabels(settings.people_count_label_enabled);
-    setDraftSleepStudy(settings.sleep_study_enabled);
   }, [settings]);
 
   const saveSettings = async () => {
@@ -339,7 +338,7 @@ function DevicePanel({
       occupancy_vote_chunks: draftVoteChunks,
       prediction_label_style: draftPredictionStyle,
       people_count_label_enabled: draftPeopleLabels,
-      sleep_study_enabled: draftSleepStudy,
+      sleep_study_enabled: false,
       revision: settings.revision,
       updated_at: settings.updated_at,
     });
@@ -440,7 +439,6 @@ function DevicePanel({
               <label className="block text-sm font-medium text-slate-950">Prediction labels<select value={draftPredictionStyle} onChange={(event) => setDraftPredictionStyle(event.target.value as CaptureSettings['prediction_label_style'])} className="mt-2 w-full border border-slate-400 bg-white px-3 py-2"><option value="occupancy">occupied / empty</option><option value="presence">present / absent</option></select></label>
             </div>
             <label className="mt-3 flex items-center justify-between gap-4 border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-950"><span>Add numeric people-count labels</span><input type="checkbox" checked={draftPeopleLabels} onChange={(event) => setDraftPeopleLabels(event.target.checked)} className="h-5 w-5" /></label>
-            <label className="mt-3 flex items-center justify-between gap-4 border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-950"><span>Add sleep-anchor proximity labels</span><input type="checkbox" checked={draftSleepStudy} onChange={(event) => setDraftSleepStudy(event.target.checked)} className="h-5 w-5" /></label>
             <button
               type="button"
               onClick={saveSettings}
@@ -510,7 +508,7 @@ function DevicePanel({
                               {minute.progress.chunks.map((chunk) => {
                                 const location = Array.isArray(chunk.location) ? chunk.location.join(', ') : chunk.location ? `${chunk.location.x ?? '?'}, ${chunk.location.y ?? '?'}` : 'n/a';
                                 const targetDetail = chunk.targets?.length ? chunk.targets.map((target: any) => `T${target.id} (${Number(target.position?.[0]).toFixed(2)}, ${Number(target.position?.[1]).toFixed(2)} ±${Number(target.position_error_m || 0).toFixed(2)}m)`).join(', ') : null;
-                                const detail = [`Chunk ${chunk.index + 1}`, chunk.prediction || chunk.state, `${chunk.peopleCount || 0} people`, chunk.labels?.length ? `labels ${chunk.labels.join(', ')}` : null, chunk.detectedFrames == null || chunk.evaluatedFrames == null ? null : `${chunk.detectedFrames} / ${chunk.evaluatedFrames} frames`, chunk.ratio == null ? null : `ratio ${(chunk.ratio * 100).toFixed(1)}%`, `coordinates ${location}`, targetDetail, chunk.sleepProximity?.nearest_target_m == null ? null : `sleep anchor ${Number(chunk.sleepProximity.nearest_target_m).toFixed(2)}m`, chunk.score == null ? null : `confidence ${chunk.score}`, chunk.error].filter(Boolean).join(' · ');
+                                const detail = [`Chunk ${chunk.index + 1}`, chunk.prediction || chunk.state, `${chunk.peopleCount || 0} people`, chunk.labels?.length ? `labels ${chunk.labels.join(', ')}` : null, chunk.activityLabels?.length ? `activity ${chunk.activityLabels.join(', ')}` : null, chunk.detectedFrames == null || chunk.evaluatedFrames == null ? null : `${chunk.detectedFrames} / ${chunk.evaluatedFrames} frames`, chunk.ratio == null ? null : `ratio ${(chunk.ratio * 100).toFixed(1)}%`, `coordinates ${location}`, targetDetail, chunk.score == null ? null : `confidence ${chunk.score}`, chunk.error].filter(Boolean).join(' · ');
                                 return <div key={chunk.index} className="min-w-0 flex-1 text-center" title={detail}><div role="img" tabIndex={0} title={detail} aria-label={detail} className="mx-auto h-3 w-3 rounded-full ring-2 ring-white" style={chunkDotStyle(chunk.state, chunk.ratio, chunk.progress)} /></div>;
                               })}
                           </div>
