@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useTheme } from '@/contexts/ThemeContext';
 import { useI18n } from '@/contexts/I18nContext';
+import { useApi } from '@/hooks/useApi';
 import {
   User,
   Bell,
@@ -24,6 +25,10 @@ export default function SettingsPage() {
   const { theme, setTheme } = useTheme();
   const { locale, setLocale, localeLabels } = useI18n();
   const [saved, setSaved] = useState(false);
+  const [billingPeriod, setBillingPeriod] = useState<'monthly' | 'annual'>('monthly');
+  const [billingError, setBillingError] = useState('');
+  const [billingLoading, setBillingLoading] = useState('');
+  const { post } = useApi();
   const [settings, setSettings] = useState({
     notifications: {
       email: true,
@@ -57,6 +62,32 @@ export default function SettingsPage() {
         [key]: value,
       },
     }));
+  };
+
+  const openCheckout = async (plan: 'home' | 'pro' | 'research') => {
+    setBillingLoading(plan);
+    setBillingError('');
+    try {
+      const response = await post(`/stripe/create-checkout-session?plan=${plan}&billing_period=${billingPeriod}`, {});
+      if (!response?.url) throw new Error('Stripe did not return a Checkout URL');
+      window.location.assign(response.url);
+    } catch (error) {
+      setBillingError(error instanceof Error ? error.message : 'Unable to open Stripe Checkout');
+      setBillingLoading('');
+    }
+  };
+
+  const openBillingPortal = async () => {
+    setBillingLoading('portal');
+    setBillingError('');
+    try {
+      const response = await post('/stripe/billing-portal', {});
+      if (!response?.url) throw new Error('Stripe did not return a portal URL');
+      window.location.assign(response.url);
+    } catch (error) {
+      setBillingError(error instanceof Error ? error.message : 'Unable to open billing portal');
+      setBillingLoading('');
+    }
   };
 
   return (
@@ -273,57 +304,28 @@ export default function SettingsPage() {
           <div className="flex items-center justify-between p-4 bg-slate-900/50 rounded-lg border border-slate-700">
             <div>
               <h3 className="text-lg font-medium text-white capitalize">{user?.plan || 'Free'}</h3>
-              <p className="text-sm text-slate-400">
-                {user?.plan === 'free' && 'Basic features with limited access'}
-                {user?.plan === 'researcher' && 'Advanced features for individual researchers'}
-                {user?.plan === 'organization' && 'Full features for teams and organizations'}
-              </p>
-            </div>
-            <div className="text-right">
-              <p className="text-2xl font-bold text-white">
-                {user?.plan === 'free' && '$0'}
-                {user?.plan === 'researcher' && '$29'}
-                {user?.plan === 'organization' && '$99'}
-              </p>
-              <p className="text-sm text-slate-400">/month</p>
+              <p className="text-sm text-slate-400">Billing state is synchronized from signed Stripe webhooks.</p>
             </div>
           </div>
-
-          {user?.plan !== 'organization' && (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {user?.plan === 'free' && (
-                <>
-                  <button className="p-4 bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-700 hover:to-indigo-800 rounded-lg border border-indigo-500 text-white transition-all">
-                    <Zap className="w-6 h-6 mb-2" />
-                    <h4 className="font-semibold">Upgrade to Researcher</h4>
-                    <p className="text-sm opacity-90">$29/month</p>
-                    <p className="text-xs mt-2 opacity-75">Advanced research tools</p>
-                  </button>
-                  <button className="p-4 bg-gradient-to-r from-purple-600 to-purple-700 hover:from-purple-700 hover:to-purple-800 rounded-lg border border-purple-500 text-white transition-all">
-                    <Crown className="w-6 h-6 mb-2" />
-                    <h4 className="font-semibold">Upgrade to Organization</h4>
-                    <p className="text-sm opacity-90">$99/month</p>
-                    <p className="text-xs mt-2 opacity-75">Full team features</p>
-                  </button>
-                </>
-              )}
-              {user?.plan === 'researcher' && (
-                <button className="p-4 bg-gradient-to-r from-purple-600 to-purple-700 hover:from-purple-700 hover:to-purple-800 rounded-lg border border-purple-500 text-white transition-all md:col-span-2">
-                  <Crown className="w-6 h-6 mb-2" />
-                  <h4 className="font-semibold">Upgrade to Organization</h4>
-                  <p className="text-sm opacity-90">$99/month</p>
-                  <p className="text-xs mt-2 opacity-75">Full team features & labs</p>
-                </button>
-              )}
-            </div>
-          )}
-
+          <div className="flex gap-2 rounded-lg bg-slate-900/50 p-1">
+            {(['monthly', 'annual'] as const).map((period) => <button key={period} type="button" onClick={() => setBillingPeriod(period)} className={`flex-1 rounded-md px-3 py-2 text-sm font-semibold capitalize ${billingPeriod === period ? 'bg-indigo-600 text-white' : 'text-slate-300'}`}>{period}</button>)}
+          </div>
+          <div className="grid gap-3 md:grid-cols-3">
+            {(['home', 'pro', 'research'] as const).map((plan) => (
+              <button key={plan} type="button" disabled={Boolean(billingLoading)} onClick={() => openCheckout(plan)} className="rounded-lg border border-indigo-500 bg-indigo-700 p-4 text-left text-white transition hover:bg-indigo-600 disabled:opacity-60">
+                {plan === 'research' ? <Crown className="mb-2 h-5 w-5" /> : <Zap className="mb-2 h-5 w-5" />}
+                <h4 className="font-semibold capitalize">{billingLoading === plan ? 'Opening…' : plan}</h4>
+                <p className="mt-1 text-xs opacity-80">Price and applicable discount shown securely by Stripe.</p>
+              </button>
+            ))}
+          </div>
           {user?.plan !== 'free' && (
-            <button className="w-full p-3 bg-slate-700 hover:bg-slate-600 rounded-lg text-slate-300 transition-colors flex items-center justify-center gap-2">
+            <button type="button" onClick={openBillingPortal} disabled={Boolean(billingLoading)} className="w-full p-3 bg-slate-700 hover:bg-slate-600 rounded-lg text-slate-300 transition-colors flex items-center justify-center gap-2 disabled:opacity-60">
               <CreditCard className="w-4 h-4" />
-              Manage Billing
+              {billingLoading === 'portal' ? 'Opening…' : 'Manage Billing in Stripe'}
             </button>
           )}
+          {billingError && <p role="alert" className="text-sm font-semibold text-red-400">{billingError}</p>}
         </div>
       </div>
 

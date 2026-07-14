@@ -324,8 +324,9 @@ export default function AdminDashboard() {
                     className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded text-white"
                   >
                     <option value="free">Free</option>
-                    <option value="researcher">Researcher</option>
-                    <option value="organization">Organization</option>
+                    <option value="home">Home</option>
+                    <option value="pro">Pro</option>
+                    <option value="research">Research</option>
                   </select>
                 </div>
                 <div>

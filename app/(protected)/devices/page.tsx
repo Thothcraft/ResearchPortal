@@ -297,7 +297,7 @@ function DevicePanel({
   files: DeviceFileSummary[];
   minutes: LocalMinuteSummary[];
   settings: CaptureSettings;
-  onSaveSettings: (deviceId: string, settings: CaptureSettings) => Promise<void>;
+  onSaveSettings: (deviceId: string, settings: CaptureSettings) => Promise<CaptureSettings>;
   onDownloadCloudFile: (fileId: number, filename?: string) => Promise<void>;
   onDownloadMinute: (minute: string, deviceId: string) => Promise<void>;
   onUploadMinute: (minute: string, deviceId: string) => Promise<void>;
@@ -321,6 +321,8 @@ function DevicePanel({
   const [draftPeopleLabels, setDraftPeopleLabels] = useState(settings.people_count_label_enabled);
   const [draftName, setDraftName] = useState(device.device_name || device.device_id);
   const [openMinute, setOpenMinute] = useState<string | null>(null);
+  const [settingsStatus, setSettingsStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  const [settingsError, setSettingsError] = useState('');
 
   const matchedMinutes = useMemo(() => {
     return minutes.filter((minute) => matchesDevice(device, minute));
@@ -342,7 +344,11 @@ function DevicePanel({
   }, [settings]);
 
   const saveSettings = async () => {
-    await onSaveSettings(device.device_uuid, {
+    if (draftYellowThreshold >= draftGreenThreshold) return;
+    setSettingsStatus('saving');
+    setSettingsError('');
+    try {
+      const canonical = await onSaveSettings(device.device_uuid, {
       labels: draftLabel.split(',').map((label) => label.trim()).filter(Boolean),
       sensors: { ...DEFAULT_SENSORS, ...draftSensors },
       radar_detection_threshold_db: draftRadarThreshold,
@@ -359,7 +365,15 @@ function DevicePanel({
       calibrations: settings.calibrations || {},
       revision: settings.revision,
       updated_at: settings.updated_at,
-    });
+      });
+      setDraftRadarThreshold(canonical.radar_detection_threshold_db);
+      setDraftYellowThreshold(canonical.yellow_threshold_percent);
+      setDraftGreenThreshold(canonical.green_threshold_percent);
+      setSettingsStatus('saved');
+    } catch (error) {
+      setSettingsStatus('error');
+      setSettingsError(error instanceof Error ? error.message : 'Unable to save settings');
+    }
   };
 
   return (
@@ -462,8 +476,11 @@ function DevicePanel({
               disabled={draftYellowThreshold >= draftGreenThreshold}
               className="mt-5 w-full bg-slate-950 px-4 py-3 text-sm font-semibold text-white hover:bg-slate-800"
             >
-              Apply to current and next minutes
+              {settingsStatus === 'saving' ? 'Saving…' : 'Apply to current and next minutes'}
             </button>
+            <div role="status" aria-live="polite" className={`mt-2 min-h-5 text-xs font-semibold ${settingsStatus === 'error' ? 'text-red-700' : 'text-emerald-700'}`}>
+              {settingsStatus === 'saved' ? 'Saved and verified with Brain.' : settingsError}
+            </div>
             <div className="mt-5">
               <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-slate-950">
                 <Activity className="h-4 w-4" />
@@ -689,8 +706,12 @@ export default function DevicesPage() {
   const saveSettings = async (deviceId: string, nextSettings: CaptureSettings) => {
     const response = await put(`/device/${deviceId}/capture-settings`, nextSettings);
     if (!response?.success) throw new Error(response?.message || 'Unable to save settings');
-    setSettings((current) => ({ ...current, [deviceId]: normalizeSettings(response.capture_settings) }));
+    const readback = await get(`/device/${deviceId}/capture-settings`);
+    const canonical = normalizeSettings(readback?.capture_settings || response.capture_settings);
+    if (canonical.revision <= nextSettings.revision) throw new Error('Brain did not persist a new settings revision');
+    setSettings((current) => ({ ...current, [deviceId]: canonical }));
     toast.success('Saved', 'The device will apply processing changes at the next chunk boundary');
+    return canonical;
   };
 
   const renameDevice = async (deviceId: string, name: string) => {
@@ -702,10 +723,18 @@ export default function DevicesPage() {
   };
 
   const removeDevice = async (deviceId: string) => {
-    if (!window.confirm('Remove this device from the portal? Collected files will not be deleted.')) return;
-    await del(`/device/${deviceId}`);
+    const device = devices.find((item) => item.device_uuid === deviceId);
+    const name = device?.device_name || deviceId;
+    const choice = window.prompt(`Type DETACH to remove ${name} while retaining uploaded cloud files.\n\nType ERASE ${name} to permanently erase its settings, live history, credentials, and cloud captures.`);
+    if (!choice) return;
+    const mode = choice === 'DETACH' ? 'detach' : choice === `ERASE ${name}` ? 'erase' : null;
+    if (!mode) {
+      toast.error('Confirmation did not match', 'No device data was changed.');
+      return;
+    }
+    await del(`/device/${deviceId}?mode=${mode}&confirmation=${encodeURIComponent(choice)}`);
     setDevices((current) => current.filter((device) => device.device_uuid !== deviceId));
-    toast.success('Device removed');
+    toast.success(mode === 'erase' ? 'Device permanently erased' : 'Device detached');
   };
 
   const downloadFromUrl = useCallback(async (url: string, fallbackName: string) => {
