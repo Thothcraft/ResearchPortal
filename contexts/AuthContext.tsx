@@ -24,6 +24,22 @@ type AuthContextType = {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+function decodeTokenPayload(token: string): Record<string, any> | null {
+  try {
+    const encoded = token.split('.')[1];
+    if (!encoded) return null;
+    const normalized = encoded.replace(/-/g, '+').replace(/_/g, '/').padEnd(Math.ceil(encoded.length / 4) * 4, '=');
+    return JSON.parse(atob(normalized));
+  } catch {
+    return null;
+  }
+}
+
+function tokenIsExpired(token: string): boolean {
+  const expires = Number(decodeTokenPayload(token)?.exp);
+  return Number.isFinite(expires) && expires * 1000 <= Date.now();
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -36,7 +52,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const token = localStorage.getItem('auth_token');
       const userStr = localStorage.getItem('user');
 
-      if (token && userStr) {
+      if (token && tokenIsExpired(token)) {
+        localStorage.removeItem('auth_token');
+        localStorage.removeItem('user');
+      } else if (token && userStr) {
         try {
           const userData = JSON.parse(userStr);
           setUser({ ...userData, token });
@@ -83,12 +102,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       console.log('Login response:', { status: response.status, data });
       
       // Temporary workaround for production backend missing role field
-      if (data.access_token && !data.role) {
+      if (data.access_token && data.role == null) {
         // Try to decode JWT to get role
         try {
-          const tokenParts = data.access_token.split('.');
-          if (tokenParts.length === 3) {
-            const payload = JSON.parse(atob(tokenParts[1]));
+          const payload = decodeTokenPayload(data.access_token);
+          if (payload) {
             data.role = payload.role;
             console.log('Extracted role from token:', data.role);
           }
@@ -120,7 +138,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const userData = {
         username,
         token: data.access_token,
-        role: data.role || 0,  // Default to user role if not provided
+        role: data.role ?? 0,  // Default to user role if not provided
         plan: data.plan || null,
         org_name: data.org_name || null,
         userId: data.user_id,

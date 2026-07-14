@@ -110,6 +110,8 @@ html {
 /* Transitions */
 * { transition-timing-function: cubic-bezier(0.25, 0.1, 0.25, 1); box-sizing: border-box; }
 
+.portal-main .action-primary,.portal-main button.bg-slate-950,.portal-main a.bg-slate-950{background:#11110f!important;color:#fff!important;border-color:#11110f!important}.portal-main .action-primary:hover,.portal-main button.bg-slate-950:hover,.portal-main a.bg-slate-950:hover{background:#292925!important;color:#fff!important}
+
 /* Editorial portal shell */
 :root{--bg-primary:#f4f1e9;--bg-secondary:#ece8de;--bg-card:#faf8f2;--bg-accent:#c8d1b2;--bg-accent-dim:#e2e6d8;--text-primary:#11110f;--text-secondary:#5b5953;--text-muted:#77736b;--border-color:#c9c4b9;--accent:#11110f;--accent-hover:#34342f;--shadow-light:transparent;--shadow-medium:transparent}
 body{font-family:Inter,"Helvetica Neue",Arial,sans-serif;background:#f4f1e9;letter-spacing:-.01em}

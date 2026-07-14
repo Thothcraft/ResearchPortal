@@ -3,6 +3,19 @@ import { useCallback, useRef } from 'react';
 
 export type ApiError = Error & { status?: number };
 
+function tokenIsExpired(token: string | null): boolean {
+  if (!token) return true;
+  try {
+    const encoded = token.split('.')[1];
+    if (!encoded) return false;
+    const normalized = encoded.replace(/-/g, '+').replace(/_/g, '/').padEnd(Math.ceil(encoded.length / 4) * 4, '=');
+    const expires = Number(JSON.parse(atob(normalized))?.exp);
+    return Number.isFinite(expires) && expires * 1000 <= Date.now();
+  } catch {
+    return false;
+  }
+}
+
 export const useApi = () => {
   const { user } = useAuth();
   const apiBaseUrl = '/api/proxy';
@@ -30,11 +43,17 @@ export const useApi = () => {
   const handleResponse = useCallback(async (response: Response) => {
     if (!response.ok) {
       if (response.status === 401) {
-        // Token might be expired, clear auth and redirect to login
-        localStorage.removeItem('auth_token');
-        localStorage.removeItem('user');
-        window.location.href = '/auth';
-        return null;
+        // Polling endpoints can transiently return 401 while the backend is
+        // restarting. Only end the browser session when the JWT itself expired.
+        const token = localStorage.getItem('auth_token');
+        if (tokenIsExpired(token)) {
+          localStorage.removeItem('auth_token');
+          localStorage.removeItem('user');
+          window.location.href = '/auth';
+        }
+        const unauthorized = new Error('Request was unauthorized; your session was retained.') as ApiError;
+        unauthorized.status = 401;
+        throw unauthorized;
       }
 
       const errorData = await response.json().catch(() => ({}));

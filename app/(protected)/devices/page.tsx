@@ -33,6 +33,12 @@ type CaptureSettings = {
   radar_detection_threshold_db: number;
   occupancy_threshold_percent: number;
   auto_occupancy_label_enabled: boolean;
+  chunk_seconds: number;
+  system_mode: 'responsive' | 'balanced' | 'precision';
+  occupancy_vote_chunks: number;
+  prediction_label_style: 'occupancy' | 'presence';
+  people_count_label_enabled: boolean;
+  sleep_study_enabled: boolean;
   revision: number;
   updated_at?: string | null;
 };
@@ -104,7 +110,7 @@ type LocalMinuteSummary = {
     storagePercent: number;
     predictionPercent: number;
     chunkSeconds?: number | null;
-    chunks: Array<{ index: number; state: 'waiting' | 'collecting' | 'stored' | 'analyzing' | 'occupied' | 'empty' | 'error'; prediction?: string; location?: any; ratio?: number; score?: number; detectedFrames?: number; evaluatedFrames?: number; error?: string }>;
+    chunks: Array<{ index: number; state: 'waiting' | 'collecting' | 'stored' | 'analyzing' | 'occupied' | 'empty' | 'error'; prediction?: string; location?: any; ratio?: number; progress?: number; score?: number; detectedFrames?: number; evaluatedFrames?: number; targetCount?: number; peopleCount?: number; targets?: any[]; labels?: string[]; sleepProximity?: any; join?: any; error?: string }>;
   };
   completed: boolean;
   state: 'ready' | 'collecting';
@@ -193,6 +199,12 @@ function normalizeSettings(value?: CaptureSettings | null): CaptureSettings {
     radar_detection_threshold_db: Number(value?.radar_detection_threshold_db ?? 8),
     occupancy_threshold_percent: Number(value?.occupancy_threshold_percent ?? 50),
     auto_occupancy_label_enabled: value?.auto_occupancy_label_enabled !== false,
+    chunk_seconds: Math.min(30, Math.max(2, Number(value?.chunk_seconds ?? 10))),
+    system_mode: value?.system_mode === 'responsive' || value?.system_mode === 'precision' ? value.system_mode : 'balanced',
+    occupancy_vote_chunks: Math.min(60, Math.max(1, Math.floor(Number(value?.occupancy_vote_chunks ?? 1)))),
+    prediction_label_style: value?.prediction_label_style === 'presence' ? 'presence' : 'occupancy',
+    people_count_label_enabled: value?.people_count_label_enabled === true,
+    sleep_study_enabled: value?.sleep_study_enabled === true,
     revision: Number(value?.revision || 0),
     updated_at: value?.updated_at || null,
   };
@@ -212,7 +224,8 @@ function labelsForFile(file: DeviceFileSummary): string[] {
 function normalizeProgress(value: any): NonNullable<LocalMinuteSummary['progress']> {
   const allowedStates = new Set(['waiting', 'collecting', 'stored', 'analyzing', 'occupied', 'empty', 'error']);
   const sourceChunks = Array.isArray(value?.chunks) ? value.chunks : [];
-  const chunks = Array.from({ length: 6 }, (_, index) => {
+  const expectedChunks = Math.max(1, Math.floor(Number(value?.expected_chunks ?? value?.expectedChunks ?? sourceChunks.length) || 6));
+  const chunks = Array.from({ length: expectedChunks }, (_, index) => {
     const source = sourceChunks.find((chunk: any) => Number(chunk?.index) === index) || {};
     const state = allowedStates.has(String(source.state)) ? source.state : 'waiting';
     return {
@@ -221,14 +234,21 @@ function normalizeProgress(value: any): NonNullable<LocalMinuteSummary['progress
       prediction: source.prediction == null ? undefined : String(source.prediction),
       location: source.location,
       ratio: source.ratio == null ? undefined : Number(source.ratio),
+      progress: source.progress == null ? undefined : Number(source.progress),
       score: source.score == null ? undefined : Number(source.score),
       detectedFrames: source.detected_frames == null ? source.detectedFrames : Number(source.detected_frames),
       evaluatedFrames: source.evaluated_frames == null ? source.evaluatedFrames : Number(source.evaluated_frames),
+      targetCount: Number(source.target_count ?? source.targetCount ?? 0),
+      peopleCount: Number(source.people_count ?? source.peopleCount ?? source.target_count ?? 0),
+      targets: Array.isArray(source.targets) ? source.targets : [],
+      labels: Array.isArray(source.labels) ? source.labels.map(String) : [],
+      sleepProximity: source.sleep_proximity ?? source.sleepProximity,
+      join: source.join,
       error: source.error == null ? undefined : String(source.error),
     } as NonNullable<LocalMinuteSummary['progress']>['chunks'][number];
   });
   return {
-    expectedChunks: 6,
+    expectedChunks,
     storedChunks: Number(value?.stored_chunks ?? value?.storedChunks ?? 0),
     analyzedChunks: Number(value?.analyzed_chunks ?? value?.analyzedChunks ?? 0),
     storagePercent: Number(value?.storage_percent ?? value?.storagePercent ?? 0),
@@ -236,6 +256,17 @@ function normalizeProgress(value: any): NonNullable<LocalMinuteSummary['progress
     chunkSeconds: Number(value?.chunk_seconds ?? value?.chunkSeconds ?? 10),
     chunks,
   };
+}
+
+function chunkDotStyle(state: string, ratioValue?: number, progressValue?: number) {
+  const ratio = Math.max(0, Math.min(1, Number(ratioValue) || 0));
+  const progress = Math.max(0, Math.min(1, Number(progressValue) || 0));
+  const background = state === 'occupied' ? `hsl(145 72% ${82 - ratio * 44}%)`
+    : state === 'empty' ? `hsl(4 78% ${44 + ratio * 40}%)`
+      : state === 'collecting' ? `hsl(217 88% ${82 - progress * 38}%)`
+        : ['stored', 'analyzing'].includes(state) ? `hsl(190 82% ${80 - progress * 35}%)`
+          : state === 'error' ? 'hsl(38 92% 52%)' : 'hsl(215 16% 78%)';
+  return { background, boxShadow: `0 0 0 1px color-mix(in srgb, ${background} 55%, transparent)`, transition: 'background-color .45s ease, box-shadow .45s ease' };
 }
 
 function DevicePanel({
@@ -269,6 +300,12 @@ function DevicePanel({
   const [draftRadarThreshold, setDraftRadarThreshold] = useState(settings.radar_detection_threshold_db);
   const [draftOccupancyThreshold, setDraftOccupancyThreshold] = useState(settings.occupancy_threshold_percent);
   const [draftAutoLabel, setDraftAutoLabel] = useState(settings.auto_occupancy_label_enabled);
+  const [draftChunkSeconds, setDraftChunkSeconds] = useState(settings.chunk_seconds);
+  const [draftSystemMode, setDraftSystemMode] = useState(settings.system_mode);
+  const [draftVoteChunks, setDraftVoteChunks] = useState(settings.occupancy_vote_chunks);
+  const [draftPredictionStyle, setDraftPredictionStyle] = useState(settings.prediction_label_style);
+  const [draftPeopleLabels, setDraftPeopleLabels] = useState(settings.people_count_label_enabled);
+  const [draftSleepStudy, setDraftSleepStudy] = useState(settings.sleep_study_enabled);
   const [draftName, setDraftName] = useState(device.device_name || device.device_id);
   const [openMinute, setOpenMinute] = useState<string | null>(null);
 
@@ -282,6 +319,12 @@ function DevicePanel({
     setDraftRadarThreshold(settings.radar_detection_threshold_db);
     setDraftOccupancyThreshold(settings.occupancy_threshold_percent);
     setDraftAutoLabel(settings.auto_occupancy_label_enabled);
+    setDraftChunkSeconds(settings.chunk_seconds);
+    setDraftSystemMode(settings.system_mode);
+    setDraftVoteChunks(settings.occupancy_vote_chunks);
+    setDraftPredictionStyle(settings.prediction_label_style);
+    setDraftPeopleLabels(settings.people_count_label_enabled);
+    setDraftSleepStudy(settings.sleep_study_enabled);
   }, [settings]);
 
   const saveSettings = async () => {
@@ -291,6 +334,12 @@ function DevicePanel({
       radar_detection_threshold_db: draftRadarThreshold,
       occupancy_threshold_percent: draftOccupancyThreshold,
       auto_occupancy_label_enabled: draftAutoLabel,
+      chunk_seconds: draftChunkSeconds,
+      system_mode: draftSystemMode,
+      occupancy_vote_chunks: draftVoteChunks,
+      prediction_label_style: draftPredictionStyle,
+      people_count_label_enabled: draftPeopleLabels,
+      sleep_study_enabled: draftSleepStudy,
       revision: settings.revision,
       updated_at: settings.updated_at,
     });
@@ -337,7 +386,7 @@ function DevicePanel({
               Ongoing collection
             </div>
             <label className="block text-sm font-medium text-slate-950">
-              Current label
+              Preset labels
               <input
                 value={draftLabel}
                 onChange={(event) => setDraftLabel(event.target.value)}
@@ -376,6 +425,22 @@ function DevicePanel({
                 <output className="w-16 text-right font-mono text-xs">{draftOccupancyThreshold.toFixed(0)}%</output>
               </div>
             </label>
+            <div className="mt-5 grid grid-cols-2 gap-3">
+              <label className="block text-sm font-medium text-slate-950">Seconds per chunk
+                <input type="number" min="2" max="30" step="0.5" value={draftChunkSeconds} onChange={(event) => setDraftChunkSeconds(Math.min(30, Math.max(2, Number(event.target.value) || 10)))} className="mt-2 w-full border border-slate-400 bg-white px-3 py-2" />
+              </label>
+              <label className="block text-sm font-medium text-slate-950">System mode
+                <select value={draftSystemMode} onChange={(event) => setDraftSystemMode(event.target.value as CaptureSettings['system_mode'])} className="mt-2 w-full border border-slate-400 bg-white px-3 py-2">
+                  <option value="responsive">Responsive</option><option value="balanced">Balanced</option><option value="precision">Precision</option>
+                </select>
+              </label>
+            </div>
+            <div className="mt-5 grid grid-cols-2 gap-3">
+              <label className="block text-sm font-medium text-slate-950">Chunks required for minute vote<input type="number" min="1" max="60" step="1" value={draftVoteChunks} onChange={(event) => setDraftVoteChunks(Math.min(60, Math.max(1, Math.floor(Number(event.target.value) || 1))))} className="mt-2 w-full border border-slate-400 bg-white px-3 py-2" /></label>
+              <label className="block text-sm font-medium text-slate-950">Prediction labels<select value={draftPredictionStyle} onChange={(event) => setDraftPredictionStyle(event.target.value as CaptureSettings['prediction_label_style'])} className="mt-2 w-full border border-slate-400 bg-white px-3 py-2"><option value="occupancy">occupied / empty</option><option value="presence">present / absent</option></select></label>
+            </div>
+            <label className="mt-3 flex items-center justify-between gap-4 border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-950"><span>Add numeric people-count labels</span><input type="checkbox" checked={draftPeopleLabels} onChange={(event) => setDraftPeopleLabels(event.target.checked)} className="h-5 w-5" /></label>
+            <label className="mt-3 flex items-center justify-between gap-4 border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-950"><span>Add sleep-anchor proximity labels</span><input type="checkbox" checked={draftSleepStudy} onChange={(event) => setDraftSleepStudy(event.target.checked)} className="h-5 w-5" /></label>
             <button
               type="button"
               onClick={saveSettings}
@@ -442,11 +507,11 @@ function DevicePanel({
                         </div>
                         {minute.progress && (
                           <div className="mt-3 flex max-w-xl items-start gap-2" aria-label="Chunk timeline">
-                              {minute.progress.chunks.slice(0, 6).map((chunk) => {
-                                const color = chunk.state === 'occupied' ? 'bg-emerald-500' : chunk.state === 'empty' ? 'bg-red-500' : chunk.state === 'collecting' ? 'animate-pulse bg-blue-500' : ['stored', 'analyzing'].includes(chunk.state) ? 'animate-pulse bg-cyan-500' : chunk.state === 'error' ? 'bg-amber-500' : 'bg-slate-300';
+                              {minute.progress.chunks.map((chunk) => {
                                 const location = Array.isArray(chunk.location) ? chunk.location.join(', ') : chunk.location ? `${chunk.location.x ?? '?'}, ${chunk.location.y ?? '?'}` : 'n/a';
-                                const detail = [`Chunk ${chunk.index + 1}`, chunk.prediction || chunk.state, chunk.detectedFrames == null || chunk.evaluatedFrames == null ? null : `${chunk.detectedFrames} / ${chunk.evaluatedFrames} frames`, chunk.ratio == null ? null : `ratio ${(chunk.ratio * 100).toFixed(1)}%`, `coordinates ${location}`, chunk.score == null ? null : `confidence ${chunk.score}`, chunk.error].filter(Boolean).join(' · ');
-                                return <div key={chunk.index} className="min-w-0 flex-1 text-center" title={detail}><div role="img" tabIndex={0} title={detail} aria-label={detail} className={`mx-auto h-3 w-3 rounded-full ring-2 ring-white ${color}`} /></div>;
+                                const targetDetail = chunk.targets?.length ? chunk.targets.map((target: any) => `T${target.id} (${Number(target.position?.[0]).toFixed(2)}, ${Number(target.position?.[1]).toFixed(2)} ±${Number(target.position_error_m || 0).toFixed(2)}m)`).join(', ') : null;
+                                const detail = [`Chunk ${chunk.index + 1}`, chunk.prediction || chunk.state, `${chunk.peopleCount || 0} people`, chunk.labels?.length ? `labels ${chunk.labels.join(', ')}` : null, chunk.detectedFrames == null || chunk.evaluatedFrames == null ? null : `${chunk.detectedFrames} / ${chunk.evaluatedFrames} frames`, chunk.ratio == null ? null : `ratio ${(chunk.ratio * 100).toFixed(1)}%`, `coordinates ${location}`, targetDetail, chunk.sleepProximity?.nearest_target_m == null ? null : `sleep anchor ${Number(chunk.sleepProximity.nearest_target_m).toFixed(2)}m`, chunk.score == null ? null : `confidence ${chunk.score}`, chunk.error].filter(Boolean).join(' · ');
+                                return <div key={chunk.index} className="min-w-0 flex-1 text-center" title={detail}><div role="img" tabIndex={0} title={detail} aria-label={detail} className="mx-auto h-3 w-3 rounded-full ring-2 ring-white" style={chunkDotStyle(chunk.state, chunk.ratio, chunk.progress)} /></div>;
                               })}
                           </div>
                         )}
@@ -463,12 +528,13 @@ function DevicePanel({
                       <div className="grid w-full gap-2 sm:flex sm:w-auto sm:flex-wrap">
                         <button
                           type="button"
-                          onClick={() => onUploadMinute(minute.minute, device.device_uuid).then(() => setOpenMinute(minute.minute)).catch((error) => window.alert(error instanceof Error ? error.message : 'Upload request failed'))}
-                          className="inline-flex items-center justify-center gap-2 rounded-lg border border-cyan-700 bg-cyan-50 px-3 py-2 text-sm font-semibold text-cyan-950 hover:bg-cyan-100"
+                          onClick={() => setOpenMinute(minute.minute)}
+                          className="inline-flex items-center justify-center gap-2 rounded-lg border border-slate-950 bg-slate-950 px-3 py-2 text-sm font-semibold text-white hover:bg-slate-800"
                         >
                           <BarChart3 className="h-4 w-4" />
-                          Upload and view
+                          View predictions
                         </button>
+                        {!minute.uploaded && <button type="button" onClick={() => onUploadMinute(minute.minute, device.device_uuid).catch((error) => window.alert(error instanceof Error ? error.message : 'Upload request failed'))} className="inline-flex items-center justify-center gap-2 rounded-lg border border-cyan-700 bg-cyan-50 px-3 py-2 text-sm font-semibold text-cyan-950 hover:bg-cyan-100"><FolderOpen className="h-4 w-4"/>Upload files</button>}
                         {fileCount > 0 && (
                           <button
                             type="button"
@@ -535,14 +601,15 @@ export default function DevicesPage() {
     if (authLoading || !user?.token) return;
     if (showLoading) setLoading(true);
     try {
-      const deviceRes = await get('/device/list?include_offline=true').catch(() => ({ devices: [] }));
+      const deviceRes = await get('/device/list?include_offline=true').catch(() => null);
+      if (!deviceRes) return;
       const remoteDevices = Array.isArray(deviceRes?.devices) ? deviceRes.devices : [];
       setDevices(remoteDevices);
 
       const entries = await Promise.all(remoteDevices.map(async (device: Device) => {
         const [fileRes, settingsRes] = await Promise.all([
           get(`/device/${device.device_uuid}/files`).catch(() => ({ files: [] })),
-          get(`/device/${device.device_uuid}/capture-settings`).catch(() => null),
+          showLoading ? get(`/device/${device.device_uuid}/capture-settings`).catch(() => null) : Promise.resolve(null),
         ]);
         return {
           id: device.device_uuid,
@@ -574,7 +641,10 @@ export default function DevicesPage() {
           dataFiles: [{ filename: file.filename, relativePath: file.filename, path: '', size: Number(file.size || 0), modified: file.modified_at || '', contentType: 'capture/minute' }],
         };
       })));
-      setSettings(Object.fromEntries(entries.map((entry) => [entry.id, entry.settings])));
+      setSettings((current) => Object.fromEntries(entries.map((entry) => {
+        const previous = current[entry.id];
+        return [entry.id, previous && previous.revision >= entry.settings.revision ? previous : entry.settings];
+      })));
     } catch (err) {
       toast.error('Load failed', err instanceof Error ? err.message : 'Unable to load devices');
     } finally {

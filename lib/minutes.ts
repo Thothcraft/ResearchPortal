@@ -205,7 +205,7 @@ function getMinuteProgress(paths: ReturnType<typeof getMinutePaths>, manifest: a
   const radarBins = Array.isArray(paths.radarBins) ? paths.radarBins : [];
   const radarCsvs = Array.isArray(paths.radarCsvs) ? paths.radarCsvs : [];
   const predictions = paths.predictions && fs.existsSync(paths.predictions) ? readJsonPreview(paths.predictions) : null;
-  const expectedChunks = Math.max(6, Number(manifest?.expected_chunks || 0) || radarBins.length || radarCsvs.length || (Array.isArray(predictions?.timeline) ? predictions.timeline.length : 0));
+  const expectedChunks = Math.max(1, Number(manifest?.expected_chunks || 0) || radarBins.length || radarCsvs.length || (Array.isArray(predictions?.timeline) ? predictions.timeline.length : 0) || 6);
   const storedChunks = Math.min(radarBins.length, radarCsvs.length);
   const analyzedChunks = Array.isArray(predictions?.timeline) ? predictions.timeline.length : 0;
   const predictionByIndex = new Map<number, any>((predictions?.timeline || []).map((entry: any): [number, any] => [Number(entry?.chunk_index), entry]));

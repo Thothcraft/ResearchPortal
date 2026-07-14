@@ -6,6 +6,13 @@ import { useAuth } from '@/contexts/AuthContext';
 
 type Asset = { file_id: number; filename: string; kind?: string; content_type?: string };
 
+function chunkDotStyle(state: string, ratioValue?: number, progressValue?: number) {
+  const ratio = Math.max(0, Math.min(1, Number(ratioValue) || 0));
+  const progress = Math.max(0, Math.min(1, Number(progressValue) || 0));
+  const background = state === 'occupied' ? `hsl(145 72% ${82 - ratio * 44}%)` : state === 'empty' ? `hsl(4 78% ${44 + ratio * 40}%)` : state === 'collecting' ? `hsl(217 88% ${82 - progress * 38}%)` : ['stored', 'analyzing'].includes(state) ? `hsl(190 82% ${80 - progress * 35}%)` : state === 'error' ? 'hsl(38 92% 52%)' : 'hsl(215 16% 78%)';
+  return { background, boxShadow: `0 0 0 1px color-mix(in srgb, ${background} 55%, transparent)`, transition: 'background-color .45s ease, box-shadow .45s ease' };
+}
+
 function frameImage(frame: any, fallback: any) {
   if (Array.isArray(frame?.z)) return frame.z;
   if (!Array.isArray(frame?.z_shape) || !Array.isArray(frame?.z_sparse)) return fallback;
@@ -49,7 +56,30 @@ function Heatmap({ payload, tracking = false }: { payload: any; tracking?: boole
       ctx.fillStyle = `hsl(${240 - t * 240} 90% 50%)`;
       ctx.fillRect(x * canvas.width / cols, y * canvas.height / rows, canvas.width / cols + 1, canvas.height / rows + 1);
     }));
-  }, [latest, payload]);
+    if (tracking) {
+      const room = payload?.room || {};
+      const width = Number(room.width_m) || Number(payload?.x?.at?.(-1)) || 1;
+      const depth = Number(room.depth_m) || Number(payload?.y?.at?.(-1)) || 1;
+      const point = (x: number, y: number) => [x * canvas.width / width, canvas.height - y * canvas.height / depth];
+      ctx.strokeStyle = '#e2e8f0'; ctx.lineWidth = 3; ctx.strokeRect(1, 1, canvas.width - 2, canvas.height - 2);
+      const cones = Array.isArray(room.radar_cones) && room.radar_cones.length ? room.radar_cones : [{ wall: room.sensor_wall || 'Back', position_m: room.sensor_position_m || width / 2, horizontal_deg: 40, range_m: 15 }];
+      cones.filter((cone: any) => cone.enabled !== false).forEach((cone: any) => {
+        const wall = cone.wall || 'Back', position = Number(cone.position_m || 0);
+        const origin = wall === 'Back' ? [position, 0] : wall === 'Front' ? [position, depth] : wall === 'Left' ? [0, position] : [width, position];
+        const heading = wall === 'Back' ? 90 : wall === 'Front' ? -90 : wall === 'Left' ? 0 : 180;
+        const center = (heading + Number(cone.azimuth_deg || 0)) * Math.PI / 180;
+        const half = Number(cone.horizontal_deg || 40) * Math.PI / 360, range = Number(cone.range_m || 15);
+        const ends = [-half, half].map((offset) => [origin[0] + Math.cos(center + offset) * range, origin[1] + Math.sin(center + offset) * range]);
+        const o = point(origin[0], origin[1]), a = point(ends[0][0], ends[0][1]), b = point(ends[1][0], ends[1][1]);
+        ctx.beginPath(); ctx.moveTo(o[0], o[1]); ctx.lineTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.closePath(); ctx.fillStyle = 'rgba(34,211,238,.14)'; ctx.fill(); ctx.strokeStyle = '#22d3ee'; ctx.stroke();
+      });
+      (room.furniture || []).forEach((item: any) => { const a = point(Number(item.x || 0), Number(item.y || 0) + Number(item.depth || .8)); const b = point(Number(item.x || 0) + Number(item.width || .8), Number(item.y || 0)); ctx.fillStyle = 'rgba(168,162,158,.35)'; ctx.fillRect(a[0], a[1], b[0] - a[0], b[1] - a[1]); });
+      (room.zones || []).forEach((zone: any) => { const a = point(Number(zone.x || 0), Number(zone.y || 0) + Number(zone.depth || 1)); const b = point(Number(zone.x || 0) + Number(zone.width || 1), Number(zone.y || 0)); ctx.fillStyle = `${zone.color || '#22c55e'}22`; ctx.fillRect(a[0], a[1], b[0] - a[0], b[1] - a[1]); ctx.strokeStyle = zone.color || '#22c55e'; ctx.lineWidth = 2; ctx.strokeRect(a[0], a[1], b[0] - a[0], b[1] - a[1]); ctx.fillStyle = zone.color || '#22c55e'; ctx.font = 'bold 14px sans-serif'; ctx.fillText(String(zone.label || 'Zone'), a[0] + 7, a[1] + 18); });
+      if (room.sleep_anchor) { const anchor = point(Number(room.sleep_anchor.x || 0), Number(room.sleep_anchor.y || 0)); ctx.beginPath(); ctx.arc(anchor[0], anchor[1], Math.max(7, Number(room.sleep_anchor.radius_m || 1) * canvas.width / width), 0, Math.PI * 2); ctx.fillStyle = 'rgba(168,85,247,.14)'; ctx.fill(); ctx.strokeStyle = '#a855f7'; ctx.lineWidth = 2; ctx.stroke(); }
+      const targets = Array.isArray(latest?.targets) ? latest.targets : [];
+      targets.forEach((target: any) => { const position = target?.position || []; if (!Number.isFinite(Number(position[0])) || !Number.isFinite(Number(position[1]))) return; const p = point(Number(position[0]), Number(position[1])); const error = Number(target.position_error_m || 0); ctx.beginPath(); ctx.arc(p[0], p[1], Math.max(7, error * canvas.width / width), 0, Math.PI * 2); ctx.fillStyle = 'rgba(239,68,68,.24)'; ctx.fill(); ctx.strokeStyle = '#ef4444'; ctx.lineWidth = 3; ctx.stroke(); ctx.fillStyle = '#fff'; ctx.font = 'bold 18px sans-serif'; ctx.fillText(`T${target.id} ${Number(position[0]).toFixed(2)},${Number(position[1]).toFixed(2)} ±${error.toFixed(2)}m`, p[0] + 10, p[1] - 10); });
+    }
+  }, [latest, payload, tracking]);
   useEffect(() => {
     setFrameIndex(0);
     setPlaying(frames.length > 1);
@@ -57,7 +87,7 @@ function Heatmap({ payload, tracking = false }: { payload: any; tracking?: boole
   }, [payload, frames.length]);
   useEffect(() => {
     if (!playing || frames.length < 2) return;
-    const timer = window.setInterval(() => setFrameIndex((current) => (current + 1) % frames.length), Number(payload?.frame_interval_ms) || 120);
+    const timer = window.setInterval(() => setFrameIndex((current) => (current + 1) % frames.length), Math.min(750, Number(payload?.frame_interval_ms) || 120));
     return () => window.clearInterval(timer);
   }, [frames.length, payload?.frame_interval_ms, playing]);
   return <div className="space-y-3">
@@ -141,9 +171,10 @@ export default function CaptureViewerPage() {
 
   useEffect(() => {
     load();
+    if (!waiting) return;
     const timer = window.setInterval(load, 2500);
     return () => window.clearInterval(timer);
-  }, [load]);
+  }, [load, waiting]);
 
   useEffect(() => {
     loadProgress();
@@ -154,15 +185,15 @@ export default function CaptureViewerPage() {
   const predictions = documents['predictions.json'];
   const manifest = documents['manifest.json'];
   const predictionTimeline = Array.isArray(predictions?.timeline) ? predictions.timeline : [];
-  const expectedChunks = 6;
+  const expectedChunks = Math.max(1, Math.floor(Number(liveProgress?.expected_chunks ?? liveProgress?.expectedChunks ?? manifest?.expected_chunks ?? predictionTimeline.length) || 6));
   const predictionByIndex = new Map<number, any>(predictionTimeline.map((entry: any): [number, any] => [Number(entry?.chunk_index), entry]));
   const manifestByIndex = new Map<number, any>((manifest?.outputs?.radar?.chunks || []).map((entry: any): [number, any] => [Number(entry?.chunk_index), entry]));
   const liveByIndex = new Map<number, any>((Array.isArray(liveProgress?.chunks) ? liveProgress.chunks : []).map((entry: any): [number, any] => [Number(entry?.index), entry]));
 
   return <div className="space-y-6 text-slate-950">
-    <header className="border border-slate-300 bg-white p-5"><div className="text-xs font-semibold uppercase text-slate-600">Uploaded capture</div><h1 className="mt-1 font-mono text-2xl font-semibold">{params.minute}</h1><p className="mt-2 text-sm text-slate-700">Device {params.deviceId}</p></header>
-    {waiting && <div className="border border-cyan-300 bg-cyan-50 p-4 text-sm">This capture is not available yet. The page refreshes automatically.</div>}
-    <section className="border border-slate-300 bg-white p-4"><div className="flex items-start gap-2" aria-label="Chunk timeline">{Array.from({ length: expectedChunks }, (_, index) => { const live: any = liveByIndex.get(index); const entry: any = predictionByIndex.get(index); const chunk: any = manifestByIndex.get(index); const pending = String(live?.state || chunk?.status || 'waiting'); const state = live?.state || (entry ? (entry.occupied === true ? 'occupied' : 'empty') : pending); const color = state === 'occupied' ? 'bg-emerald-500' : state === 'empty' ? 'bg-red-500' : state === 'collecting' ? 'animate-pulse bg-blue-500' : ['stored', 'analyzing'].includes(state) ? 'animate-pulse bg-cyan-500' : state === 'error' ? 'bg-amber-500' : 'bg-slate-300'; const locationValue = live?.location ?? entry?.location; const location = Array.isArray(locationValue) ? locationValue.join(', ') : locationValue ? `${locationValue.x ?? '?'}, ${locationValue.y ?? '?'}` : 'n/a'; const detectedFrames = live?.detected_frames ?? live?.detectedFrames ?? entry?.detected_frames ?? chunk?.detected_frames; const evaluatedFrames = live?.evaluated_frames ?? live?.evaluatedFrames ?? entry?.evaluated_frames ?? chunk?.evaluated_frames; const ratio = live?.ratio ?? entry?.ratio; const score = live?.score ?? entry?.score; const detail = [`Chunk ${index + 1}`, live?.prediction || entry?.prediction || state, detectedFrames == null || evaluatedFrames == null ? null : `${detectedFrames} / ${evaluatedFrames} frames`, ratio == null ? null : `ratio ${(Number(ratio) * 100).toFixed(1)}%`, `coordinates ${location}`, score == null ? null : `confidence ${score}`, live?.error || chunk?.error].filter(Boolean).join(' · '); return <div key={index} className="min-w-0 flex-1 text-center" title={detail}><div role="img" tabIndex={0} title={detail} aria-label={detail} className={`mx-auto h-3 w-3 rounded-full ${color}`} /></div>; })}</div></section>
+    <header className="border border-slate-300 bg-white p-5"><div className="text-xs font-semibold uppercase text-slate-600">Live capture metadata</div><h1 className="mt-1 font-mono text-2xl font-semibold">{params.minute}</h1><p className="mt-2 text-sm text-slate-700">Device {params.deviceId}</p></header>
+    {waiting && <div className="border border-cyan-300 bg-cyan-50 p-4 text-sm">Files are not uploaded. Live predictions and chunk metadata continue updating from the device.</div>}
+    <section className="border border-slate-300 bg-white p-4"><div className="flex items-start gap-2" aria-label="Chunk timeline">{Array.from({ length: expectedChunks }, (_, index) => { const live: any = liveByIndex.get(index); const entry: any = predictionByIndex.get(index); const chunk: any = manifestByIndex.get(index); const pending = String(live?.state || chunk?.status || 'waiting'); const state = live?.state || (entry ? (entry.occupied === true ? 'occupied' : 'empty') : pending); const locationValue = live?.location ?? entry?.location; const location = Array.isArray(locationValue) ? locationValue.join(', ') : locationValue ? `${locationValue.x ?? '?'}, ${locationValue.y ?? '?'}` : 'n/a'; const detectedFrames = live?.detected_frames ?? live?.detectedFrames ?? entry?.detected_frames ?? chunk?.detected_frames; const evaluatedFrames = live?.evaluated_frames ?? live?.evaluatedFrames ?? entry?.evaluated_frames ?? chunk?.evaluated_frames; const ratio = live?.ratio ?? entry?.ratio; const progress = live?.progress ?? chunk?.progress; const score = live?.score ?? entry?.score; const labels = live?.labels ?? entry?.labels ?? chunk?.labels; const people = live?.people_count ?? live?.peopleCount ?? entry?.people_count ?? chunk?.people_count; const sleep = live?.sleep_proximity ?? live?.sleepProximity ?? entry?.sleep_proximity ?? chunk?.sleep_proximity; const detail = [`Chunk ${index + 1}`, live?.prediction || entry?.prediction || state, people == null ? null : `${people} people`, Array.isArray(labels) && labels.length ? `labels ${labels.join(', ')}` : null, detectedFrames == null || evaluatedFrames == null ? null : `${detectedFrames} / ${evaluatedFrames} frames`, ratio == null ? null : `ratio ${(Number(ratio) * 100).toFixed(1)}%`, `coordinates ${location}`, sleep?.nearest_target_m == null ? null : `sleep anchor ${Number(sleep.nearest_target_m).toFixed(2)}m`, score == null ? null : `confidence ${score}`, live?.error || chunk?.error].filter(Boolean).join(' · '); return <div key={index} className="min-w-0 flex-1 text-center" title={detail}><div role="img" tabIndex={0} title={detail} aria-label={detail} className="mx-auto h-3 w-3 rounded-full ring-2 ring-white" style={chunkDotStyle(state, ratio, progress)} /></div>; })}</div></section>
     <section className="border border-slate-300 bg-white p-4"><h2 className="mb-3 font-semibold">X / Y localization</h2>{documents['xy-tracking'] || documents['xy_tracking'] ? <Heatmap payload={documents['xy-tracking'] || documents['xy_tracking']} tracking /> : <div className="p-8 text-sm text-slate-500">Not available</div>}</section>
     <section className="border border-slate-300 bg-white p-4"><h2 className="mb-3 font-semibold">Camera video</h2>{videoUrl ? <video controls src={videoUrl} className="max-h-[70vh] w-full bg-black" /> : <div className="p-8 text-sm text-slate-500">No camera video in this minute.</div>}</section>
     <div className="text-xs text-slate-500">{assets.length} cloud assets</div>
