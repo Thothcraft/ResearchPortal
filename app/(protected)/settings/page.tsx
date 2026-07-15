@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
+import { getBillingPlanTitle } from '@/lib/billing';
 import { useTheme } from '@/contexts/ThemeContext';
 import { useI18n } from '@/contexts/I18nContext';
 import { useApi } from '@/hooks/useApi';
@@ -307,7 +308,7 @@ export default function SettingsPage() {
         <div className="space-y-4">
           <div className="flex items-center justify-between p-4 bg-slate-900/50 rounded-lg border border-slate-700">
             <div>
-              <h3 className="text-lg font-medium text-white capitalize">{user?.plan || 'Free'}</h3>
+              <h3 className="text-lg font-medium text-white capitalize">{getBillingPlanTitle(user?.plan || 'free')}</h3>
               <p className="text-sm text-slate-400">Billing state is synchronized from signed Stripe webhooks.</p>
             </div>
           </div>
@@ -319,14 +320,14 @@ export default function SettingsPage() {
               <button key={plan} type="button" disabled={Boolean(billingLoading)} onClick={() => openCheckout(plan)} className="rounded-lg border border-indigo-500 bg-indigo-700 p-4 text-left text-white transition hover:bg-indigo-600 disabled:opacity-60">
                 {plan === 'research' ? <Crown className="mb-2 h-5 w-5" /> : <Zap className="mb-2 h-5 w-5" />}
                 <h4 className="font-semibold capitalize">{billingLoading === plan ? 'Opening…' : plan}</h4>
-                <p className="mt-1 text-xs opacity-80">Price and applicable discount shown securely by Stripe.</p>
+                <p className="mt-1 text-xs opacity-80">{user?.plan && user.plan !== 'free' ? 'Manage or switch this plan in Stripe.' : 'Price and applicable discount shown securely by Stripe.'}</p>
               </button>
             ))}
           </div>
           {user?.plan !== 'free' && (
             <button type="button" onClick={openBillingPortal} disabled={Boolean(billingLoading)} className="w-full p-3 bg-slate-700 hover:bg-slate-600 rounded-lg text-slate-300 transition-colors flex items-center justify-center gap-2 disabled:opacity-60">
               <CreditCard className="w-4 h-4" />
-              {billingLoading === 'portal' ? 'Opening…' : 'Manage Billing in Stripe'}
+              {billingLoading === 'portal' ? 'Opening…' : 'Manage or switch plan in Stripe'}
             </button>
           )}
           {billingError && <p role="alert" className="text-sm font-semibold text-red-400">{billingError}</p>}

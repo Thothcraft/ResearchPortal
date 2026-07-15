@@ -22,7 +22,10 @@ export default function AuthPage() {
         if (await login(formData.username, formData.password)) router.replace('/home');
       } else {
         const result = await register(formData.username, formData.email, formData.password);
-        if (result.success) { setNotice(result.message); setMode('signin'); }
+        if (result.success) {
+          setNotice(result.message || 'Check your inbox for the verification email before signing in.');
+          setMode('signin');
+        }
       }
     } finally { setIsSubmitting(false); }
   };
@@ -36,6 +39,7 @@ export default function AuthPage() {
       <label htmlFor="password">Password</label><input id="password" type="password" autoComplete="current-password" value={formData.password} onChange={e => setFormData({ ...formData, password: e.target.value })}/>
       <button disabled={isSubmitting}>{isSubmitting ? 'Please wait…' : mode === 'signin' ? 'Continue' : 'Register and verify email'}</button>
       <button type="button" style={{ marginTop: 12, background: 'transparent', color: '#4d4a44', border: '1px solid #c9c4b9' }} onClick={() => { setMode(mode === 'signin' ? 'register' : 'signin'); setNotice(''); }}>{mode === 'signin' ? 'New here? Create an account' : 'Already registered? Sign in'}</button>
+      {mode === 'register' && <p className="mt-4 text-sm text-slate-500">We will send a verification email after signup. Do not sign in until the email link has been confirmed.</p>}
     </form>
   </main>;
 }

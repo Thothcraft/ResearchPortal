@@ -118,6 +118,26 @@ export default function AdminDashboard() {
     }
   };
 
+  const handleDeleteAllAccounts = async () => {
+    const targetUsers = users.filter((u) => u.user_id !== user?.userId);
+    if (!targetUsers.length) {
+      toast.error('No removable accounts found');
+      return;
+    }
+    if (!confirm(`Delete ${targetUsers.length} account${targetUsers.length === 1 ? '' : 's'}? This cannot be undone.`)) return;
+
+    try {
+      for (const target of targetUsers) {
+        // Reuse the existing user deletion endpoint so we stay aligned with the backend contract.
+        await del(`/admin/users/${target.user_id}`);
+      }
+      toast.success(`Deleted ${targetUsers.length} account${targetUsers.length === 1 ? '' : 's'}`);
+      loadAll();
+    } catch (err) {
+      toast.error('Bulk delete failed', err instanceof Error ? err.message : 'Unknown error');
+    }
+  };
+
   const openEditModal = (u: User) => {
     setEditingUser(u);
     setUserForm({
@@ -200,12 +220,20 @@ export default function AdminDashboard() {
       <div className="bg-slate-800 rounded-lg border border-slate-700 mb-8">
         <div className="p-4 border-b border-slate-700 flex items-center justify-between">
           <h2 className="text-lg font-semibold text-white">Users</h2>
-          <button
-            onClick={loadAll}
-            className="px-3 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded text-sm"
-          >
-            Refresh
-          </button>
+          <div className="flex gap-2">
+            <button
+              onClick={handleDeleteAllAccounts}
+              className="px-3 py-1 bg-red-600 hover:bg-red-700 text-white rounded text-sm"
+            >
+              Remove all accounts
+            </button>
+            <button
+              onClick={loadAll}
+              className="px-3 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded text-sm"
+            >
+              Refresh
+            </button>
+          </div>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">

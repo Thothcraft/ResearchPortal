@@ -27,6 +27,14 @@ export default function BuyPage() {
       <div className="mt-8 flex flex-wrap gap-3">
         {user ? <button onClick={buy} className="rounded-xl bg-cyan-400 px-5 py-3 font-semibold text-slate-950">Buy securely with Stripe</button> : <Link href="/auth" className="rounded-xl bg-cyan-400 px-5 py-3 font-semibold text-slate-950">Create account to purchase</Link>}
         <Link href="/pricing" className="rounded-xl border border-slate-600 px-5 py-3 font-semibold">Compare subscriptions</Link>
+        {user?.plan && user.plan !== 'free' && <button onClick={async () => {
+          try {
+            const portal = await post('/stripe/billing-portal', {});
+            window.location.assign(portal.url);
+          } catch (reason) {
+            setError(reason instanceof Error ? reason.message : 'Billing portal is unavailable');
+          }
+        }} className="rounded-xl border border-cyan-400 px-5 py-3 font-semibold text-cyan-300">Switch plan</button>}
       </div>
       {error && <p role="alert" className="mt-5 text-red-300">{error}</p>}
     </section>
