@@ -6,17 +6,12 @@ import { useAuth } from '@/contexts/AuthContext';
 
 type Asset = { file_id: number; filename: string; kind?: string; content_type?: string };
 
-function chunkDotStyle(state: string, classification?: string | number, ratioValue?: number, progressValue?: number, yellowThreshold = 20, greenThreshold = 60) {
-  if (typeof classification === 'number') {
-    progressValue = ratioValue;
-    ratioValue = classification;
-    classification = undefined;
-  }
-  const ratio = Math.max(0, Math.min(1, Number(ratioValue) || 0));
-  const progress = Math.max(0, Math.min(1, Number(progressValue) || 0));
-  const completed = state === 'occupied' || state === 'empty';
-  const region = classification || (completed ? (ratio * 100 >= greenThreshold ? 'green' : ratio * 100 >= yellowThreshold ? 'yellow' : 'red') : null);
-  const background = region === 'green' ? 'hsl(145 68% 39%)' : region === 'yellow' ? 'hsl(44 94% 52%)' : region === 'red' ? 'hsl(4 76% 51%)' : state === 'collecting' ? `hsl(217 88% ${82 - progress * 38}%)` : ['stored', 'analyzing'].includes(state) ? `hsl(190 82% ${80 - progress * 35}%)` : state === 'error' ? 'hsl(38 92% 52%)' : 'hsl(215 16% 78%)';
+function chunkDotStyle(state: string, classification?: string | number) {
+  const background = state === 'occupied' || classification === 'green'
+    ? 'hsl(145 68% 39%)'
+    : state === 'empty' || classification === 'red'
+      ? 'hsl(4 76% 51%)'
+      : 'hsl(217 88% 55%)';
   return { background, boxShadow: `0 0 0 1px color-mix(in srgb, ${background} 55%, transparent)`, transition: 'background-color .45s ease, box-shadow .45s ease' };
 }
 
@@ -40,6 +35,74 @@ function viridis(value: number) {
   const index = Math.min(stops.length - 2, Math.floor(scaled));
   const amount = scaled - index;
   return stops[index].map((channel, offset) => Math.round(channel + (stops[index + 1][offset] - channel) * amount));
+}
+
+function CompactXYMap({ map }: { map: any }) {
+  const ref = useRef<HTMLCanvasElement>(null);
+  useEffect(() => {
+    const canvas = ref.current;
+    const rows = Number(map?.rows || 0);
+    const columns = Number(map?.columns || 0);
+    const values = Array.isArray(map?.values) ? map.values : [];
+    if (!canvas || !rows || !columns || values.length !== rows * columns) return;
+    const context = canvas.getContext('2d');
+    if (!context) return;
+    const image = context.createImageData(columns, rows);
+    values.forEach((raw: number, sourceIndex: number) => {
+      const sourceRow = Math.floor(sourceIndex / columns);
+      const column = sourceIndex % columns;
+      const destinationIndex = ((rows - 1 - sourceRow) * columns + column) * 4;
+      const [red, green, blue] = viridis((Number(raw) || 0) / 255);
+      image.data[destinationIndex] = red;
+      image.data[destinationIndex + 1] = green;
+      image.data[destinationIndex + 2] = blue;
+      image.data[destinationIndex + 3] = 255;
+    });
+    const buffer = document.createElement('canvas');
+    buffer.width = columns;
+    buffer.height = rows;
+    buffer.getContext('2d')?.putImageData(image, 0, 0);
+    context.imageSmoothingEnabled = true;
+    context.clearRect(0, 0, canvas.width, canvas.height);
+    context.drawImage(buffer, 0, 0, canvas.width, canvas.height);
+  }, [map]);
+  return <div className="bg-slate-950 p-2">
+    <canvas ref={ref} width={512} height={512} className="aspect-square h-auto w-full" />
+    <div className="mt-2 flex items-center gap-2 text-[10px] font-medium text-slate-300">
+      <span>0</span>
+      <span className="h-1.5 flex-1 rounded-full" style={{ background: 'linear-gradient(90deg,#440154,#3b528b,#21918c,#5ec962,#fde725)' }} />
+      <span>1 normalized intensity</span>
+    </div>
+  </div>;
+}
+
+function normalizeChunk(entry: any, fallbackIndex = 0) {
+  const occupancy = entry?.occupancy && typeof entry.occupancy === 'object' ? entry.occupancy : {};
+  const index = Number(entry?.chunk_index ?? entry?.index ?? fallbackIndex);
+  const status = String(entry?.status || entry?.state || occupancy?.label || 'loading');
+  const state = status === 'occupied' || status === 'empty' ? status : 'loading';
+  const locationValue = entry?.location;
+  const location = Array.isArray(locationValue)
+    ? { x: Number(locationValue[0]), y: Number(locationValue[1]) }
+    : locationValue;
+  return {
+    index,
+    state,
+    classification: occupancy?.classification || entry?.classification || (state === 'occupied' ? 'green' : state === 'empty' ? 'red' : undefined),
+    prediction: occupancy?.label || entry?.prediction || state,
+    detectedFrames: Number(occupancy?.detected_frames ?? entry?.detected_frames ?? entry?.detectedFrames ?? 0),
+    evaluatedFrames: Number(occupancy?.evaluated_frames ?? entry?.evaluated_frames ?? entry?.evaluatedFrames ?? 0),
+    ratio: Number(occupancy?.ratio ?? entry?.ratio ?? 0),
+    peopleCount: Number(entry?.people_count ?? entry?.peopleCount ?? 0),
+    score: entry?.score == null ? null : Number(entry.score),
+    location,
+    targets: Array.isArray(entry?.targets) ? entry.targets : [],
+    labels: Array.isArray(entry?.labels) ? entry.labels : [],
+    activityLabels: Array.isArray(entry?.activity_labels ?? entry?.activityLabels) ? (entry.activity_labels ?? entry.activityLabels) : [],
+    xyMap: entry?.xy_map || entry?.xyMap || entry?.analysis?.xy_map,
+    cameraFilename: entry?.camera_filename || entry?.cameraFilename,
+    error: entry?.error,
+  };
 }
 
 function Heatmap({ payload, tracking = false }: { payload: any; tracking?: boolean }) {
@@ -144,7 +207,10 @@ export default function CaptureViewerPage() {
   const [documents, setDocuments] = useState<Record<string, any>>({});
   const [videoUrl, setVideoUrl] = useState('');
   const [waiting, setWaiting] = useState(true);
-  const [liveProgress, setLiveProgress] = useState<any>(null);
+  const [liveChunks, setLiveChunks] = useState<any[]>([]);
+  const [storedChunks, setStoredChunks] = useState<any[]>([]);
+  const liveCursor = useRef<string | null>(null);
+  const liveLoading = useRef(false);
 
   const load = useCallback(async () => {
     if (!user?.token) return;
@@ -169,10 +235,35 @@ export default function CaptureViewerPage() {
       const result = await fetch(`/api/proxy/file/${video.file_id}?download=false`, { headers });
       setVideoUrl(URL.createObjectURL(await result.blob()));
     }
-    setWaiting(!next.some((asset) => asset.kind === 'xy-tracking' || asset.kind === 'xy_tracking'));
+    setWaiting(!next.some((asset) => asset.kind === 'manifest' || /(?:^|_)manifest\.json$/i.test(asset.filename)));
   }, [params.deviceId, params.minute, user?.token, videoUrl]);
 
-  const loadProgress = useCallback(async () => {
+  const loadLiveChunks = useCallback(async () => {
+    if (!user?.token || liveLoading.current) return;
+    liveLoading.current = true;
+    try {
+      const suffix = liveCursor.current ? `?after=${encodeURIComponent(liveCursor.current)}` : '';
+      const response = await fetch(`/api/proxy/device/${encodeURIComponent(params.deviceId)}/live-chunks${suffix}`, {
+        headers: { Authorization: `Bearer ${user.token}` },
+        cache: 'no-store',
+      });
+      if (!response.ok) return;
+      const data = await response.json();
+      if (data.cursor) liveCursor.current = data.cursor;
+      if (data.minute !== params.minute) return;
+      setLiveChunks((current) => {
+        const merged = new Map<number, any>(
+          current.map((chunk): [number, any] => [Number(chunk.chunk_index), chunk]),
+        );
+        (Array.isArray(data.chunks) ? data.chunks : []).forEach((chunk: any) => merged.set(Number(chunk.chunk_index), chunk));
+        return Array.from(merged.values()).sort((a, b) => Number(a.chunk_index) - Number(b.chunk_index));
+      });
+    } finally {
+      liveLoading.current = false;
+    }
+  }, [params.deviceId, params.minute, user?.token]);
+
+  const loadStoredChunks = useCallback(async () => {
     if (!user?.token) return;
     const response = await fetch(`/api/proxy/device/${encodeURIComponent(params.deviceId)}/files`, {
       headers: { Authorization: `Bearer ${user.token}` },
@@ -181,34 +272,81 @@ export default function CaptureViewerPage() {
     if (!response.ok) return;
     const data = await response.json();
     const minute = (Array.isArray(data?.files) ? data.files : []).find((file: any) => file?.filename === params.minute);
-    setLiveProgress(minute?.progress || null);
+    const chunks = minute?.progress?.chunks;
+    if (Array.isArray(chunks) && chunks.length) {
+      setStoredChunks(chunks);
+      setWaiting(false);
+    }
   }, [params.deviceId, params.minute, user?.token]);
 
   useEffect(() => {
     load();
     if (!waiting) return;
-    const timer = window.setInterval(load, 1000);
+    const timer = window.setInterval(load, 5000);
     return () => window.clearInterval(timer);
   }, [load, waiting]);
 
   useEffect(() => {
-    loadProgress();
-    const timer = window.setInterval(loadProgress, 400);
+    loadLiveChunks();
+    const timer = window.setInterval(loadLiveChunks, 500);
     return () => window.clearInterval(timer);
-  }, [loadProgress]);
+  }, [loadLiveChunks]);
+
+  useEffect(() => {
+    loadStoredChunks();
+    if (storedChunks.length) return;
+    const timer = window.setInterval(loadStoredChunks, 5000);
+    return () => window.clearInterval(timer);
+  }, [loadStoredChunks, storedChunks.length]);
 
   const predictions = documents['predictions.json'];
   const manifest = documents['manifest.json'];
   const predictionTimeline = Array.isArray(predictions?.timeline) ? predictions.timeline : [];
-  const expectedChunks = Math.max(1, Math.floor(Number(liveProgress?.expected_chunks ?? liveProgress?.expectedChunks ?? manifest?.expected_chunks ?? predictionTimeline.length) || 6));
   const predictionByIndex = new Map<number, any>(predictionTimeline.map((entry: any): [number, any] => [Number(entry?.chunk_index), entry]));
-  const manifestByIndex = new Map<number, any>((manifest?.outputs?.radar?.chunks || []).map((entry: any): [number, any] => [Number(entry?.chunk_index), entry]));
-  const liveByIndex = new Map<number, any>((Array.isArray(liveProgress?.chunks) ? liveProgress.chunks : []).map((entry: any): [number, any] => [Number(entry?.index), entry]));
+  const manifestChunks = Array.isArray(manifest?.outputs?.radar?.chunks) ? manifest.outputs.radar.chunks : [];
+  const chunkByIndex = new Map<number, any>();
+  storedChunks.forEach((entry: any) => chunkByIndex.set(Number(entry?.index), normalizeChunk(entry)));
+  manifestChunks.forEach((entry: any) => {
+    const prediction = predictionByIndex.get(Number(entry?.chunk_index));
+    chunkByIndex.set(Number(entry?.chunk_index), normalizeChunk(prediction ? { ...entry, ...prediction } : entry));
+  });
+  predictionTimeline.forEach((entry: any) => {
+    const index = Number(entry?.chunk_index);
+    if (!chunkByIndex.has(index)) chunkByIndex.set(index, normalizeChunk(entry));
+  });
+  liveChunks.forEach((entry: any) => chunkByIndex.set(Number(entry?.chunk_index), normalizeChunk(entry)));
+  const chunks = Array.from(chunkByIndex.values())
+    .filter((chunk) => chunk.state !== 'loading' || chunk.index === Math.max(...Array.from(chunkByIndex.keys())))
+    .sort((a, b) => a.index - b.index);
 
   return <div className="space-y-6 text-slate-950">
     <header className="border border-slate-300 bg-white p-5"><div className="text-xs font-semibold uppercase text-slate-600">Live capture metadata</div><h1 className="mt-1 font-mono text-2xl font-semibold">{params.minute}</h1><p className="mt-2 text-sm text-slate-700">Device {params.deviceId}</p></header>
     {waiting && <div className="sr-only" role="status">Live metadata is updating while capture files remain on the device.</div>}
-    <section className="border border-slate-300 bg-white p-4"><div className="flex items-start gap-2" aria-label="Chunk timeline">{Array.from({ length: expectedChunks }, (_, index) => { const live: any = liveByIndex.get(index); const entry: any = predictionByIndex.get(index); const chunk: any = manifestByIndex.get(index); const pending = String(live?.state || chunk?.status || 'waiting'); const state = live?.state || (entry ? (entry.occupied === true ? 'occupied' : 'empty') : pending); const locationValue = live?.location ?? entry?.location; const location = Array.isArray(locationValue) ? locationValue.join(', ') : locationValue ? `${locationValue.x ?? '?'}, ${locationValue.y ?? '?'}` : 'n/a'; const detectedFrames = live?.detected_frames ?? live?.detectedFrames ?? entry?.detected_frames ?? chunk?.detected_frames; const evaluatedFrames = live?.evaluated_frames ?? live?.evaluatedFrames ?? entry?.evaluated_frames ?? chunk?.evaluated_frames; const ratio = live?.ratio ?? entry?.ratio; const progress = live?.progress ?? chunk?.progress; const score = live?.score ?? entry?.score; const labels = live?.labels ?? entry?.labels ?? chunk?.labels; const activityLabels = live?.activity_labels ?? live?.activityLabels ?? entry?.activity_labels ?? chunk?.activity_labels; const people = live?.people_count ?? live?.peopleCount ?? entry?.people_count ?? chunk?.people_count; const detail = [`Chunk ${index + 1}`, live?.prediction || entry?.prediction || state, people == null ? null : `${people} people`, Array.isArray(labels) && labels.length ? `labels ${labels.join(', ')}` : null, Array.isArray(activityLabels) && activityLabels.length ? `activity ${activityLabels.join(', ')}` : null, detectedFrames == null || evaluatedFrames == null ? null : `${detectedFrames} / ${evaluatedFrames} frames`, ratio == null ? null : `ratio ${(Number(ratio) * 100).toFixed(1)}%`, `coordinates ${location}`, score == null ? null : `confidence ${score}`, live?.error || chunk?.error].filter(Boolean).join(' · '); return <div key={index} className="min-w-0 flex-1 text-center" title={detail}><div role="img" tabIndex={0} title={detail} aria-label={detail} className="mx-auto h-3 w-3 rounded-full ring-2 ring-white" style={chunkDotStyle(state, ratio, progress)} /></div>; })}</div></section>
+    <section className="border border-slate-300 bg-white p-4">
+      <div className="mb-4"><div className="text-xs font-semibold uppercase tracking-wide text-slate-600">Detection windows</div><h2 className="mt-1 text-xl font-semibold">All analyzed chunks</h2></div>
+      {chunks.length ? <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+        {chunks.map((chunk) => {
+          const location = chunk.location && Number.isFinite(Number(chunk.location.x)) && Number.isFinite(Number(chunk.location.y))
+            ? `${Number(chunk.location.x).toFixed(2)}, ${Number(chunk.location.y).toFixed(2)} m`
+            : 'N/A';
+          return <article key={chunk.index} className="overflow-hidden border border-slate-200 bg-slate-50">
+            <div className="flex items-center justify-between gap-3 p-4 pb-3">
+              <strong>Chunk {chunk.index + 1}</strong>
+              <span className="inline-flex items-center gap-2 text-xs font-semibold uppercase text-slate-600"><span className="h-2.5 w-2.5 rounded-full" style={chunkDotStyle(chunk.state, chunk.classification)} />{chunk.prediction}</span>
+            </div>
+            {chunk.xyMap ? <CompactXYMap map={chunk.xyMap} /> : <div className="flex aspect-square items-center justify-center bg-slate-950 text-xs font-medium text-slate-400">{chunk.state === 'loading' ? 'Map loading' : 'Map unavailable'}</div>}
+            <div className="grid grid-cols-2 gap-3 p-4 text-sm">
+              <div><span className="block text-xs text-slate-500">Detected frames</span>{chunk.detectedFrames} / {chunk.evaluatedFrames}</div>
+              <div><span className="block text-xs text-slate-500">Detection ratio</span>{(chunk.ratio * 100).toFixed(1)}%</div>
+              <div><span className="block text-xs text-slate-500">People</span>{chunk.peopleCount}</div>
+              <div><span className="block text-xs text-slate-500">Normalized peak</span>{chunk.score == null ? 'N/A' : chunk.score.toFixed(3)}</div>
+              <div className="col-span-2"><span className="block text-xs text-slate-500">Coordinates</span>{location}</div>
+              {chunk.error && <div className="col-span-2 text-red-700">{chunk.error}</div>}
+            </div>
+          </article>;
+        })}
+      </div> : <div className="border border-dashed border-slate-300 p-8 text-sm text-slate-500">Waiting for the first 10-frame chunk.</div>}
+    </section>
     <section className="border border-slate-300 bg-white p-4"><h2 className="mb-3 font-semibold">X / Y localization</h2>{documents['xy-tracking'] || documents['xy_tracking'] ? <Heatmap payload={documents['xy-tracking'] || documents['xy_tracking']} tracking /> : <div className="p-8 text-sm text-slate-500">Not available</div>}</section>
     <section className="border border-slate-300 bg-white p-4"><h2 className="mb-3 font-semibold">Camera video</h2>{videoUrl ? <video controls src={videoUrl} className="max-h-[70vh] w-full bg-black" /> : <div className="p-8 text-sm text-slate-500">No camera video in this minute.</div>}</section>
     <div className="text-xs text-slate-500">{assets.length} cloud assets</div>

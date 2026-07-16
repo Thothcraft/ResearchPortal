@@ -42,7 +42,7 @@ export type MinuteSummary = {
       stored: boolean;
       analyzed: boolean;
       prediction?: unknown;
-      classification?: 'red' | 'yellow' | 'green';
+      classification?: 'red' | 'green';
       location?: any;
       ratio?: number;
       score?: number;
@@ -185,7 +185,9 @@ function extractDeviceInfo(manifest: any, minuteDir: string): { deviceKey: strin
 
 function getMinutePaths(minuteDir: string) {
   const names = fs.existsSync(minuteDir) ? fs.readdirSync(minuteDir) : [];
-  const radarBins = names.filter((name) => name.startsWith('mmw_radar_raw_') && name.endsWith('.bin')).sort();
+  const radarBins = names.filter((name) => (
+    (name.startsWith('radar_') || name.startsWith('mmw_radar_raw_')) && name.endsWith('.bin')
+  )).sort();
   const radarCsvs = names.filter((name) => name.startsWith('mmw_radar_xy_') && name.endsWith('.csv')).sort();
   return {
     video: names.includes('usb_camera.mp4') ? path.join(minuteDir, 'usb_camera.mp4') : null,
@@ -193,7 +195,9 @@ function getMinutePaths(minuteDir: string) {
     radarBins: radarBins.map((name) => path.join(minuteDir, name)),
     radarCsvs: radarCsvs.map((name) => path.join(minuteDir, name)),
     xyTracking: names.includes('xy-tracking.json') ? path.join(minuteDir, 'xy-tracking.json') : null,
-    csiCsv: names.includes('wifi_csi_raw.csv') ? path.join(minuteDir, 'wifi_csi_raw.csv') : null,
+    csiCsv: names.includes('wifi_csi.csv')
+      ? path.join(minuteDir, 'wifi_csi.csv')
+      : names.includes('wifi_csi_raw.csv') ? path.join(minuteDir, 'wifi_csi_raw.csv') : null,
     csiTimestamped: names.includes('wifi_csi_timestamped.csv') ? path.join(minuteDir, 'wifi_csi_timestamped.csv') : null,
     csiSerial: names.includes('wifi_csi_serial_all.jsonl') ? path.join(minuteDir, 'wifi_csi_serial_all.jsonl') : null,
     manifest: names.includes('manifest.json') ? path.join(minuteDir, 'manifest.json') : null,
@@ -207,23 +211,39 @@ function getMinuteProgress(paths: ReturnType<typeof getMinutePaths>, manifest: a
   const radarCsvs = Array.isArray(paths.radarCsvs) ? paths.radarCsvs : [];
   const predictions = paths.predictions && fs.existsSync(paths.predictions) ? readJsonPreview(paths.predictions) : null;
   const expectedChunks = Math.max(1, Number(manifest?.expected_chunks || 0) || radarBins.length || radarCsvs.length || (Array.isArray(predictions?.timeline) ? predictions.timeline.length : 0) || 6);
-  const storedChunks = Math.min(radarBins.length, radarCsvs.length);
-  const analyzedChunks = Array.isArray(predictions?.timeline) ? predictions.timeline.length : 0;
+  const storedChunks = radarBins.length;
   const predictionByIndex = new Map<number, any>((predictions?.timeline || []).map((entry: any): [number, any] => [Number(entry?.chunk_index), entry]));
   const manifestByIndex = new Map<number, any>((manifest?.outputs?.radar?.chunks || []).map((entry: any): [number, any] => [Number(entry?.chunk_index), entry]));
+  const analyzedChunks = Array.from(manifestByIndex.values()).filter((entry) => ['occupied', 'empty'].includes(String(entry?.status))).length
+    || (Array.isArray(predictions?.timeline) ? predictions.timeline.length : 0);
   const chunks = Array.from({ length: expectedChunks }, (_, index) => {
     const prediction = predictionByIndex.get(index);
     const recorded = index < storedChunks;
     const manifestChunk = manifestByIndex.get(index);
     const manifestState = String(manifestChunk?.status || '');
+    const occupied = prediction?.occupied ?? manifestChunk?.occupied;
     const state: NonNullable<MinuteSummary['progress']>['chunks'][number]['state'] = manifestState === 'error'
       ? 'error'
       : prediction
-        ? (prediction.occupied === true ? 'occupied' : 'empty')
+        ? (occupied === true ? 'occupied' : 'empty')
+        : manifestState === 'occupied' || manifestState === 'empty' ? manifestState
         : manifestState === 'collecting' ? 'collecting'
         : manifestState === 'stored' ? 'stored'
         : manifestState === 'analyzing' || recorded ? 'analyzing' : 'waiting';
-    return { index, state, stored: recorded, analyzed: Boolean(prediction), prediction: prediction?.prediction, classification: prediction?.classification, location: prediction?.location, ratio: prediction?.ratio, score: prediction?.score, detectedFrames: prediction?.detected_frames ?? manifestChunk?.detected_frames, evaluatedFrames: prediction?.evaluated_frames ?? manifestChunk?.evaluated_frames, error: manifestChunk?.error };
+    return {
+      index,
+      state,
+      stored: recorded,
+      analyzed: Boolean(prediction) || manifestState === 'occupied' || manifestState === 'empty',
+      prediction: prediction?.prediction ?? manifestState,
+      classification: prediction?.classification ?? manifestChunk?.classification,
+      location: prediction?.location ?? manifestChunk?.location,
+      ratio: prediction?.ratio ?? manifestChunk?.ratio,
+      score: prediction?.score ?? manifestChunk?.score,
+      detectedFrames: prediction?.detected_frames ?? manifestChunk?.detected_frames,
+      evaluatedFrames: prediction?.evaluated_frames ?? manifestChunk?.evaluated_frames,
+      error: manifestChunk?.error,
+    };
   });
   return {
     expectedChunks,

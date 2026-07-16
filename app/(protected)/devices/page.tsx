@@ -91,7 +91,7 @@ type DeviceFileSummary = {
     evaluated_frames?: number;
     ratio?: number;
     threshold_percent?: number;
-    classification?: 'red' | 'yellow' | 'green';
+    classification?: 'red' | 'green';
   } | null;
   progress?: any;
   metadata?: { label?: string; labels?: string[] };
@@ -115,7 +115,7 @@ type LocalMinuteSummary = {
     storagePercent: number;
     predictionPercent: number;
     chunkSeconds?: number | null;
-    chunks: Array<{ index: number; state: 'waiting' | 'collecting' | 'stored' | 'analyzing' | 'occupied' | 'empty' | 'error'; classification?: 'red' | 'yellow' | 'green'; prediction?: string; location?: any; ratio?: number; progress?: number; score?: number; detectedFrames?: number; evaluatedFrames?: number; targetCount?: number; peopleCount?: number; targets?: any[]; labels?: string[]; activityLabels?: string[]; activity?: any; join?: any; error?: string }>;
+    chunks: Array<{ index: number; state: 'waiting' | 'collecting' | 'stored' | 'analyzing' | 'occupied' | 'empty' | 'error'; classification?: 'red' | 'green'; prediction?: string; location?: any; ratio?: number; progress?: number; score?: number; detectedFrames?: number; evaluatedFrames?: number; targetCount?: number; peopleCount?: number; targets?: any[]; labels?: string[]; activityLabels?: string[]; activity?: any; join?: any; xyMap?: any; cameraFilename?: string; error?: string }>;
   };
   completed: boolean;
   state: 'ready' | 'collecting';
@@ -245,7 +245,7 @@ function normalizeProgress(value: any): NonNullable<LocalMinuteSummary['progress
     return {
       index,
       state,
-      classification: ['red', 'yellow', 'green'].includes(String(source.classification ?? source.occupancy?.classification)) ? (source.classification ?? source.occupancy.classification) : undefined,
+      classification: ['red', 'green'].includes(String(source.classification ?? source.occupancy?.classification)) ? (source.classification ?? source.occupancy.classification) : undefined,
       prediction: source.prediction == null ? undefined : String(source.prediction),
       location: source.location,
       ratio: source.ratio == null ? undefined : Number(source.ratio),
@@ -260,6 +260,8 @@ function normalizeProgress(value: any): NonNullable<LocalMinuteSummary['progress
       activityLabels: Array.isArray(source.activity_labels ?? source.activityLabels) ? (source.activity_labels ?? source.activityLabels).map(String) : [],
       activity: source.activity,
       join: source.join,
+      xyMap: source.xy_map ?? source.xyMap,
+      cameraFilename: source.camera_filename ?? source.cameraFilename,
       error: source.error == null ? undefined : String(source.error),
     } as NonNullable<LocalMinuteSummary['progress']>['chunks'][number];
   });
@@ -274,17 +276,12 @@ function normalizeProgress(value: any): NonNullable<LocalMinuteSummary['progress
   };
 }
 
-function chunkDotStyle(state: string, classification?: string, ratioValue?: number, progressValue?: number, yellowThreshold = 20, greenThreshold = 60) {
-  const ratio = Math.max(0, Math.min(1, Number(ratioValue) || 0));
-  const progress = Math.max(0, Math.min(1, Number(progressValue) || 0));
-  const completed = state === 'occupied' || state === 'empty';
-  const region = classification || (completed ? (ratio * 100 >= greenThreshold ? 'green' : ratio * 100 >= yellowThreshold ? 'yellow' : 'red') : null);
-  const background = region === 'green' ? 'hsl(145 68% 39%)'
-    : region === 'yellow' ? 'hsl(44 94% 52%)'
-      : region === 'red' ? 'hsl(4 76% 51%)'
-      : state === 'collecting' ? `hsl(217 88% ${82 - progress * 38}%)`
-        : ['stored', 'analyzing'].includes(state) ? `hsl(190 82% ${80 - progress * 35}%)`
-          : state === 'error' ? 'hsl(38 92% 52%)' : 'hsl(215 16% 78%)';
+function chunkDotStyle(state: string, classification?: string) {
+  const background = state === 'occupied' || classification === 'green'
+    ? 'hsl(145 68% 39%)'
+    : state === 'empty' || classification === 'red'
+      ? 'hsl(4 76% 51%)'
+      : 'hsl(217 88% 55%)';
   return { background, boxShadow: `0 0 0 1px color-mix(in srgb, ${background} 55%, transparent)`, transition: 'background-color .45s ease, box-shadow .45s ease' };
 }
 
@@ -318,10 +315,7 @@ function DevicePanel({
   const [draftSensors, setDraftSensors] = useState<Record<string, boolean>>(settings.sensors);
   const [draftRadarThreshold, setDraftRadarThreshold] = useState(settings.radar_detection_threshold_normalized);
   const [draftOccupancyThreshold, setDraftOccupancyThreshold] = useState(settings.occupancy_threshold_percent);
-  const [draftYellowThreshold, setDraftYellowThreshold] = useState(settings.yellow_threshold_percent);
-  const [draftGreenThreshold, setDraftGreenThreshold] = useState(settings.green_threshold_percent);
   const [draftAutoLabel, setDraftAutoLabel] = useState(settings.auto_occupancy_label_enabled);
-  const [draftChunkSeconds, setDraftChunkSeconds] = useState(settings.chunk_seconds);
   const [draftSystemMode, setDraftSystemMode] = useState(settings.system_mode);
   const [draftVoteChunks, setDraftVoteChunks] = useState(settings.occupancy_vote_chunks);
   const [draftPredictionStyle, setDraftPredictionStyle] = useState(settings.prediction_label_style);
@@ -340,10 +334,7 @@ function DevicePanel({
     setDraftSensors(settings.sensors);
     setDraftRadarThreshold(settings.radar_detection_threshold_normalized);
     setDraftOccupancyThreshold(settings.occupancy_threshold_percent);
-    setDraftYellowThreshold(settings.yellow_threshold_percent);
-    setDraftGreenThreshold(settings.green_threshold_percent);
     setDraftAutoLabel(settings.auto_occupancy_label_enabled);
-    setDraftChunkSeconds(settings.chunk_seconds);
     setDraftSystemMode(settings.system_mode);
     setDraftVoteChunks(settings.occupancy_vote_chunks);
     setDraftPredictionStyle(settings.prediction_label_style);
@@ -351,7 +342,6 @@ function DevicePanel({
   }, [settings]);
 
   const saveSettings = async () => {
-    if (draftYellowThreshold >= draftGreenThreshold) return;
     setSettingsStatus('saving');
     setSettingsError('');
     try {
@@ -360,10 +350,10 @@ function DevicePanel({
       sensors: { ...DEFAULT_SENSORS, ...draftSensors },
       radar_detection_threshold_normalized: draftRadarThreshold,
       occupancy_threshold_percent: draftOccupancyThreshold,
-      yellow_threshold_percent: draftYellowThreshold,
-      green_threshold_percent: draftGreenThreshold,
+      yellow_threshold_percent: settings.yellow_threshold_percent,
+      green_threshold_percent: settings.green_threshold_percent,
       auto_occupancy_label_enabled: draftAutoLabel,
-      chunk_seconds: draftChunkSeconds,
+      chunk_seconds: settings.chunk_seconds,
       system_mode: draftSystemMode,
       occupancy_vote_chunks: draftVoteChunks,
       prediction_label_style: draftPredictionStyle,
@@ -374,8 +364,7 @@ function DevicePanel({
       updated_at: settings.updated_at,
       });
       setDraftRadarThreshold(canonical.radar_detection_threshold_normalized);
-      setDraftYellowThreshold(canonical.yellow_threshold_percent);
-      setDraftGreenThreshold(canonical.green_threshold_percent);
+      setDraftOccupancyThreshold(canonical.occupancy_threshold_percent);
       setSettingsStatus('saved');
     } catch (error) {
       setSettingsStatus('error');
@@ -456,16 +445,12 @@ function DevicePanel({
               <span>Automatic occupancy labels</span>
               <input type="checkbox" checked={draftAutoLabel} onChange={(event) => setDraftAutoLabel(event.target.checked)} className="h-5 w-5" />
             </label>
-            <fieldset className="mt-5 border border-slate-300 bg-white p-3">
-              <legend className="px-1 text-sm font-semibold text-slate-950">Detection regions</legend>
-              <label className="mt-2 block text-sm font-medium text-slate-950">Yellow begins<div className="mt-2 flex items-center gap-3"><input type="range" min="0" max="99" step="1" value={draftYellowThreshold} onChange={(event) => setDraftYellowThreshold(Number(event.target.value))} className="min-w-0 flex-1 accent-amber-500" /><output className="w-16 text-right font-mono text-xs">{draftYellowThreshold.toFixed(0)}%</output></div></label>
-              <label className="mt-3 block text-sm font-medium text-slate-950">Green begins<div className="mt-2 flex items-center gap-3"><input type="range" min="1" max="100" step="1" value={draftGreenThreshold} onChange={(event) => setDraftGreenThreshold(Number(event.target.value))} className="min-w-0 flex-1 accent-emerald-600" /><output className="w-16 text-right font-mono text-xs">{draftGreenThreshold.toFixed(0)}%</output></div></label>
-              {draftYellowThreshold >= draftGreenThreshold && <p className="mt-2 text-xs font-semibold text-red-700">Yellow must be lower than green.</p>}
-            </fieldset>
+            <label className="mt-5 block border border-slate-300 bg-white p-3 text-sm font-medium text-slate-950">
+              Occupied when detected frames reach
+              <div className="mt-2 flex items-center gap-3"><input type="range" min="10" max="100" step="10" value={draftOccupancyThreshold} onChange={(event) => setDraftOccupancyThreshold(Number(event.target.value))} className="min-w-0 flex-1 accent-emerald-600" /><output className="w-16 text-right font-mono text-xs">{draftOccupancyThreshold.toFixed(0)}%</output></div>
+            </label>
             <div className="mt-5 grid grid-cols-2 gap-3">
-              <label className="block text-sm font-medium text-slate-950">Seconds per chunk
-                <input type="number" min="2" max="30" step="0.5" value={draftChunkSeconds} onChange={(event) => setDraftChunkSeconds(Math.min(30, Math.max(2, Number(event.target.value) || 10)))} className="mt-2 w-full border border-slate-400 bg-white px-3 py-2" />
-              </label>
+              <div className="border border-slate-300 bg-slate-50 px-3 py-2 text-sm"><div className="font-medium text-slate-950">Chunk size</div><div className="mt-2 font-mono text-xs">10 radar frames</div></div>
               <label className="block text-sm font-medium text-slate-950">System mode
                 <select value={draftSystemMode} onChange={(event) => setDraftSystemMode(event.target.value as CaptureSettings['system_mode'])} className="mt-2 w-full border border-slate-400 bg-white px-3 py-2">
                   <option value="responsive">Responsive</option><option value="balanced">Balanced</option><option value="precision">Precision</option>
@@ -480,7 +465,6 @@ function DevicePanel({
             <button
               type="button"
               onClick={saveSettings}
-              disabled={draftYellowThreshold >= draftGreenThreshold}
               className="mt-5 w-full bg-slate-950 px-4 py-3 text-sm font-semibold text-white hover:bg-slate-800"
             >
               {settingsStatus === 'saving' ? 'Saving…' : 'Apply to current and next minutes'}
@@ -516,6 +500,9 @@ function DevicePanel({
                 const dataFiles = minute.dataFiles || [];
                 const fileCount = dataFiles.length;
                 const totalSize = dataFiles.reduce((sum, file) => sum + Number(file.size || 0), 0);
+                const availableChunks = minute.progress?.chunks || [];
+                const latestChunk = availableChunks.filter((chunk) => chunk.state === 'occupied' || chunk.state === 'empty').at(-1)
+                  || availableChunks.filter((chunk) => chunk.state !== 'waiting').at(-1);
                 return (
                   <div key={minute.minute} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
                     <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
@@ -545,14 +532,10 @@ function DevicePanel({
                             {minute.uploaded ? 'Uploaded' : 'On device only'}
                           </span>
                         </div>
-                        {minute.progress && (
-                          <div className="mt-3 flex max-w-xl items-start gap-2" aria-label="Chunk timeline">
-                              {minute.progress.chunks.map((chunk) => {
-                                const location = Array.isArray(chunk.location) ? chunk.location.join(', ') : chunk.location ? `${chunk.location.x ?? '?'}, ${chunk.location.y ?? '?'}` : 'n/a';
-                                const targetDetail = chunk.targets?.length ? chunk.targets.map((target: any) => `T${target.id} (${Number(target.position?.[0]).toFixed(2)}, ${Number(target.position?.[1]).toFixed(2)} ±${Number(target.position_error_m || 0).toFixed(2)}m)`).join(', ') : null;
-                                const detail = [`Chunk ${chunk.index + 1}`, chunk.prediction || chunk.state, `${chunk.peopleCount || 0} people`, chunk.labels?.length ? `labels ${chunk.labels.join(', ')}` : null, chunk.activityLabels?.length ? `activity ${chunk.activityLabels.join(', ')}` : null, chunk.detectedFrames == null || chunk.evaluatedFrames == null ? null : `${chunk.detectedFrames} / ${chunk.evaluatedFrames} frames`, chunk.ratio == null ? null : `ratio ${(chunk.ratio * 100).toFixed(1)}%`, `coordinates ${location}`, targetDetail, chunk.score == null ? null : `confidence ${chunk.score}`, chunk.error].filter(Boolean).join(' · ');
-                                return <div key={chunk.index} className="min-w-0 flex-1 text-center" title={detail}><div role="img" tabIndex={0} title={detail} aria-label={detail} className="mx-auto h-3 w-3 rounded-full ring-2 ring-white" style={chunkDotStyle(chunk.state, chunk.classification, chunk.ratio, chunk.progress, settings.yellow_threshold_percent, settings.green_threshold_percent)} /></div>;
-                              })}
+                        {latestChunk && (
+                          <div className="mt-3 inline-flex items-center gap-2 text-xs font-semibold capitalize text-slate-700" aria-label="Latest chunk prediction">
+                            <span role="img" aria-label={latestChunk.prediction || latestChunk.state} className="h-3 w-3 rounded-full ring-2 ring-white" style={chunkDotStyle(latestChunk.state, latestChunk.classification)} />
+                            Chunk {latestChunk.index + 1} · {latestChunk.prediction || latestChunk.state}
                           </div>
                         )}
                         {dataFiles.length > 0 && (
@@ -630,10 +613,13 @@ export default function DevicesPage() {
   const [deviceFiles, setDeviceFiles] = useState<Record<string, DeviceFileSummary[]>>({});
   const [minutes, setMinutes] = useState<LocalMinuteSummary[]>([]);
   const [settings, setSettings] = useState<Record<string, CaptureSettings>>({});
+  const [liveCaptures, setLiveCaptures] = useState<Record<string, { minute: string | null; chunks: any[]; cursor: string | null }>>({});
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState('');
   const [onlineOnly, setOnlineOnly] = useState(false);
   const loadInFlight = useRef(false);
+  const liveLoadInFlight = useRef(false);
+  const liveCursorRef = useRef<string | null>(null);
   const { get, put, delete: del } = useApi();
   const { user, isLoading: authLoading } = useAuth();
   const toast = useToast();
@@ -698,9 +684,111 @@ export default function DevicesPage() {
   useEffect(() => {
     if (authLoading || !user?.token) return;
     loadData(true);
-    const timer = window.setInterval(() => loadData(false), 500);
+    const timer = window.setInterval(() => loadData(false), 15000);
     return () => window.clearInterval(timer);
   }, [authLoading, loadData, user?.token]);
+
+  const loadLiveChunks = useCallback(async () => {
+    if (authLoading || !user?.token || liveLoadInFlight.current) return;
+    liveLoadInFlight.current = true;
+    try {
+      const suffix = liveCursorRef.current ? `?after=${encodeURIComponent(liveCursorRef.current)}` : '';
+      const response = await get(`/device/live-chunks${suffix}`).catch(() => null);
+      if (!response?.success) return;
+      if (response.cursor) liveCursorRef.current = response.cursor;
+      setLiveCaptures((current) => {
+        const next = { ...current };
+        Object.entries(response.devices || {}).forEach(([deviceId, value]) => {
+          const update = value as { minute?: string; chunks?: any[] };
+          const previous = next[deviceId];
+          const minute = update.minute || null;
+          const merged = new Map<number, any>(
+            previous?.minute === minute
+              ? previous.chunks.map((chunk) => [Number(chunk.chunk_index), chunk])
+              : [],
+          );
+          (Array.isArray(update.chunks) ? update.chunks : []).forEach((chunk: any) => {
+            merged.set(Number(chunk.chunk_index), chunk);
+          });
+          next[deviceId] = {
+            minute,
+            chunks: Array.from(merged.values()).sort((a, b) => Number(a.chunk_index) - Number(b.chunk_index)),
+            cursor: response.cursor || previous?.cursor || null,
+          };
+        });
+        return next;
+      });
+    } finally {
+      liveLoadInFlight.current = false;
+    }
+  }, [authLoading, get, user?.token]);
+
+  useEffect(() => {
+    if (authLoading || !user?.token) return;
+    loadLiveChunks();
+    const timer = window.setInterval(loadLiveChunks, 500);
+    return () => window.clearInterval(timer);
+  }, [authLoading, loadLiveChunks, user?.token]);
+
+  const liveMinutes = useMemo<LocalMinuteSummary[]>(() => Object.entries(liveCaptures).flatMap(([deviceId, live]) => {
+    if (!live.minute) return [];
+    const chunks = live.chunks.map((chunk) => ({
+      index: Number(chunk.chunk_index),
+      state: chunk.status === 'occupied' || chunk.status === 'empty' ? chunk.status : 'collecting',
+      classification: chunk.occupancy?.classification,
+      prediction: chunk.occupancy?.label,
+      location: chunk.location,
+      ratio: Number(chunk.occupancy?.ratio || 0),
+      progress: chunk.status === 'occupied' || chunk.status === 'empty' ? 1 : 0.5,
+      score: Number(chunk.score || 0),
+      detected_frames: Number(chunk.occupancy?.detected_frames || 0),
+      evaluated_frames: Number(chunk.occupancy?.evaluated_frames || 0),
+      people_count: Number(chunk.people_count || 0),
+      targets: chunk.targets || [],
+      labels: chunk.labels || [],
+      activity_labels: chunk.activity_labels || [],
+      xy_map: chunk.xy_map,
+      camera_filename: chunk.camera_filename,
+    }));
+    const progress = normalizeProgress({
+      expected_chunks: 60,
+      stored_chunks: chunks.length,
+      analyzed_chunks: chunks.filter((chunk) => chunk.state === 'occupied' || chunk.state === 'empty').length,
+      chunks,
+    });
+    const latest = chunks.at(-1);
+    return [{
+      minute: live.minute,
+      minuteName: live.minute,
+      relativePath: live.minute,
+      path: '',
+      modified: live.cursor || '',
+      created: live.cursor || '',
+      deviceKey: deviceId,
+      deviceLabel: deviceId,
+      labels: latest?.labels || [],
+      occupancy: latest ? {
+        label: latest.prediction,
+        detected_frames: latest.detected_frames,
+        evaluated_frames: latest.evaluated_frames,
+        ratio: latest.ratio,
+        classification: latest.classification,
+      } : undefined,
+      progress,
+      completed: false,
+      state: 'collecting',
+      uploaded: false,
+      files: { video: chunks.some((chunk) => chunk.camera_filename), radar: true, csi: true, manifest: true, predictions: false },
+      sizes: {},
+    }];
+  }), [liveCaptures]);
+
+  const visibleMinutes = useMemo(() => [
+    ...liveMinutes,
+    ...minutes.filter((minute) => !liveMinutes.some(
+      (live) => live.deviceKey === minute.deviceKey && live.minute === minute.minute,
+    )),
+  ], [liveMinutes, minutes]);
 
   const rows = useMemo(() => devices.map((device) => ({ ...device, online: Boolean(device.online) })), [devices]);
   const visibleRows = useMemo(() => {
@@ -811,7 +899,7 @@ export default function DevicesPage() {
           </div>
           <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
             <div className="text-xs font-semibold uppercase tracking-wide text-slate-700">Captured minutes</div>
-            <div className="mt-1 text-2xl font-semibold text-slate-950">{minutes.length}</div>
+            <div className="mt-1 text-2xl font-semibold text-slate-950">{visibleMinutes.length}</div>
           </div>
           <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
             <div className="text-xs font-semibold uppercase tracking-wide text-slate-700">Registered devices</div>
@@ -836,7 +924,7 @@ export default function DevicesPage() {
             key={device.device_uuid}
             device={device}
             files={deviceFiles[device.device_uuid] || []}
-            minutes={minutes}
+            minutes={visibleMinutes}
             settings={settings[device.device_uuid] || normalizeSettings(device.hardware_info?.capture_settings)}
             onSaveSettings={saveSettings}
             onRename={renameDevice}
