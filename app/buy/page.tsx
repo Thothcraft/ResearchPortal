@@ -21,9 +21,9 @@ export default function BuyPage() {
   return <main className="min-h-screen bg-slate-950 px-5 py-16 text-white">
     <section className="mx-auto max-w-3xl rounded-3xl border border-slate-700 bg-slate-900 p-8">
       <div className="text-sm font-semibold uppercase tracking-[.25em] text-cyan-300">Thoth hardware</div>
-      <h1 className="mt-3 text-4xl font-semibold">One radar presence device</h1>
+      <h1 className="mt-3 text-4xl font-semibold">One radar and camera sensing device</h1>
       <p className="mt-3 text-3xl font-semibold">$500 USD</p>
-      <p className="mt-4 text-slate-300">Hardware is purchased separately from a subscription. Stripe Checkout applies promotion codes, tax, shipping, and destination eligibility.</p>
+      <p className="mt-4 text-slate-300">Includes the mmWave radar and camera hardware. The device is purchased separately from a subscription; Stripe Checkout applies promotion codes, tax, shipping, and destination eligibility.</p>
       <div className="mt-8 flex flex-wrap gap-3">
         {user ? <button onClick={buy} className="rounded-xl bg-cyan-400 px-5 py-3 font-semibold text-slate-950">Buy securely with Stripe</button> : <Link href="/auth" className="rounded-xl bg-cyan-400 px-5 py-3 font-semibold text-slate-950">Create account to purchase</Link>}
         <Link href="/pricing" className="rounded-xl border border-slate-600 px-5 py-3 font-semibold">Compare subscriptions</Link>

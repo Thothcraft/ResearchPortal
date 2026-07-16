@@ -7,10 +7,10 @@ import { useAuth } from '@/contexts/AuthContext';
 import { type BillingPlan, type BillingPeriod } from '@/lib/billing';
 
 const plans = [
-  { id: 'free', title: 'Free', features: ['One device', 'Basic occupied / unoccupied status'] },
-  { id: 'home', title: 'Home', features: ['Presence, maps, HAR and people count', 'Zones, labels, calibration and predictions'] },
-  { id: 'pro', title: 'Pro', features: ['Everything in Home', 'Up to ten devices', 'Spaces and cross-room views'] },
-  { id: 'research', title: 'Research', features: ['Everything in Pro', 'Detailed labels and packaged export', 'Academy and contextual assistant access'] },
+  { id: 'free', title: 'Free', features: ['One device in one room', 'Occupancy detection and XY location', 'Home Assistant integration', 'Data download and annotation'] },
+  { id: 'home', title: 'Home', features: ['Everything in Free', 'Up to five devices and smart rooms', 'Portal access for multi-device management'] },
+  { id: 'pro', title: 'Pro', features: ['Everything in Home', 'Up to ten devices', 'Run private AI detection models', 'Federated learning keeps training data local'] },
+  { id: 'research', title: 'Research', features: ['Everything in Pro', 'Detailed labels and packaged export', 'Research workspaces, Academy and contextual assistant'] },
 ] as const;
 
 export default function PricingPage() {
