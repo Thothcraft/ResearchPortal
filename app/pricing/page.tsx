@@ -7,10 +7,10 @@ import { useAuth } from '@/contexts/AuthContext';
 import { type BillingPlan, type BillingPeriod } from '@/lib/billing';
 
 const plans = [
-  { id: 'free', title: 'Free', features: ['One device in one room', 'Occupancy detection and XY location', 'Home Assistant integration', 'Data download and annotation'] },
-  { id: 'home', title: 'Home', features: ['Everything in Free', 'Up to five devices and smart rooms', 'Portal access for multi-device management'] },
-  { id: 'pro', title: 'Pro', features: ['Everything in Home', 'Up to ten devices', 'Run private AI detection models', 'Federated learning keeps training data local'] },
-  { id: 'research', title: 'Research', features: ['Everything in Pro', 'Detailed labels and packaged export', 'Research workspaces, Academy and contextual assistant'] },
+  { id: 'free', title: 'Free', devices: '01 device', note: 'A complete local room.', features: ['Occupancy detection', 'Normalized XY location', 'Home Assistant integration', 'Data download and annotation'] },
+  { id: 'home', title: 'Home', devices: '05 devices', note: 'A connected set of smart rooms.', features: ['Everything in Free', 'Multiple smart rooms', 'Remote Portal management', 'Unified capture timeline'] },
+  { id: 'pro', title: 'Pro', devices: '10 devices', note: 'Private intelligence at the edge.', features: ['Everything in Home', 'Private AI detection models', 'Federated learning', 'Local training data'] },
+  { id: 'research', title: 'Research', devices: '10 devices', note: 'The full research workflow.', features: ['Everything in Pro', 'Detailed labels and export', 'Research workspaces', 'Academy and assistant'] },
 ] as const;
 
 export default function PricingPage() {
@@ -19,6 +19,7 @@ export default function PricingPage() {
   const [period, setPeriod] = useState<BillingPeriod>('monthly');
   const [error, setError] = useState('');
   const [prices, setPrices] = useState<Record<string, { unit_amount: number; currency: string; interval?: string }>>({});
+  const annualAvailable = Object.keys(prices).some((key) => key.endsWith('_annual'));
 
   useEffect(() => {
     fetch('/api/proxy/stripe/catalog')
@@ -48,15 +49,15 @@ export default function PricingPage() {
     }
   };
 
-  return <main className="min-h-screen bg-slate-950 px-5 py-16 text-white">
-    <div className="mx-auto max-w-6xl">
-      <div className="text-sm font-semibold uppercase tracking-[.25em] text-cyan-300">Thoth plans</div>
-      <h1 className="mt-3 text-4xl font-semibold">Choose access separately from hardware</h1>
-      <p className="mt-3 max-w-2xl text-slate-300">Hardware is $500 once. Home starts at $5/month, Pro at $10/month, and Research at $20/month. Tax and promotion codes are finalized by Stripe.</p>
-      <div className="mt-8 inline-flex rounded-xl border border-slate-700 p-1">{(['monthly', 'annual'] as const).map((value) => <button key={value} onClick={() => setPeriod(value)} className={`rounded-lg px-5 py-2 capitalize ${period === value ? 'bg-cyan-400 text-slate-950' : 'text-slate-300'}`}>{value}</button>)}</div>
-      <div className="mt-8 grid gap-4 md:grid-cols-2 xl:grid-cols-4">{plans.map((plan) => <section key={plan.id} className="flex flex-col rounded-2xl border border-slate-700 bg-slate-900 p-5"><h2 className="text-2xl font-semibold">{plan.title}</h2><div className="mt-2 text-sm text-slate-400">{priceLabel(plan.id)}</div><ul className="my-6 flex-1 space-y-2 text-sm text-slate-200">{plan.features.map((feature) => <li key={feature}>• {feature}</li>)}</ul>{plan.id === 'free' ? <Link href={user ? '/home' : '/auth'} className="rounded-lg border border-slate-600 px-4 py-2 text-center font-semibold">{user ? 'Open dashboard' : 'Create account'}</Link> : user ? <button onClick={() => checkout(plan.id)} className="rounded-lg bg-cyan-400 px-4 py-2 font-semibold text-slate-950">{user.plan && user.plan !== 'free' ? 'Change plan in Stripe' : 'Choose plan'}</button> : <Link href="/auth" className="rounded-lg bg-cyan-400 px-4 py-2 text-center font-semibold text-slate-950">Create account to subscribe</Link>}</section>)}</div>
-      <div className="mt-8 flex flex-wrap gap-4">
-        <Link href="/buy" className="font-semibold text-cyan-300">Buy Thoth hardware →</Link>
+  return <main className="min-h-screen bg-[#f4f1e9] text-[#11110f]">
+    <header className="flex items-center justify-between border-b border-[#aaa59b] px-5 py-5 sm:px-8"><Link href="/" className="text-lg font-semibold">Thoth</Link><div className="flex gap-5 text-sm font-semibold"><Link href="/buy">Device</Link><Link href={user ? '/home' : '/auth'}>{user ? 'Dashboard' : 'Sign in'}</Link></div></header>
+    <section className="grid min-h-[58vh] items-end gap-8 px-5 py-16 sm:px-8 lg:grid-cols-[1.35fr_.65fr]">
+      <div><div className="text-xs font-bold uppercase tracking-[.2em]">Portal access / 2026</div><h1 className="mt-8 max-w-5xl text-[clamp(4.5rem,10vw,9rem)] font-semibold leading-[.82] tracking-[-.075em]">One room.<br/>Then many.</h1></div>
+      <div className="pb-2 text-lg leading-7"><p>Start with full local occupancy and XY location. Pay only when multiple rooms, private models, or research workflows need one Portal.</p><p className="mt-6 text-sm text-[#666159]">The $500 Thoth device is purchased separately. Stripe calculates tax, shipping and promotions.</p></div>
+    </section>
+    <section className="border-y border-[#aaa59b] px-5 py-5 sm:px-8"><div className="mx-auto flex max-w-7xl items-center justify-between"><span className="text-xs font-bold uppercase tracking-[.16em]">Billing cadence</span>{annualAvailable ? <div className="flex gap-1 rounded-full border border-[#8f8a81] p-1">{(['monthly', 'annual'] as const).map((value) => <button key={value} onClick={() => setPeriod(value)} className={`rounded-full px-5 py-2 text-sm capitalize ${period === value ? 'bg-[#11110f] text-white' : ''}`}>{value}</button>)}</div> : <span className="rounded-full border border-[#8f8a81] px-5 py-2 text-sm">Monthly billing</span>}</div></section>
+    <section className="grid border-b border-[#aaa59b] lg:grid-cols-4">{plans.map((plan, index) => <article key={plan.id} className={`flex min-h-[560px] flex-col border-[#aaa59b] p-6 lg:border-r ${plan.id === 'home' ? 'bg-[#c8d1b2]' : ''}`}><div className="flex justify-between text-xs font-bold uppercase tracking-[.15em]"><span>0{index + 1}</span><span>{plan.devices}</span></div><h2 className="mt-16 text-5xl font-semibold tracking-[-.06em]">{plan.title}</h2><div className="mt-3 text-xl font-semibold">{priceLabel(plan.id)}</div><p className="mt-8 min-h-14 text-[#5b5953]">{plan.note}</p><ul className="mt-8 flex-1 border-t border-[#8f8a81] text-sm">{plan.features.map((feature) => <li key={feature} className="border-b border-[#aaa59b] py-3">{feature}</li>)}</ul>{plan.id === 'free' ? <Link href={user ? '/home' : '/auth'} className="mt-8 rounded-full border border-[#11110f] px-4 py-3 text-center font-semibold">{user ? 'Open dashboard' : 'Start free'}</Link> : user ? <button onClick={() => checkout(plan.id)} className="mt-8 rounded-full bg-[#11110f] px-4 py-3 font-semibold text-white">{user.plan && user.plan !== 'free' ? 'Manage in Stripe' : `Choose ${plan.title}`}</button> : <Link href="/auth" className="mt-8 rounded-full bg-[#11110f] px-4 py-3 text-center font-semibold text-white">Create account</Link>}</article>)}</section>
+    <section className="grid gap-8 bg-[#11110f] px-5 py-20 text-[#f4f1e9] sm:px-8 lg:grid-cols-2"><div><div className="text-xs font-bold uppercase tracking-[.2em]">Hardware</div><h2 className="mt-7 text-6xl font-semibold leading-[.9] tracking-[-.06em]">Radar + camera.<br/>$500 once.</h2></div><div className="self-end"><p className="max-w-xl text-xl text-[#c7c2b9]">Every plan begins with the same local-first sensing device. A subscription changes scale and remote access, not core sensing.</p><Link href="/buy" className="mt-8 inline-block rounded-full bg-[#f4f1e9] px-6 py-3 font-semibold text-[#11110f]">See the Thoth device</Link>
         {user?.plan && user.plan !== 'free' && <button onClick={async () => {
           try {
             const portal = await post('/stripe/billing-portal', {});
@@ -64,9 +65,6 @@ export default function PricingPage() {
           } catch {
             setError('Billing portal is temporarily unavailable.');
           }
-        }} className="font-semibold text-cyan-300">Switch plans in Stripe →</button>}
-      </div>
-      {error && <p role="alert" className="mt-5 text-red-300">{error}</p>}
-    </div>
+        }} className="ml-4 font-semibold underline">Switch plans in Stripe</button>}{error && <p role="alert" className="mt-5 text-red-300">{error}</p>}</div></section>
   </main>;
 }

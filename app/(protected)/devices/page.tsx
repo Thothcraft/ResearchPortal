@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useApi } from '@/hooks/useApi';
 import type { ApiError } from '@/hooks/useApi';
 import { useAuth } from '@/contexts/AuthContext';
@@ -31,7 +31,7 @@ type Sensor = {
 type CaptureSettings = {
   labels: string[];
   sensors: Record<string, boolean>;
-  radar_detection_threshold_db: number;
+  radar_detection_threshold_normalized: number;
   occupancy_threshold_percent: number;
   yellow_threshold_percent: number;
   green_threshold_percent: number;
@@ -197,11 +197,17 @@ function matchesDevice(device: Device, minute: LocalMinuteSummary): boolean {
   return minuteKeys.some((key) => deviceKeys.includes(key));
 }
 
-function normalizeSettings(value?: CaptureSettings | null): CaptureSettings {
+function normalizeSettings(
+  value?: (Partial<CaptureSettings> & { radar_detection_threshold_db?: number }) | null,
+): CaptureSettings {
+  const radarThreshold = Number(
+    value?.radar_detection_threshold_normalized
+    ?? (value?.radar_detection_threshold_db != null ? Number(value.radar_detection_threshold_db) / 10 : 0.45),
+  );
   return {
     labels: Array.isArray(value?.labels) ? value!.labels.map(String).filter(Boolean) : [],
     sensors: { ...DEFAULT_SENSORS, ...(value?.sensors || {}) },
-    radar_detection_threshold_db: Number(value?.radar_detection_threshold_db ?? 8),
+    radar_detection_threshold_normalized: Math.min(0.95, Math.max(0.05, radarThreshold)),
     occupancy_threshold_percent: Number(value?.occupancy_threshold_percent ?? 50),
     yellow_threshold_percent: Number(value?.yellow_threshold_percent ?? 20),
     green_threshold_percent: Number(value?.green_threshold_percent ?? 60),
@@ -310,7 +316,7 @@ function DevicePanel({
   const [expanded, setExpanded] = useState(false);
   const [draftLabel, setDraftLabel] = useState(settings.labels.join(', '));
   const [draftSensors, setDraftSensors] = useState<Record<string, boolean>>(settings.sensors);
-  const [draftRadarThreshold, setDraftRadarThreshold] = useState(settings.radar_detection_threshold_db);
+  const [draftRadarThreshold, setDraftRadarThreshold] = useState(settings.radar_detection_threshold_normalized);
   const [draftOccupancyThreshold, setDraftOccupancyThreshold] = useState(settings.occupancy_threshold_percent);
   const [draftYellowThreshold, setDraftYellowThreshold] = useState(settings.yellow_threshold_percent);
   const [draftGreenThreshold, setDraftGreenThreshold] = useState(settings.green_threshold_percent);
@@ -332,7 +338,7 @@ function DevicePanel({
   useEffect(() => {
     setDraftLabel(settings.labels.join(', '));
     setDraftSensors(settings.sensors);
-    setDraftRadarThreshold(settings.radar_detection_threshold_db);
+    setDraftRadarThreshold(settings.radar_detection_threshold_normalized);
     setDraftOccupancyThreshold(settings.occupancy_threshold_percent);
     setDraftYellowThreshold(settings.yellow_threshold_percent);
     setDraftGreenThreshold(settings.green_threshold_percent);
@@ -352,7 +358,7 @@ function DevicePanel({
       const canonical = await onSaveSettings(device.device_uuid, {
       labels: draftLabel.split(',').map((label) => label.trim()).filter(Boolean),
       sensors: { ...DEFAULT_SENSORS, ...draftSensors },
-      radar_detection_threshold_db: draftRadarThreshold,
+      radar_detection_threshold_normalized: draftRadarThreshold,
       occupancy_threshold_percent: draftOccupancyThreshold,
       yellow_threshold_percent: draftYellowThreshold,
       green_threshold_percent: draftGreenThreshold,
@@ -367,7 +373,7 @@ function DevicePanel({
       revision: settings.revision,
       updated_at: settings.updated_at,
       });
-      setDraftRadarThreshold(canonical.radar_detection_threshold_db);
+      setDraftRadarThreshold(canonical.radar_detection_threshold_normalized);
       setDraftYellowThreshold(canonical.yellow_threshold_percent);
       setDraftGreenThreshold(canonical.green_threshold_percent);
       setSettingsStatus('saved');
@@ -442,8 +448,8 @@ function DevicePanel({
             <label className="mt-5 block text-sm font-medium text-slate-950">
               Radar detection threshold
               <div className="mt-2 flex items-center gap-3">
-                <input type="range" min="0" max="40" step="0.5" value={draftRadarThreshold} onChange={(event) => setDraftRadarThreshold(Number(event.target.value))} className="min-w-0 flex-1 accent-slate-950" />
-                <output className="w-16 text-right font-mono text-xs">{draftRadarThreshold.toFixed(1)} dB</output>
+                <input type="range" min="0.05" max="0.95" step="0.01" value={draftRadarThreshold} onChange={(event) => setDraftRadarThreshold(Number(event.target.value))} className="min-w-0 flex-1 accent-slate-950" />
+                <output className="w-16 text-right font-mono text-xs">{draftRadarThreshold.toFixed(2)}</output>
               </div>
             </label>
             <label className="mt-5 flex items-center justify-between gap-4 border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-950">
@@ -627,12 +633,14 @@ export default function DevicesPage() {
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState('');
   const [onlineOnly, setOnlineOnly] = useState(false);
+  const loadInFlight = useRef(false);
   const { get, put, delete: del } = useApi();
   const { user, isLoading: authLoading } = useAuth();
   const toast = useToast();
 
   const loadData = useCallback(async (showLoading = false) => {
-    if (authLoading || !user?.token) return;
+    if (authLoading || !user?.token || loadInFlight.current) return;
+    loadInFlight.current = true;
     if (showLoading) setLoading(true);
     try {
       const deviceRes = await get('/device/list?include_offline=true').catch(() => null);
@@ -682,6 +690,7 @@ export default function DevicesPage() {
     } catch (err) {
       toast.error('Load failed', err instanceof Error ? err.message : 'Unable to load devices');
     } finally {
+      loadInFlight.current = false;
       setLoading(false);
     }
   }, [authLoading, get, toast, user?.token]);
@@ -689,7 +698,7 @@ export default function DevicesPage() {
   useEffect(() => {
     if (authLoading || !user?.token) return;
     loadData(true);
-    const timer = window.setInterval(() => loadData(false), 1000);
+    const timer = window.setInterval(() => loadData(false), 500);
     return () => window.clearInterval(timer);
   }, [authLoading, loadData, user?.token]);
 

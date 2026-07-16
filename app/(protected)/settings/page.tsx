@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import Link from 'next/link';
 import { useAuth } from '@/contexts/AuthContext';
 import { getBillingPlanTitle } from '@/lib/billing';
 import { useTheme } from '@/contexts/ThemeContext';
@@ -26,7 +27,7 @@ export default function SettingsPage() {
   const { theme, setTheme } = useTheme();
   const { locale, setLocale, localeLabels } = useI18n();
   const [saved, setSaved] = useState(false);
-  const [billingPeriod, setBillingPeriod] = useState<'monthly' | 'annual'>('monthly');
+  const billingPeriod = 'monthly' as const;
   const [billingError, setBillingError] = useState('');
   const [billingLoading, setBillingLoading] = useState('');
   const { post } = useApi();
@@ -109,24 +110,9 @@ export default function SettingsPage() {
           <User className="w-5 h-5 text-indigo-400" />
           <h2 className="text-xl font-semibold text-white">Profile</h2>
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div>
-            <label className="block text-sm text-slate-400 mb-2">Username</label>
-            <input
-              type="text"
-              value={user?.username || ''}
-              disabled
-              className="w-full px-4 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white disabled:opacity-50"
-            />
-          </div>
-          <div>
-            <label className="block text-sm text-slate-400 mb-2">Email</label>
-            <input
-              type="email"
-              placeholder="user@example.com"
-              className="w-full px-4 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
-            />
-          </div>
+        <div className="flex flex-wrap items-center justify-between gap-4 border border-slate-600 bg-slate-700/30 p-4">
+          <div><div className="text-sm text-slate-400">Signed in as</div><div className="mt-1 font-semibold text-white">{user?.username || 'User'}</div></div>
+          <Link href="/profile" className="bg-slate-950 px-4 py-2 text-sm font-semibold text-white">Open profile and email status</Link>
         </div>
       </div>
 
@@ -313,7 +299,7 @@ export default function SettingsPage() {
             </div>
           </div>
           <div className="flex gap-2 rounded-lg bg-slate-900/50 p-1">
-            {(['monthly', 'annual'] as const).map((period) => <button key={period} type="button" onClick={() => setBillingPeriod(period)} className={`flex-1 rounded-md px-3 py-2 text-sm font-semibold capitalize ${billingPeriod === period ? 'bg-indigo-600 text-white' : 'text-slate-300'}`}>{period}</button>)}
+            <span className="flex-1 rounded-md bg-indigo-600 px-3 py-2 text-center text-sm font-semibold text-white">Monthly billing</span>
           </div>
           <div className="grid gap-3 md:grid-cols-3">
             {(['home', 'pro', 'research'] as const).map((plan) => (

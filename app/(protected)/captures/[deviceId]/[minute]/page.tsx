@@ -34,6 +34,14 @@ function frameImage(frame: any, fallback: any) {
   return image;
 }
 
+function viridis(value: number) {
+  const stops = [[68, 1, 84], [59, 82, 139], [33, 145, 140], [94, 201, 98], [253, 231, 37]];
+  const scaled = Math.max(0, Math.min(1, value)) * (stops.length - 1);
+  const index = Math.min(stops.length - 2, Math.floor(scaled));
+  const amount = scaled - index;
+  return stops[index].map((channel, offset) => Math.round(channel + (stops[index + 1][offset] - channel) * amount));
+}
+
 function Heatmap({ payload, tracking = false }: { payload: any; tracking?: boolean }) {
   const ref = useRef<HTMLCanvasElement>(null);
   const frames = Array.isArray(payload?.frames) && payload.frames.length ? payload.frames : [payload];
@@ -43,7 +51,7 @@ function Heatmap({ payload, tracking = false }: { payload: any; tracking?: boole
   const latest = frames[Math.min(frameIndex, frames.length - 1)] || payload;
   const confirmed = latest?.detected === true;
   const snr = Number(latest?.snr_db);
-  const threshold = Number(latest?.threshold_db ?? payload?.threshold_db);
+  const threshold = Number(latest?.threshold_normalized ?? payload?.threshold_normalized);
   const detectedFrames = Number(payload?.occupancy?.detected_frames) || 0;
   const evaluatedFrames = Number(payload?.occupancy?.evaluated_frames) || 0;
   const detectedPercent = evaluatedFrames ? detectedFrames * 100 / evaluatedFrames : 0;
@@ -56,12 +64,12 @@ function Heatmap({ payload, tracking = false }: { payload: any; tracking?: boole
     if (!ctx) return;
     const rows = z.length;
     const cols = Math.max(...z.map((row: unknown[]) => row?.length || 0));
-    const values = z.flat().filter(Number.isFinite) as number[];
-    const min = Math.min(...values), max = Math.max(...values);
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
     z.forEach((row: number[], y: number) => row.forEach((value, x) => {
-      const t = (value - min) / (max - min || 1);
-      ctx.fillStyle = `hsl(${240 - t * 240} 90% 50%)`;
-      ctx.fillRect(x * canvas.width / cols, y * canvas.height / rows, canvas.width / cols + 1, canvas.height / rows + 1);
+      const t = Math.max(0, Math.min(1, Number(value) || 0));
+      const [red, green, blue] = viridis(t);
+      ctx.fillStyle = `rgb(${red} ${green} ${blue})`;
+      ctx.fillRect(x * canvas.width / cols, (rows - 1 - y) * canvas.height / rows, canvas.width / cols + 1, canvas.height / rows + 1);
     }));
     if (tracking) {
       const room = payload?.room || {};
@@ -97,7 +105,8 @@ function Heatmap({ payload, tracking = false }: { payload: any; tracking?: boole
     return () => window.clearInterval(timer);
   }, [frames.length, payload?.frame_interval_ms, playing]);
   return <div className="space-y-3">
-    <canvas ref={ref} width={640} height={360} className="h-auto w-full bg-slate-950" />
+    <canvas ref={ref} width={720} height={720} className="mx-auto h-auto w-full max-w-3xl bg-slate-950" />
+    {tracking && <div className="mx-auto flex max-w-3xl items-center gap-3 text-[11px] font-mono text-slate-600"><span>0</span><div className="h-2 flex-1 rounded-full" style={{ background: 'linear-gradient(90deg,#440154,#3b528b,#21918c,#5ec962,#fde725)' }} /><span>1 normalized intensity</span></div>}
     {frames.length > 1 && <div className="flex items-center gap-3 text-xs text-slate-600">
       <button type="button" onClick={() => setPlaying((value) => !value)} className="rounded-md border border-slate-300 bg-white px-3 py-1.5 font-semibold hover:bg-slate-50">{playing ? 'Pause' : 'Play'}</button>
       <input aria-label="Localization frame" type="range" min={0} max={frames.length - 1} value={frameIndex} onChange={(event) => { setPlaying(false); setFrameIndex(Number(event.target.value)); }} className="min-w-0 flex-1 accent-cyan-600" />
@@ -108,7 +117,7 @@ function Heatmap({ payload, tracking = false }: { payload: any; tracking?: boole
         {confirmed ? 'Target detected' : 'No current target'}
       </span>
       {Number.isFinite(snr) && Number.isFinite(threshold) && <span className="font-mono text-slate-600">
-        SNR {snr.toFixed(1)} dB / threshold {threshold.toFixed(1)} dB
+        Normalized gate {threshold.toFixed(2)} / diagnostic SNR {snr.toFixed(1)} dB
       </span>}
       {payload?.occupancy && <span className="font-semibold capitalize text-slate-700">
         Minute: {occupancyLabel} — {detectedFrames} / {evaluatedFrames} frames detected ({Math.round(detectedPercent * 10) / 10}%)
@@ -178,13 +187,13 @@ export default function CaptureViewerPage() {
   useEffect(() => {
     load();
     if (!waiting) return;
-    const timer = window.setInterval(load, 2500);
+    const timer = window.setInterval(load, 1000);
     return () => window.clearInterval(timer);
   }, [load, waiting]);
 
   useEffect(() => {
     loadProgress();
-    const timer = window.setInterval(loadProgress, 750);
+    const timer = window.setInterval(loadProgress, 400);
     return () => window.clearInterval(timer);
   }, [loadProgress]);
 
