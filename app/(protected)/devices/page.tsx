@@ -319,6 +319,7 @@ function DevicePanel({
   const hardware = device.hardware_info || {};
   const sensors = hardware.sensors || hardware.available_sensors || [];
   const [expanded, setExpanded] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [draftLabel, setDraftLabel] = useState(settings.labels.join(', '));
   const [draftSensors, setDraftSensors] = useState<Record<string, boolean>>(settings.sensors);
   const [draftRadarThreshold, setDraftRadarThreshold] = useState(settings.radar_detection_threshold_normalized);
@@ -381,11 +382,20 @@ function DevicePanel({
   };
 
   return (
-    <article className={`overflow-hidden rounded-2xl border border-slate-200 shadow-sm transition ${device.online ? 'bg-white' : 'bg-slate-50 opacity-80'}`}>
+    <article className={`relative overflow-hidden rounded-2xl border border-slate-200 shadow-sm transition ${device.online ? 'bg-white' : 'bg-slate-50 opacity-80'}`}>
+      <button
+        type="button"
+        aria-label={`Delete ${device.device_name || 'device'}`}
+        title="Detach device"
+        onClick={(event) => { event.stopPropagation(); onRemove(device.device_uuid); }}
+        className="absolute right-4 top-4 z-10 grid h-8 w-8 place-items-center rounded-full border border-slate-300 bg-white text-slate-500 hover:border-red-300 hover:bg-red-50 hover:text-red-700"
+      >
+        <X className="h-4 w-4" />
+      </button>
       <button
         type="button"
         onClick={() => setExpanded((current) => !current)}
-        className="flex w-full flex-col gap-4 border-b border-slate-200 p-4 text-left transition hover:bg-slate-50 sm:p-5 lg:flex-row lg:items-start lg:justify-between"
+        className="flex w-full flex-col gap-4 border-b border-slate-200 p-4 pr-16 text-left transition hover:bg-slate-50 sm:p-5 sm:pr-16 lg:flex-row lg:items-start lg:justify-between"
       >
         <div className="flex items-start gap-3">
           <div className="shrink-0 rounded-xl bg-slate-950 p-3 text-white">
@@ -415,6 +425,11 @@ function DevicePanel({
           {openMinute ? <iframe title={`Captured minute ${openMinute}`} src={`/captures/${encodeURIComponent(device.device_uuid)}/${encodeURIComponent(openMinute)}?embedded=1`} className="h-[calc(94vh-82px)] w-full border-0"/> : <>
           <div className="grid gap-0 lg:grid-cols-[360px_1fr]">
           <section className="border-b border-slate-200 p-4 sm:p-5 lg:border-b-0 lg:border-r">
+            <button type="button" onClick={() => setSettingsOpen((value) => !value)} className="flex w-full items-center justify-between border border-slate-300 bg-white px-3 py-3 text-left text-sm font-semibold">
+              <span className="inline-flex items-center gap-2"><SlidersHorizontal className="h-4 w-4" />Collection settings</span>
+              {settingsOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+            </button>
+            {settingsOpen && <div className="mt-5">
             <div className="mb-6"><label className="text-xs font-semibold uppercase tracking-wide text-slate-700">Device name</label><div className="mt-2 flex gap-2"><input value={draftName} onChange={(event) => setDraftName(event.target.value)} className="min-w-0 flex-1 border border-slate-400 bg-white px-3 py-2"/><button type="button" onClick={() => onRename(device.device_uuid, draftName)} className="inline-flex items-center gap-2 bg-slate-950 px-3 text-sm font-semibold text-white"><Pencil className="h-4 w-4"/>Save</button></div><button type="button" onClick={() => onRemove(device.device_uuid)} className="mt-3 inline-flex items-center gap-2 text-sm font-semibold text-red-700"><Trash2 className="h-4 w-4"/>Remove device</button></div>
             <div className="mb-4 flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-slate-800">
               <SlidersHorizontal className="h-4 w-4" />
@@ -496,6 +511,7 @@ function DevicePanel({
                 )}
               </div>
             </div>
+            </div>}
           </section>
 
           <section className="min-w-0 p-4 sm:p-5">
@@ -841,16 +857,10 @@ export default function DevicesPage() {
   const removeDevice = async (deviceId: string) => {
     const device = devices.find((item) => item.device_uuid === deviceId);
     const name = device?.device_name || deviceId;
-    const choice = window.prompt(`Type DETACH to remove ${name} while retaining uploaded cloud files.\n\nType ERASE ${name} to permanently erase its settings, live history, credentials, and cloud captures.`);
-    if (!choice) return;
-    const mode = choice === 'DETACH' ? 'detach' : choice === `ERASE ${name}` ? 'erase' : null;
-    if (!mode) {
-      toast.error('Confirmation did not match', 'No device data was changed.');
-      return;
-    }
-    await del(`/device/${deviceId}?mode=${mode}&confirmation=${encodeURIComponent(choice)}`);
+    if (!window.confirm(`Detach ${name}? Uploaded cloud files will be retained.`)) return;
+    await del(`/device/${deviceId}?mode=detach`);
     setDevices((current) => current.filter((device) => device.device_uuid !== deviceId));
-    toast.success(mode === 'erase' ? 'Device permanently erased' : 'Device detached');
+    toast.success('Device detached');
   };
 
   const downloadFromUrl = useCallback(async (url: string, fallbackName: string) => {
