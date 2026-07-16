@@ -134,7 +134,10 @@ function normalizeLabelValue(value: unknown): string {
 }
 
 function extractLabels(manifest: any): string[] {
-  const labels = Array.isArray(manifest?.labels) ? manifest.labels : [];
+  const labels = [
+    ...(Array.isArray(manifest?.labels) ? manifest.labels : []),
+    ...(Array.isArray(manifest?.minute_summary?.labels) ? manifest.minute_summary.labels : []),
+  ];
   const cleaned: string[] = [];
   for (const label of labels) {
     const value = normalizeLabelValue(label);
@@ -143,6 +146,20 @@ function extractLabels(manifest: any): string[] {
     }
   }
   return cleaned;
+}
+
+function resolvedMinuteLabels(
+  labels: string[],
+  progress: MinuteSummary['progress'],
+  completed: boolean,
+): string[] {
+  if (labels.length) return labels;
+  const analyzed = (progress?.chunks || []).filter((chunk) => chunk.state === 'occupied' || chunk.state === 'empty');
+  const latest = analyzed.at(-1);
+  if (latest) {
+    return [latest.state, latest.state === 'occupied' ? 'present' : 'absent'];
+  }
+  return [completed ? 'no-radar-data' : 'collecting'];
 }
 
 function labelsFromMinutePath(relativePath: string): string[] {
@@ -293,10 +310,11 @@ export function listMinuteSummaries(): MinuteSummary[] {
     const paths = getMinutePaths(minuteDir);
     const manifest = readJsonPreview(paths.manifest);
     const deviceInfo = extractDeviceInfo(manifest, minuteDir);
-    const labels = Array.from(new Set([...labelsFromMinutePath(candidate.relativePath), ...extractLabels(manifest)]));
+    const manifestLabels = Array.from(new Set([...labelsFromMinutePath(candidate.relativePath), ...extractLabels(manifest)]));
     const completed = Boolean(manifest?.capture_finished);
     const minute = minuteIdFor(candidate.relativePath);
     const progress = getMinuteProgress(paths, manifest);
+    const labels = resolvedMinuteLabels(manifestLabels, progress, completed);
     minutes.push({
       minute,
       minuteName: candidate.minuteName,
@@ -352,9 +370,10 @@ export function getMinuteDetail(minute: string): MinuteDetail | null {
   const manifest = readJsonPreview(paths.manifest);
   const deviceInfo = extractDeviceInfo(manifest, minuteDir);
   const relativePath = existingSummary?.relativePath || minuteName;
-  const labels = Array.from(new Set([...labelsFromMinutePath(relativePath), ...extractLabels(manifest)]));
+  const manifestLabels = Array.from(new Set([...labelsFromMinutePath(relativePath), ...extractLabels(manifest)]));
   const completed = Boolean(manifest?.capture_finished);
   const progress = getMinuteProgress(paths, manifest);
+  const labels = resolvedMinuteLabels(manifestLabels, progress, completed);
   const summary = existingSummary || {
     minute,
     minuteName,

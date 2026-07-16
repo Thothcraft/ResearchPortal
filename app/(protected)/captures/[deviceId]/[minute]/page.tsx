@@ -80,7 +80,13 @@ function normalizeChunk(entry: any, fallbackIndex = 0) {
   const occupancy = entry?.occupancy && typeof entry.occupancy === 'object' ? entry.occupancy : {};
   const index = Number(entry?.chunk_index ?? entry?.index ?? fallbackIndex);
   const status = String(entry?.status || entry?.state || occupancy?.label || 'loading');
-  const state = status === 'occupied' || status === 'empty' ? status : 'loading';
+  const state = status === 'occupied' || status === 'empty'
+    ? status
+    : status === 'waiting'
+      ? 'waiting'
+      : status === 'error'
+        ? 'error'
+        : 'loading';
   const locationValue = entry?.location;
   const location = Array.isArray(locationValue)
     ? { x: Number(locationValue[0]), y: Number(locationValue[1]) }
@@ -89,7 +95,7 @@ function normalizeChunk(entry: any, fallbackIndex = 0) {
     index,
     state,
     classification: occupancy?.classification || entry?.classification || (state === 'occupied' ? 'green' : state === 'empty' ? 'red' : undefined),
-    prediction: occupancy?.label || entry?.prediction || state,
+    prediction: occupancy?.label || entry?.prediction || (state === 'loading' ? 'processing' : state === 'error' ? 'analysis error' : state),
     detectedFrames: Number(occupancy?.detected_frames ?? entry?.detected_frames ?? entry?.detectedFrames ?? 0),
     evaluatedFrames: Number(occupancy?.evaluated_frames ?? entry?.evaluated_frames ?? entry?.evaluatedFrames ?? 0),
     ratio: Number(occupancy?.ratio ?? entry?.ratio ?? 0),
@@ -316,14 +322,14 @@ export default function CaptureViewerPage() {
   });
   liveChunks.forEach((entry: any) => chunkByIndex.set(Number(entry?.chunk_index), normalizeChunk(entry)));
   const chunks = Array.from(chunkByIndex.values())
-    .filter((chunk) => chunk.state !== 'loading' || chunk.index === Math.max(...Array.from(chunkByIndex.keys())))
+    .filter((chunk) => chunk.state !== 'waiting')
     .sort((a, b) => a.index - b.index);
 
   return <div className="space-y-6 text-slate-950">
     <header className="border border-slate-300 bg-white p-5"><div className="text-xs font-semibold uppercase text-slate-600">Live capture metadata</div><h1 className="mt-1 font-mono text-2xl font-semibold">{params.minute}</h1><p className="mt-2 text-sm text-slate-700">Device {params.deviceId}</p></header>
     {waiting && <div className="sr-only" role="status">Live metadata is updating while capture files remain on the device.</div>}
     <section className="border border-slate-300 bg-white p-4">
-      <div className="mb-4"><div className="text-xs font-semibold uppercase tracking-wide text-slate-600">Detection windows</div><h2 className="mt-1 text-xl font-semibold">All analyzed chunks</h2></div>
+      <div className="mb-4"><div className="text-xs font-semibold uppercase tracking-wide text-slate-600">Detection windows</div><h2 className="mt-1 text-xl font-semibold">All captured chunks and detections</h2></div>
       {chunks.length ? <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
         {chunks.map((chunk) => {
           const location = chunk.location && Number.isFinite(Number(chunk.location.x)) && Number.isFinite(Number(chunk.location.y))

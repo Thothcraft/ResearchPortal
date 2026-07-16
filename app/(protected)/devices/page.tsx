@@ -232,7 +232,15 @@ function labelsForFile(file: DeviceFileSummary): string[] {
     file.metadata?.label,
     file.occupancy?.label,
   ];
-  return Array.from(new Set(candidates.map((value) => String(value || '').trim()).filter(Boolean)));
+  const labels = Array.from(new Set(candidates.map((value) => String(value || '').trim()).filter(Boolean)));
+  if (labels.length) return labels;
+  const chunks = Array.isArray(file.progress?.chunks) ? file.progress.chunks : [];
+  const latest = chunks.filter((chunk: any) => ['occupied', 'empty'].includes(String(chunk?.state))).at(-1);
+  if (latest) {
+    const state = String(latest.state);
+    return [state, state === 'occupied' ? 'present' : 'absent'];
+  }
+  return [chunks.some((chunk: any) => String(chunk?.state || '') !== 'waiting') ? 'processing' : 'no-radar-data'];
 }
 
 function normalizeProgress(value: any): NonNullable<LocalMinuteSummary['progress']> {
@@ -523,7 +531,7 @@ function DevicePanel({
                             </span>
                           )) : (
                             <span className="border border-slate-300 bg-slate-50 px-2 py-1">
-                              {minute.relativePath}
+                              no-radar-data
                             </span>
                           )}
                         </div>
