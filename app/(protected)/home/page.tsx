@@ -85,9 +85,9 @@ export default function HomePage() {
   return <div className="ai-home">
     <section className="ai-home-stage">
       <div className="ai-home-orbit" />
-      <div className="ai-home-kicker"><Sparkles/> Thoth intelligence</div>
-      <h1>Observe.<br/>Ask. Act.</h1>
-      <p className="ai-home-intro">One assistant for your account, devices, minute captures, and research workflow. Device controls are delivered through Brain and acknowledged by the edge.</p>
+      <div className="ai-home-kicker"><Sparkles/> Home</div>
+      <h1>Your devices<br/>and assistant.</h1>
+      <p className="ai-home-intro">Ask about your account, devices, captures, and research workflow. Device controls are delivered through Brain and acknowledged by the edge.</p>
       <div ref={logRef} className="ai-home-log">
         {messages.map((message, index) => <div key={index} className={`ai-home-message ${message.role}`}>{message.content}</div>)}
         {busy && <div className="ai-home-message assistant">Reasoning across your live system...</div>}
@@ -99,7 +99,6 @@ export default function HomePage() {
       <div className="ai-home-prompts">
         <button onClick={() => ask('Which devices are online?')}>Which devices are online?</button>
         <button onClick={() => ask('Start data collection on my online device')}>Start collection</button>
-        <button onClick={() => ask('Label the current chunk occupied')}>Label current chunk</button>
       </div>
     </section>
     <aside className="ai-home-rail">

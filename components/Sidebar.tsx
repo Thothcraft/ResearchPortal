@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
-import { Home, Monitor, LogOut, MessageCircle, Users, BookOpen, Shield, UserRound, Settings, ChevronUp } from 'lucide-react';
+import { Home, Monitor, LogOut, Users, BookOpen, Shield, UserRound, Settings, ChevronUp } from 'lucide-react';
 
 export default function Sidebar() {
   const pathname = usePathname();
@@ -13,7 +13,6 @@ export default function Sidebar() {
   const items = [
     { name: 'Home', href: '/home', icon: Home },
     { name: 'Devices', href: '/devices', icon: Monitor },
-    { name: 'Assistant', href: '/chatbot', icon: MessageCircle },
     ...(user?.role === 1 ? [{ name: 'Admin', href: '/admin', icon: Shield }] : []),
     ...(user?.role === 2 ? [{ name: 'Members', href: '/members', icon: Users }, { name: 'Labs', href: '/labs', icon: BookOpen }] : []),
   ];
