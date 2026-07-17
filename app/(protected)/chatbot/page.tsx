@@ -29,6 +29,12 @@ type SystemStats = {
   models: { total: number; best_accuracy: number | null };
 };
 
+type AssistantResponse = {
+  success: boolean;
+  response: string;
+  chat_id: string;
+};
+
 export default function ChatbotPage() {
   const [messages, setMessages] = useState<Message[]>([
     {
@@ -123,7 +129,11 @@ export default function ChatbotPage() {
         query: userMessage.content,
         chat_id: chatId,
         context: context
-      });
+      }) as AssistantResponse | null;
+
+      if (!response?.success || !response.response) {
+        throw new Error('The assistant returned an invalid response.');
+      }
       
       // Store chat_id for conversation continuity
       if (response?.chat_id && !chatId) {
@@ -133,17 +143,18 @@ export default function ChatbotPage() {
       const assistantMessage: Message = {
         id: (Date.now() + 1).toString(),
         role: 'assistant',
-        content: response?.response || 'I apologize, but I couldn\'t process your request. Please try again.',
+        content: response.response,
         timestamp: new Date(),
       };
 
       setMessages((prev) => [...prev, assistantMessage]);
     } catch (error) {
       console.error('Chat error:', error);
+      const detail = error instanceof Error ? error.message : 'Unknown assistant error';
       const errorMessage: Message = {
         id: (Date.now() + 1).toString(),
         role: 'assistant',
-        content: 'I\'m sorry, I encountered an error processing your request. Please try again later.',
+        content: `I couldn't complete that request: ${detail}`,
         timestamp: new Date(),
       };
       setMessages((prev) => [...prev, errorMessage]);

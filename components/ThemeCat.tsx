@@ -10,6 +10,7 @@ export default function ThemeCat() {
     { role: 'assistant', content: 'Hello! I\'m your ThothCraft AI assistant. How can I help you today?' }
   ]);
   const [isLoading, setIsLoading] = useState(false);
+  const [chatId, setChatId] = useState<string | null>(null);
   const chatMessagesRef = useRef<HTMLDivElement>(null);
   const { post } = useApi();
 
@@ -28,22 +29,22 @@ export default function ThemeCat() {
     try {
       const response = await post('/query', {
         query: userMessage,
+        chat_id: chatId,
         context: {},
       });
 
       if (response?.success && response.response) {
+        if (response.chat_id) setChatId(response.chat_id);
         setChatMessages(prev => [...prev, { role: 'assistant', content: response.response }]);
       } else {
-        setChatMessages(prev => [...prev, {
-          role: 'assistant',
-          content: 'Sorry, I encountered an error. Please try again.'
-        }]);
+        throw new Error('The assistant returned an invalid response.');
       }
     } catch (error) {
       console.error('Chat error:', error);
+      const detail = error instanceof Error ? error.message : 'Unknown assistant error';
       setChatMessages(prev => [...prev, {
         role: 'assistant',
-        content: 'Sorry, I encountered an error. Please try again.'
+        content: `I couldn't complete that request: ${detail}`
       }]);
     } finally {
       setIsLoading(false);
