@@ -285,25 +285,33 @@ export default function SettingsPage() {
       </div>
 
       {/* Subscription Plan */}
-      <div className="bg-slate-800/50 backdrop-blur-sm rounded-xl border border-slate-700 p-6">
+      <div className="bg-slate-950 text-white backdrop-blur-sm rounded-2xl border border-slate-700 p-6 shadow-2xl">
         <div className="flex items-center gap-3 mb-6">
           <Crown className="w-5 h-5 text-yellow-400" />
           <h2 className="text-xl font-semibold text-white">Subscription Plan</h2>
         </div>
-        
+
         <div className="space-y-4">
-          <div className="flex items-center justify-between p-4 bg-slate-900/50 rounded-lg border border-slate-700">
+          <div className="flex items-center justify-between p-4 bg-white/5 rounded-xl border border-white/10">
             <div>
               <h3 className="text-lg font-medium text-white capitalize">{getBillingPlanTitle(user?.plan || 'free')}</h3>
               <p className="text-sm text-slate-400">Billing state is synchronized from signed Stripe webhooks.</p>
             </div>
+            <a
+              href="https://thothcraft.com/product"
+              target="_blank"
+              rel="noreferrer"
+              className="rounded-full border border-white/15 bg-white/5 px-4 py-2 text-sm font-semibold text-white transition hover:bg-white/10"
+            >
+              Buy device
+            </a>
           </div>
-          <div className="flex gap-2 rounded-lg bg-slate-900/50 p-1">
-            <span className="flex-1 rounded-md bg-indigo-600 px-3 py-2 text-center text-sm font-semibold text-white">Monthly billing</span>
+          <div className="flex gap-2 rounded-xl bg-white/5 p-1 border border-white/10">
+            <span className="flex-1 rounded-lg bg-indigo-600 px-3 py-2 text-center text-sm font-semibold text-white">Monthly billing</span>
           </div>
           <div className="grid gap-3 md:grid-cols-3">
             {(['home', 'pro', 'research'] as const).map((plan) => (
-              <button key={plan} type="button" disabled={Boolean(billingLoading)} onClick={() => openCheckout(plan)} className="rounded-lg border border-indigo-500 bg-indigo-700 p-4 text-left text-white transition hover:bg-indigo-600 disabled:opacity-60">
+              <button key={plan} type="button" disabled={Boolean(billingLoading)} onClick={() => openCheckout(plan)} className="rounded-xl border border-white/10 bg-white/5 p-4 text-left text-white transition hover:bg-white/10 disabled:opacity-60">
                 {plan === 'research' ? <Crown className="mb-2 h-5 w-5" /> : <Zap className="mb-2 h-5 w-5" />}
                 <h4 className="font-semibold capitalize">{billingLoading === plan ? 'Opening…' : plan}</h4>
                 <p className="mt-1 text-xs opacity-80">{user?.plan && user.plan !== 'free' ? 'Manage or switch this plan in Stripe.' : 'Price and applicable discount shown securely by Stripe.'}</p>
@@ -311,7 +319,7 @@ export default function SettingsPage() {
             ))}
           </div>
           {user?.plan !== 'free' && (
-            <button type="button" onClick={openBillingPortal} disabled={Boolean(billingLoading)} className="w-full p-3 bg-slate-700 hover:bg-slate-600 rounded-lg text-slate-300 transition-colors flex items-center justify-center gap-2 disabled:opacity-60">
+            <button type="button" onClick={openBillingPortal} disabled={Boolean(billingLoading)} className="w-full p-3 bg-white/5 hover:bg-white/10 rounded-xl text-white transition-colors flex items-center justify-center gap-2 disabled:opacity-60 border border-white/10">
               <CreditCard className="w-4 h-4" />
               {billingLoading === 'portal' ? 'Opening…' : 'Manage or switch plan in Stripe'}
             </button>

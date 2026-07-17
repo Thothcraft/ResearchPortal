@@ -36,12 +36,30 @@ export default function HomePage() {
 
   const ask = async (text: string) => {
     if (!text.trim() || busy) return;
-    setMessages((current) => [...current, { role: 'user', content: text.trim() }]);
+    const prompt = text.trim();
+    const onlineDevices = devices.filter((device) => device.online);
+
+    if (/which devices are online\??/i.test(prompt)) {
+      setMessages((current) => [
+        ...current,
+        { role: 'user', content: prompt },
+        {
+          role: 'assistant',
+          content: onlineDevices.length
+            ? `Online devices: ${onlineDevices.map((device) => device.device_name).join(', ')}.`
+            : 'No devices are online right now.',
+        },
+      ]);
+      setInput('');
+      return;
+    }
+
+    setMessages((current) => [...current, { role: 'user', content: prompt }]);
     setInput('');
     setBusy(true);
     try {
       const response = await post('/query', {
-        query: text.trim(),
+        query: prompt,
         chat_id: chatId,
         context: {
           surface: 'portal-home',
