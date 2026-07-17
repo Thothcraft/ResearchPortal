@@ -183,7 +183,7 @@ export default function ChatbotPage() {
   };
 
   if (user?.plan !== 'research') {
-    return <div className="m-8 rounded-xl border border-amber-700 bg-slate-900 p-8 text-white"><h1 className="text-2xl font-semibold">Research assistant</h1><p className="mt-3 text-slate-300">The account-scoped contextual assistant is available on the Research plan.</p><a href="/pricing" className="mt-5 inline-block rounded-lg bg-indigo-500 px-4 py-2 font-semibold">View Research pricing</a></div>;
+    return <div className="m-8 rounded-xl border border-amber-700 bg-slate-900 p-8 text-white"><h1 className="text-2xl font-semibold">Research assistant</h1><p className="mt-3 text-slate-300">The account-scoped contextual assistant is available on the Research plan.</p><a href="https://thothcraft.com/plans" className="mt-5 inline-block rounded-lg bg-indigo-500 px-4 py-2 font-semibold">View Research pricing</a></div>;
   }
 
   return (

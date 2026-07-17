@@ -80,7 +80,7 @@ export default function ProfilePage() {
 
       <aside className="space-y-4">
         <div className="border border-slate-300 bg-white p-5"><Mail className="h-5 w-5" /><h2 className="mt-3 font-semibold">Email</h2><p className="mt-1 break-all text-sm text-slate-600">{profile.email || 'No email stored'}</p><p className={`mt-3 inline-flex items-center gap-1 text-xs font-semibold ${profile.email_verified ? 'text-emerald-700' : 'text-amber-700'}`}><BadgeCheck className="h-4 w-4" />{profile.email_verified ? 'Verified' : 'Verification pending'}</p>{profile.email && !profile.email_verified && <button type="button" onClick={resend} className="mt-4 block text-sm font-semibold underline">Resend verification</button>}</div>
-        <div className="border border-slate-300 bg-[#c8d1b2] p-5"><div className="text-xs font-semibold uppercase tracking-[.16em]">Plan</div><p className="mt-2 text-2xl font-semibold capitalize">{profile.plan || user?.plan || 'free'}</p><div className="mt-4 flex gap-3 text-sm font-semibold"><Link href="/pricing" className="underline">Compare plans</Link><Link href="/buy" className="underline">Buy device</Link></div></div>
+        <div className="border border-slate-300 bg-[#c8d1b2] p-5"><div className="text-xs font-semibold uppercase tracking-[.16em]">Plan</div><p className="mt-2 text-2xl font-semibold capitalize">{profile.plan || user?.plan || 'free'}</p><div className="mt-4 flex gap-3 text-sm font-semibold"><Link href="https://thothcraft.com/plans" className="underline">Compare plans</Link><Link href="https://thothcraft.com/product" className="underline">Buy device</Link></div></div>
       </aside>
     </section>
   </div>;
