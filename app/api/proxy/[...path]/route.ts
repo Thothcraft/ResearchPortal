@@ -92,7 +92,7 @@ async function proxy(
       });
 
       req.on('error', reject);
-      req.setTimeout(30000, () => {
+      req.setTimeout(45000, () => {
         req.destroy(new Error('Backend request timeout'));
       });
 

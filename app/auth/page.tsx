@@ -10,7 +10,8 @@ export default function AuthPage() {
   const [mode, setMode] = useState<'signin' | 'register'>('signin');
   const [notice, setNotice] = useState('');
   const [pendingEmail, setPendingEmail] = useState('');
-  const [registrationConfigured, setRegistrationConfigured] = useState(true);
+  const [registrationAvailable, setRegistrationAvailable] = useState<boolean | null>(null);
+  const [emailVerificationAvailable, setEmailVerificationAvailable] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const router = useRouter();
   const { login, register, error, isAuthenticated } = useAuth();
@@ -19,7 +20,17 @@ export default function AuthPage() {
     else if (new URLSearchParams(window.location.search).get('verified') === '1') setNotice('Email verified. Sign in to continue.');
   }, [isAuthenticated, router]);
   useEffect(() => {
-    fetch('/api/proxy/registration-status').then((response) => response.json()).then((value) => setRegistrationConfigured(value.email_registration_configured === true && value.email_verification_check_configured === true)).catch(() => undefined);
+    fetch('/api/proxy/registration-status')
+      .then(async (response) => {
+        if (!response.ok) throw new Error(`Registration status returned ${response.status}`);
+        return response.json();
+      })
+      .then((value) => {
+        const providerReady = value.email_registration_configured === true && value.email_verification_check_configured === true;
+        setEmailVerificationAvailable(providerReady);
+        setRegistrationAvailable(value.account_registration_available === true || providerReady);
+      })
+      .catch(() => setRegistrationAvailable(false));
   }, []);
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -32,7 +43,8 @@ export default function AuthPage() {
         const result = await register(formData.username, formData.email, formData.password);
         if (result.success) {
           setNotice(result.message || 'Check your inbox for the verification email before signing in.');
-          setPendingEmail(formData.email);
+          setPendingEmail(result.verificationRequired ? formData.email : '');
+          if (result.emailVerificationAvailable === false) setEmailVerificationAvailable(false);
           setMode('signin');
         }
       }
@@ -46,17 +58,18 @@ export default function AuthPage() {
   };
   return <main className="auth-page">
     <header><Link href="/" className="portal-brand"><span>T</span><strong>Thoth</strong></Link><small>Research portal</small></header>
-    <section><p className="editorial-label">PRIVATE WORKSPACE</p><h1>Welcome<br/>back.</h1><p className="auth-intro">Access devices, synchronized captures, datasets, and research tools.</p></section>
+    <section><p className="editorial-label">PRIVATE WORKSPACE</p><h1>{mode === 'signin' ? <>Welcome<br/>back.</> : <>Begin<br/>here.</>}</h1><p className="auth-intro">One account for your portal, devices, captures, and research tools.</p></section>
     <form onSubmit={submit}>
       <h2>{mode === 'signin' ? 'Sign in' : 'Create account'}</h2>{error && <p className="auth-error">{typeof error === 'string' ? error : 'Unable to continue'}</p>}{notice && <p className="auth-notice">{notice}</p>}
-      {!registrationConfigured && mode === 'register' && <p className="auth-error">Email registration is temporarily unavailable while the verification provider is being configured.</p>}
-      <label htmlFor="username">Username</label><input id="username" autoComplete="username" value={formData.username} onChange={e => setFormData({ ...formData, username: e.target.value })}/>
+      {registrationAvailable === false && mode === 'register' && <p className="auth-error">Account registration is temporarily unavailable. Please try again shortly.</p>}
+      {registrationAvailable && !emailVerificationAvailable && mode === 'register' && <p className="auth-notice">Email verification is temporarily unavailable. You can still create an account and sign in with your username.</p>}
+      <label htmlFor="username">{mode === 'signin' ? 'Username or verified email' : 'Username'}</label><input id="username" autoComplete="username" placeholder={mode === 'signin' ? 'you@example.com' : 'Choose a username'} value={formData.username} onChange={e => setFormData({ ...formData, username: e.target.value })}/>
       {mode === 'register' && <><label htmlFor="email">Email</label><input id="email" type="email" autoComplete="email" value={formData.email} onChange={e => setFormData({ ...formData, email: e.target.value })}/></>}
-      <label htmlFor="password">Password</label><input id="password" type="password" autoComplete="current-password" value={formData.password} onChange={e => setFormData({ ...formData, password: e.target.value })}/>
-      <button disabled={isSubmitting || (mode === 'register' && !registrationConfigured)}>{isSubmitting ? 'Please wait…' : mode === 'signin' ? 'Continue' : 'Register and verify email'}</button>
-      <button type="button" style={{ marginTop: 12, background: 'transparent', color: '#4d4a44', border: '1px solid #c9c4b9' }} onClick={() => { setMode(mode === 'signin' ? 'register' : 'signin'); setNotice(''); }}>{mode === 'signin' ? 'New here? Create an account' : 'Already registered? Sign in'}</button>
-      {pendingEmail && mode === 'signin' && <button type="button" style={{ marginTop: 12, background: 'transparent', color: '#4d4a44', border: '1px solid #c9c4b9' }} onClick={resendVerification}>Resend verification email</button>}
-      {mode === 'register' && <p className="mt-4 text-sm text-slate-500">We will send a verification email after signup. Do not sign in until the email link has been confirmed.</p>}
+      <label htmlFor="password">Password</label><input id="password" type="password" minLength={6} autoComplete={mode === 'signin' ? 'current-password' : 'new-password'} value={formData.password} onChange={e => setFormData({ ...formData, password: e.target.value })}/>
+      <div className="auth-actions"><button className="auth-primary" disabled={isSubmitting || (mode === 'register' && registrationAvailable !== true)}>{isSubmitting ? 'Please wait…' : mode === 'signin' ? 'Continue' : emailVerificationAvailable ? 'Register and verify email' : 'Create account'}</button>
+      <button type="button" className="auth-secondary" onClick={() => { setMode(mode === 'signin' ? 'register' : 'signin'); setNotice(''); }}>{mode === 'signin' ? 'New here? Create an account' : 'Already registered? Sign in'}</button>
+      {pendingEmail && mode === 'signin' && <button type="button" className="auth-secondary" onClick={resendVerification}>Resend verification email</button>}</div>
+      {mode === 'register' && <p className="auth-help">{emailVerificationAvailable ? 'We will email a secure verification link. Confirm it before signing in here or on a Thoth device.' : 'Use your username to sign in until email verification is restored.'}</p>}
     </form>
   </main>;
 }

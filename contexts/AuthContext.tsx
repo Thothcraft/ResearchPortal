@@ -15,7 +15,12 @@ type User = {
 type AuthContextType = {
   user: User;
   login: (username: string, password: string) => Promise<boolean>;
-  register: (username: string, email: string, password: string) => Promise<{ success: boolean; message: string }>;
+  register: (username: string, email: string, password: string) => Promise<{
+    success: boolean;
+    message: string;
+    verificationRequired?: boolean;
+    emailVerificationAvailable?: boolean;
+  }>;
   logout: () => void;
   isAuthenticated: boolean;
   isLoading: boolean;
@@ -46,43 +51,56 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [error, setError] = useState<string | null>(null);
   const router = useRouter();
 
-  // Load user from localStorage on mount
+  // Restore only a token whose account still exists. Long-lived JWTs from a
+  // removed account must not trap the browser inside a broken protected shell.
   useEffect(() => {
-    try {
+    let active = true;
+    const clearStoredAuth = () => {
+      localStorage.removeItem('auth_token');
+      localStorage.removeItem('user');
+      if (active) setUser(null);
+    };
+    const restore = async () => {
       const token = localStorage.getItem('auth_token');
       const userStr = localStorage.getItem('user');
-
-      if (token && tokenIsExpired(token)) {
-        localStorage.removeItem('auth_token');
-        localStorage.removeItem('user');
-      } else if (token && userStr) {
-        try {
-          const userData = JSON.parse(userStr);
-          setUser({ ...userData, token });
-        } catch (e) {
-          console.error('Failed to parse user data:', e);
-          localStorage.removeItem('auth_token');
-          localStorage.removeItem('user');
-        }
-      } else if (token) {
-        setUser({ username: 'user', token, role: 0 });
-      } else {
-        localStorage.removeItem('auth_token');
-        localStorage.removeItem('user');
+      if (!token || tokenIsExpired(token)) {
+        clearStoredAuth();
+        return;
       }
-    } finally {
-      setIsLoading(false);
-    }
+      try {
+        const response = await fetch('/api/proxy/profile', {
+          headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+          cache: 'no-store',
+        });
+        if (!response.ok) throw new Error(`Stored session rejected (${response.status})`);
+        const profile = await response.json();
+        const stored = userStr ? JSON.parse(userStr) : {};
+        const restored = {
+          ...stored,
+          username: profile.username || stored.username,
+          role: profile.role ?? stored.role ?? 0,
+          plan: profile.plan ?? stored.plan,
+          org_name: profile.org_name ?? stored.org_name,
+          userId: profile.userId ?? profile.user_id ?? stored.userId,
+          token,
+        };
+        localStorage.setItem('user', JSON.stringify(restored));
+        if (active) setUser(restored);
+      } catch {
+        clearStoredAuth();
+      }
+    };
+    restore().finally(() => { if (active) setIsLoading(false); });
+    return () => { active = false; };
   }, []);
 
   const login = async (username: string, password: string): Promise<boolean> => {
     setError(null);
 
     try {
-      console.log('Attempting login with:', { username });
       // Create abort controller for timeout
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
+      const timeoutId = setTimeout(() => controller.abort(), 45000);
       const response = await fetch('/api/proxy/token', {
         method: 'POST',
         headers: {
@@ -90,7 +108,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           'Accept': 'application/json',
         },
         body: JSON.stringify({
-          username,
+          username: username.trim(),
           password
         }),
         signal: controller.signal,
@@ -99,8 +117,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       clearTimeout(timeoutId);
 
       const data = await response.json().catch(() => ({}));
-      console.log('Login response:', { status: response.status, data });
-      
       // Temporary workaround for production backend missing role field
       if (data.access_token && data.role == null) {
         // Try to decode JWT to get role
@@ -108,10 +124,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           const payload = decodeTokenPayload(data.access_token);
           if (payload) {
             data.role = payload.role;
-            console.log('Extracted role from token:', data.role);
           }
         } catch (e) {
-          console.warn('Could not extract role from token:', e);
           // Default to user role
           data.role = 0;
         }
@@ -125,6 +139,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           errorMessage = data.detail.map((err: any) => err.msg || JSON.stringify(err)).join(', ');
         } else if (data && data.message) {
           errorMessage = data.message;
+        } else if (data && data.error) {
+          errorMessage = data.error;
         }
         setError(errorMessage);
         return false;
@@ -136,15 +152,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
 
       const userData = {
-        username,
+        username: data.username || username.trim(),
         token: data.access_token,
         role: data.role ?? 0,  // Default to user role if not provided
         plan: data.plan || null,
         org_name: data.org_name || null,
         userId: data.user_id,
       };
-
-      console.log('User data prepared:', userData);
 
       // Store token and user data
       localStorage.setItem('auth_token', data.access_token);
@@ -164,13 +178,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  const register = async (username: string, email: string, password: string): Promise<{ success: boolean; message: string }> => {
+  const register = async (username: string, email: string, password: string): Promise<{
+    success: boolean;
+    message: string;
+    verificationRequired?: boolean;
+    emailVerificationAvailable?: boolean;
+  }> => {
     setIsLoading(true);
     setError(null);
 
     try {
-      console.log('Attempting registration with:', { username });
-
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 45000);
       const response = await fetch('/api/proxy/register', {
         method: 'POST',
         headers: {
@@ -178,15 +197,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           'Accept': 'application/json',
         },
         body: JSON.stringify({
-          username,
-          email,
+          username: username.trim(),
+          email: email.trim().toLowerCase(),
           password
         }),
+        signal: controller.signal,
       });
+      clearTimeout(timeoutId);
 
       const data = await response.json().catch(() => ({}));
-      console.log('Registration response:', { status: response.status, data });
-
       if (!response.ok) {
         let errorMessage = 'Registration failed';
         if (data && typeof data.detail === 'string') {
@@ -195,15 +214,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           errorMessage = data.detail.map((err: any) => err.msg || JSON.stringify(err)).join(', ');
         } else if (data && data.message) {
           errorMessage = data.message;
+        } else if (data && data.error) {
+          errorMessage = data.error;
         }
         setError(errorMessage);
         return { success: false, message: errorMessage };
       }
 
-      return { success: true, message: data.message || 'Registration successful' };
-    } catch (error) {
+      return {
+        success: true,
+        message: data.message || 'Registration successful',
+        verificationRequired: data.verification_required === true,
+        emailVerificationAvailable: data.email_verification_available !== false,
+      };
+    } catch (error: any) {
       console.error('Registration error:', error);
-      const errorMessage = 'An unexpected error occurred. Please try again.';
+      const errorMessage = error?.name === 'AbortError'
+        ? 'Registration timed out while the server was waking up. Please try once more.'
+        : 'An unexpected error occurred. Please try again.';
       setError(errorMessage);
       return { success: false, message: errorMessage };
     } finally {
