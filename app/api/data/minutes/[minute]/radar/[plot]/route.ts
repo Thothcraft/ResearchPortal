@@ -35,7 +35,7 @@ export async function GET(
       return NextResponse.json({ error: 'Radar file not found' }, { status: 404 });
     }
 
-    const workDir = mkdtempSync(path.join(os.tmpdir(), 'thoth-researchportal-radar-'));
+    const workDir = mkdtempSync(path.join(os.tmpdir(), 'thothhub-radar-'));
     const outPath = path.join(workDir, `${minute}-${plot}.png`);
     const scriptPath = path.join(process.cwd(), 'scripts', 'render_radar_plot.py');
     execFileSync(PYTHON, [scriptPath, radarPath, plot, outPath], {

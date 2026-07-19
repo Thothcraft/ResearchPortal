@@ -1,6 +1,6 @@
 # Authentication Flow
 
-This document outlines the authentication flow in the Research Portal application.
+This document outlines the authentication flow in the thothHUB application.
 
 ## Overview
 

@@ -84,16 +84,14 @@ export default function HomePage() {
 
   return <div className="ai-home">
     <section className="ai-home-stage">
-      <div className="ai-home-orbit" />
-      <div className="ai-home-kicker"><Sparkles/> Home</div>
-      <h1>Your devices<br/>and assistant.</h1>
-      <p className="ai-home-intro">Ask about your account, devices, captures, and research workflow. Device controls are delivered through Brain and acknowledged by the edge.</p>
+      <div className="ai-home-kicker"><Sparkles/> thothHUB</div>
+      <h1>Overview</h1>
       <div ref={logRef} className="ai-home-log">
         {messages.map((message, index) => <div key={index} className={`ai-home-message ${message.role}`}>{message.content}</div>)}
         {busy && <div className="ai-home-message assistant">Reasoning across your live system...</div>}
       </div>
       <form onSubmit={submit} className="ai-home-form">
-        <input value={input} onChange={(event) => setInput(event.target.value)} placeholder="Ask Thoth to inspect or control your environment" />
+        <input value={input} onChange={(event) => setInput(event.target.value)} placeholder="Inspect data or control an online device" />
         <button disabled={busy || !input.trim()} aria-label="Send"><ArrowUp/></button>
       </form>
       <div className="ai-home-prompts">

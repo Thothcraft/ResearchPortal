@@ -57,8 +57,8 @@ export default function AuthPage() {
     setNotice(response.ok ? data.message : (data.detail || 'Unable to resend verification email.'));
   };
   return <main className="auth-page">
-    <header><Link href="/" className="portal-brand"><span>T</span><strong>Thoth</strong></Link><small>Research portal</small></header>
-    <section><p className="editorial-label">PRIVATE WORKSPACE</p><h1>{mode === 'signin' ? <>Welcome<br/>back.</> : <>Begin<br/>here.</>}</h1><p className="auth-intro">One account for your portal, devices, captures, and research tools.</p></section>
+    <header><Link href="/" className="portal-brand"><span>T</span><strong>thothHUB</strong></Link><small>Device cloud</small></header>
+    <section><p className="editorial-label">PRIVATE WORKSPACE</p><h1>{mode === 'signin' ? <>Welcome<br/>back.</> : <>Begin<br/>here.</>}</h1><p className="auth-intro">One account for thothHUB, your devices, captures, and research tools.</p></section>
     <form onSubmit={submit}>
       <h2>{mode === 'signin' ? 'Sign in' : 'Create account'}</h2>{error && <p className="auth-error">{typeof error === 'string' ? error : 'Unable to continue'}</p>}{notice && <p className="auth-notice">{notice}</p>}
       {registrationAvailable === false && mode === 'register' && <p className="auth-error">Account registration is temporarily unavailable. Please try again shortly.</p>}

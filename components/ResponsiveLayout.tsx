@@ -99,7 +99,7 @@ export default function ResponsiveLayout({ children, currentPage = 'dashboard' }
         <div className="w-64 bg-slate-800 border-r border-slate-700 min-h-screen">
           <div className="p-4 border-b border-slate-700">
             <h1 className="text-lg font-semibold text-white">ThothCraft</h1>
-            <p className="text-xs text-slate-400 mt-1">Research Portal</p>
+            <p className="text-xs text-slate-400 mt-1">thothHUB</p>
           </div>
           
           <nav className="p-4 space-y-2">

@@ -1,5 +1,5 @@
 /**
- * API Service for Research Portal
+ * API Service for thothHUB
  * Handles all communication with Brain backend
  */
 

@@ -1,6 +1,6 @@
 {
-  "name": "Thoth Portal",
-  "short_name": "Thoth",
+  "name": "thothHUB",
+  "short_name": "thothHUB",
   "description": "Monitor Raspberry Pi–based Thoth wireless sensing devices.",
   "start_url": "/home",
   "scope": "/",

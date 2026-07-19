@@ -23,7 +23,7 @@ export default function Sidebar() {
   };
 
   return <aside className="portal-sidebar">
-    <Link href="/home" className="portal-brand"><span>T</span><strong>Thoth</strong><small>Research portal</small></Link>
+    <Link href="/home" className="portal-brand"><span>T</span><strong>thothHUB</strong><small>Device cloud</small></Link>
     <nav>{items.map(({ name, href, icon: Icon }) => {
       const active = pathname === href || pathname?.startsWith(`${href}/`);
       return <Link key={href} href={href} className={active ? 'active' : ''}><Icon/><span>{name}</span></Link>;

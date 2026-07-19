@@ -17,6 +17,7 @@ import {
   Search,
   SlidersHorizontal,
   Pencil,
+  Link2,
   Trash2,
   X,
 } from 'lucide-react';
@@ -641,10 +642,12 @@ export default function DevicesPage() {
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState('');
   const [onlineOnly, setOnlineOnly] = useState(false);
+  const [pairingCode, setPairingCode] = useState('');
+  const [pairingBusy, setPairingBusy] = useState(false);
   const loadInFlight = useRef(false);
   const liveLoadInFlight = useRef(false);
   const liveCursorRef = useRef<string | null>(null);
-  const { get, put, delete: del } = useApi();
+  const { get, post, put, delete: del } = useApi();
   const { user, isLoading: authLoading } = useAuth();
   const toast = useToast();
 
@@ -863,6 +866,22 @@ export default function DevicesPage() {
     toast.success('Device detached');
   };
 
+  const claimPairing = async () => {
+    const code = pairingCode.toUpperCase().replace(/[^A-Z0-9]/g, '');
+    if (code.length !== 8 || pairingBusy) return;
+    setPairingBusy(true);
+    try {
+      const result = await post('/device/pairing/claim', { code });
+      setPairingCode('');
+      toast.success('Device paired', result?.device_name || 'Your Thoth is now connected');
+      await loadData(true);
+    } catch (error) {
+      toast.error('Pairing failed', error instanceof Error ? error.message : 'Check the code and try again');
+    } finally {
+      setPairingBusy(false);
+    }
+  };
+
   const downloadFromUrl = useCallback(async (url: string, fallbackName: string) => {
     try {
       const response = await fetch(url, {
@@ -901,14 +920,21 @@ export default function DevicesPage() {
               Monitor online status, apply ongoing capture labels and sensor toggles, and move captured minutes to cloud storage.
             </p>
           </div>
-          <button
-            type="button"
-            onClick={() => loadData(true)}
-            className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-950 hover:bg-slate-100"
-          >
-            <RefreshCw className="h-4 w-4" />
-            Refresh
-          </button>
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <div className="flex overflow-hidden rounded-xl border border-slate-300 bg-white focus-within:border-slate-950">
+              <label className="sr-only" htmlFor="pairing-code">Pairing code</label>
+              <input id="pairing-code" value={pairingCode} onChange={(event) => setPairingCode(event.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8))} placeholder="PAIR CODE" className="w-32 border-0 px-3 py-2 font-mono text-sm tracking-widest outline-none" />
+              <button type="button" disabled={pairingBusy || pairingCode.length !== 8} onClick={claimPairing} className="inline-flex items-center gap-2 border-l border-slate-300 bg-slate-950 px-3 py-2 text-sm font-semibold text-white disabled:opacity-40"><Link2 className="h-4 w-4"/>{pairingBusy ? 'Pairing…' : 'Pair'}</button>
+            </div>
+            <button
+              type="button"
+              onClick={() => loadData(true)}
+              className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-950 hover:bg-slate-100"
+            >
+              <RefreshCw className="h-4 w-4" />
+              Refresh
+            </button>
+          </div>
         </div>
         <div className="mt-5 grid gap-3 sm:grid-cols-3">
           <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
