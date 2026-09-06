@@ -1,7 +1,8 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useParams } from 'next/navigation';
+import Image from 'next/image';
 import { useAuth } from '@/contexts/AuthContext';
 
 type Asset = { file_id: number; filename: string; kind?: string; content_type?: string };
@@ -212,37 +213,108 @@ export default function CaptureViewerPage() {
   const [assets, setAssets] = useState<Asset[]>([]);
   const [documents, setDocuments] = useState<Record<string, any>>({});
   const [videoUrl, setVideoUrl] = useState('');
+  const [containerMetadata, setContainerMetadata] = useState<any>(null);
+  const [cameraSecond, setCameraSecond] = useState(0);
+  const [cameraUrl, setCameraUrl] = useState('');
+  const [cameraPlaying, setCameraPlaying] = useState(false);
   const [waiting, setWaiting] = useState(true);
   const [liveChunks, setLiveChunks] = useState<any[]>([]);
   const [storedChunks, setStoredChunks] = useState<any[]>([]);
   const liveCursor = useRef<string | null>(null);
   const liveLoading = useRef(false);
+  const containerLoaded = useRef(false);
+  const videoLoaded = useRef(false);
 
   const load = useCallback(async () => {
     if (!user?.token) return;
     const headers = { Authorization: `Bearer ${user.token}` };
-  const response = await fetch(`/api/proxy/file/minute/${encodeURIComponent(params.minute)}/assets?device_id=${encodeURIComponent(params.deviceId)}`, { headers, cache: 'no-store' });
-  const data = await response.json();
-  const next: Asset[] = Array.isArray(data.assets) ? data.assets : [];
-  setAssets(next);
-  const viewable = next.filter((asset) => ['xy-tracking', 'xy_tracking', 'manifest', 'predictions'].includes(String(asset.kind)) || /(?:^|_)(predictions|manifest)\.json$/i.test(asset.filename));
-  const entries = await Promise.all(viewable.map(async (asset) => {
-    const result = await fetch(`/api/proxy/file/${asset.file_id}?download=false`, { headers, cache: 'no-store' });
-    const key = asset.kind === 'xy-tracking' || asset.kind === 'xy_tracking'
-      ? asset.kind
-      : asset.kind === 'manifest' || /(?:^|_)manifest\.json$/i.test(asset.filename)
-        ? 'manifest.json'
-        : 'predictions.json';
-    return [key!, await result.json()] as const;
-  }));
-  setDocuments(Object.fromEntries(entries));
-    const video = next.find((asset) => asset.content_type?.startsWith('video/') || /\.mp4$/i.test(asset.filename));
-    if (video && !videoUrl) {
-      const result = await fetch(`/api/proxy/file/${video.file_id}?download=false`, { headers });
-      setVideoUrl(URL.createObjectURL(await result.blob()));
+    const response = await fetch(`/api/proxy/file/minute/${encodeURIComponent(params.minute)}/assets?device_id=${encodeURIComponent(params.deviceId)}`, { headers, cache: 'no-store' });
+    if (!response.ok) {
+      setWaiting(false);
+      return;
     }
-    setWaiting(!next.some((asset) => asset.kind === 'manifest' || /(?:^|_)manifest\.json$/i.test(asset.filename)));
-  }, [params.deviceId, params.minute, user?.token, videoUrl]);
+    const data = await response.json();
+    const next: Asset[] = Array.isArray(data.assets) ? data.assets : [];
+    setAssets(next);
+    const viewable = next.filter((asset) => ['xy-tracking', 'xy_tracking', 'manifest', 'predictions'].includes(String(asset.kind)) || /(?:^|_)(predictions|manifest)\.json$/i.test(asset.filename));
+    const entries = (await Promise.all(viewable.map(async (asset) => {
+      const result = await fetch(`/api/proxy/file/${asset.file_id}?download=false`, { headers, cache: 'no-store' });
+      if (!result.ok) return null;
+      const key = asset.kind === 'xy-tracking' || asset.kind === 'xy_tracking'
+        ? asset.kind
+        : asset.kind === 'manifest' || /(?:^|_)manifest\.json$/i.test(asset.filename)
+          ? 'manifest.json'
+          : 'predictions.json';
+      return [key, await result.json()] as const;
+    }))).filter((entry) => entry !== null) as Array<readonly [string, any]>;
+    setDocuments((current) => ({ ...current, ...Object.fromEntries(entries) }));
+    const container = next.find((asset) => asset.kind === 'synchronized-container' || /capture\.npz$/i.test(asset.filename));
+    if (container && !containerLoaded.current) {
+      const metadataResponse = await fetch(`/api/proxy/file/minute/${encodeURIComponent(params.minute)}/container/metadata?device_id=${encodeURIComponent(params.deviceId)}`, { headers, cache: 'no-store' });
+      if (metadataResponse.ok) {
+        const payload = await metadataResponse.json();
+        containerLoaded.current = true;
+        setContainerMetadata(payload.metadata || null);
+        const firstCameraSecond = (payload.metadata?.seconds || []).find((second: any) => Number(second?.camera_frames || 0) > 0);
+        if (firstCameraSecond) setCameraSecond(Number(firstCameraSecond.second_index));
+        if (payload.metadata?.manifest) {
+          setDocuments((current) => ({ ...current, 'manifest.json': payload.metadata.manifest }));
+        }
+      }
+    }
+    const video = next.find((asset) => asset.content_type?.startsWith('video/') || /\.mp4$/i.test(asset.filename));
+    if (video && !videoLoaded.current) {
+      videoLoaded.current = true;
+      const result = await fetch(`/api/proxy/file/${video.file_id}?download=false`, { headers });
+      if (result.ok) setVideoUrl(URL.createObjectURL(await result.blob()));
+      else videoLoaded.current = false;
+    }
+    const hasManifest = next.some((asset) => asset.kind === 'manifest' || /(?:^|_)manifest\.json$/i.test(asset.filename));
+    setWaiting(!hasManifest && (!container || !containerLoaded.current));
+  }, [params.deviceId, params.minute, user?.token]);
+
+  const cameraSeconds = useMemo(() => (Array.isArray(containerMetadata?.seconds) ? containerMetadata.seconds : [])
+    .filter((second: any) => Number(second?.camera_frames || 0) > 0)
+    .map((second: any) => Number(second.second_index)), [containerMetadata]);
+
+  useEffect(() => {
+    if (!user?.token || !cameraSeconds.includes(cameraSecond)) {
+      setCameraUrl('');
+      return;
+    }
+    let objectUrl = '';
+    let cancelled = false;
+    fetch(`/api/proxy/file/minute/${encodeURIComponent(params.minute)}/container/camera/${cameraSecond}?device_id=${encodeURIComponent(params.deviceId)}`, {
+      headers: { Authorization: `Bearer ${user.token}` },
+      cache: 'no-store',
+    }).then(async (response) => {
+      if (!response.ok || cancelled) return;
+      objectUrl = URL.createObjectURL(await response.blob());
+      if (!cancelled) setCameraUrl((current) => {
+        if (current) URL.revokeObjectURL(current);
+        return objectUrl;
+      });
+      else URL.revokeObjectURL(objectUrl);
+    }).catch(() => undefined);
+    return () => { cancelled = true; };
+  }, [cameraSecond, cameraSeconds, params.deviceId, params.minute, user?.token]);
+
+  useEffect(() => () => {
+    if (cameraUrl) URL.revokeObjectURL(cameraUrl);
+  }, [cameraUrl]);
+
+  useEffect(() => () => {
+    if (videoUrl) URL.revokeObjectURL(videoUrl);
+  }, [videoUrl]);
+
+  useEffect(() => {
+    if (!cameraPlaying || cameraSeconds.length < 2) return;
+    const timer = window.setInterval(() => setCameraSecond((current) => {
+      const index = cameraSeconds.indexOf(current);
+      return cameraSeconds[(index + 1) % cameraSeconds.length];
+    }), 1000);
+    return () => window.clearInterval(timer);
+  }, [cameraPlaying, cameraSeconds]);
 
   const loadLiveChunks = useCallback(async () => {
     if (!user?.token || liveLoading.current) return;
@@ -269,6 +341,8 @@ export default function CaptureViewerPage() {
     }
   }, [params.deviceId, params.minute, user?.token]);
 
+  const captureFinalized = Boolean(containerMetadata || documents['manifest.json']?.capture_finished);
+
   const loadStoredChunks = useCallback(async () => {
     if (!user?.token) return;
     const response = await fetch(`/api/proxy/device/${encodeURIComponent(params.deviceId)}/files`, {
@@ -281,7 +355,6 @@ export default function CaptureViewerPage() {
     const chunks = minute?.progress?.chunks;
     if (Array.isArray(chunks) && chunks.length) {
       setStoredChunks(chunks);
-      setWaiting(false);
     }
   }, [params.deviceId, params.minute, user?.token]);
 
@@ -293,10 +366,16 @@ export default function CaptureViewerPage() {
   }, [load, waiting]);
 
   useEffect(() => {
-    loadLiveChunks();
-    const timer = window.setInterval(loadLiveChunks, 500);
-    return () => window.clearInterval(timer);
-  }, [loadLiveChunks]);
+    if (captureFinalized) return;
+    const refresh = () => { if (document.visibilityState === 'visible') loadLiveChunks(); };
+    refresh();
+    const timer = window.setInterval(refresh, 2000);
+    document.addEventListener('visibilitychange', refresh);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener('visibilitychange', refresh);
+    };
+  }, [captureFinalized, loadLiveChunks]);
 
   useEffect(() => {
     loadStoredChunks();
@@ -354,7 +433,7 @@ export default function CaptureViewerPage() {
       </div> : <div className="border border-dashed border-slate-300 p-8 text-sm text-slate-500">Waiting for the first 10-frame chunk.</div>}
     </section>
     <section className="border border-slate-300 bg-white p-4"><h2 className="mb-3 font-semibold">X / Y localization</h2>{documents['xy-tracking'] || documents['xy_tracking'] ? <Heatmap payload={documents['xy-tracking'] || documents['xy_tracking']} tracking /> : <div className="p-8 text-sm text-slate-500">Not available</div>}</section>
-    <section className="border border-slate-300 bg-white p-4"><h2 className="mb-3 font-semibold">Camera video</h2>{videoUrl ? <video controls src={videoUrl} className="max-h-[70vh] w-full bg-black" /> : <div className="p-8 text-sm text-slate-500">No camera video in this minute.</div>}</section>
+    <section className="border border-slate-300 bg-white p-4"><h2 className="mb-3 font-semibold">Camera</h2>{videoUrl ? <video controls src={videoUrl} className="max-h-[70vh] w-full bg-black" /> : cameraUrl ? <div className="space-y-3"><Image unoptimized src={cameraUrl} width={1280} height={720} alt={`Camera frame for second ${cameraSecond + 1}`} className="max-h-[70vh] w-full bg-black object-contain"/><div className="flex items-center gap-3 text-xs"><button type="button" onClick={() => setCameraPlaying((value) => !value)} className="border border-slate-300 bg-white px-3 py-1.5 font-semibold">{cameraPlaying ? 'Pause' : 'Play'}</button><input aria-label="Camera second" type="range" min={0} max={Math.max(0, Number(containerMetadata?.seconds?.length || 1) - 1)} value={cameraSecond} onChange={(event) => { setCameraPlaying(false); setCameraSecond(Number(event.target.value)); }} className="min-w-0 flex-1 accent-cyan-600"/><span className="font-mono">{cameraSecond + 1}s</span></div></div> : <div className="p-8 text-sm text-slate-500">No camera frames in this minute.</div>}</section>
     <div className="text-xs text-slate-500">{assets.length} cloud assets</div>
   </div>;
 }

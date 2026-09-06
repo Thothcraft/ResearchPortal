@@ -3,9 +3,11 @@ import path from 'path';
 
 export const MINUTES_DATA_DIR = process.env.THOTH_DATA_DIR || '/home/pi/Desktop/thoth/data';
 export const MINUTE_RE = /^\d{8}_\d{4}$/;
-export const MINUTE_ID_RE = /^(?:(?<label>[^/\\]+)__)?(?<minute>\d{8}_\d{4})$/;
+// Keep this compatible with the project's ES5 TypeScript target; avoid named groups.
+export const MINUTE_ID_RE = /^(?:([^/\\]+)__)?(\d{8}_\d{4})$/;
 
 export type MinuteFiles = {
+  container: boolean;
   video: boolean;
   radar: boolean;
   xy_tracking?: boolean;
@@ -87,7 +89,7 @@ export type PredictionTimelineEntry = {
 
 export type LabeledMinuteGroup = {
   label: string;
-  minutes: Array<MinuteSummary & {
+  minutes: Array<Omit<MinuteSummary, 'files'> & {
     fileCount: number;
     totalSize: number;
     files: MinuteDataFile[];
@@ -98,7 +100,7 @@ export type LabeledMinuteGroup = {
 };
 
 const MINUTE_UPLOAD_SKIP_NAMES = new Set(['manifest.json', 'predictions.json', 'cloud_upload.json']);
-const MINUTE_UPLOAD_EXTENSIONS = new Set(['.dat', '.bin', '.csv', '.jsonl', '.json', '.mp4']);
+const MINUTE_UPLOAD_EXTENSIONS = new Set(['.dat', '.bin', '.csv', '.jsonl', '.json', '.mp4', '.npz']);
 
 function readTextPreview(filePath: string | null, limit = 12000): string {
   if (!filePath || !fs.existsSync(filePath)) return '';
@@ -206,6 +208,7 @@ function getMinutePaths(minuteDir: string) {
     (name.startsWith('radar_') || name.startsWith('mmw_radar_raw_')) && name.endsWith('.bin')
   )).sort();
   const radarCsvs = names.filter((name) => name.startsWith('mmw_radar_xy_') && name.endsWith('.csv')).sort();
+  const csiCsvs = names.filter((name) => /^wifi_csi(?:_\d+)?\.csv$/.test(name)).sort();
   return {
     video: names.includes('usb_camera.mp4') ? path.join(minuteDir, 'usb_camera.mp4') : null,
     radar: radarBins.length ? path.join(minuteDir, radarBins[0]) : null,
@@ -214,12 +217,15 @@ function getMinutePaths(minuteDir: string) {
     xyTracking: names.includes('xy-tracking.json') ? path.join(minuteDir, 'xy-tracking.json') : null,
     csiCsv: names.includes('wifi_csi.csv')
       ? path.join(minuteDir, 'wifi_csi.csv')
+      : csiCsvs.length ? path.join(minuteDir, csiCsvs[0])
       : names.includes('wifi_csi_raw.csv') ? path.join(minuteDir, 'wifi_csi_raw.csv') : null,
+    csiCsvs: csiCsvs.map((name) => path.join(minuteDir, name)),
     csiTimestamped: names.includes('wifi_csi_timestamped.csv') ? path.join(minuteDir, 'wifi_csi_timestamped.csv') : null,
     csiSerial: names.includes('wifi_csi_serial_all.jsonl') ? path.join(minuteDir, 'wifi_csi_serial_all.jsonl') : null,
     manifest: names.includes('manifest.json') ? path.join(minuteDir, 'manifest.json') : null,
     predictions: names.includes('predictions.json') ? path.join(minuteDir, 'predictions.json') : null,
     ffmpegLog: names.includes('usb_camera.ffmpeg.log') ? path.join(minuteDir, 'usb_camera.ffmpeg.log') : null,
+    container: names.includes('capture.npz') ? path.join(minuteDir, 'capture.npz') : null,
   };
 }
 
@@ -228,7 +234,7 @@ function getMinuteProgress(paths: ReturnType<typeof getMinutePaths>, manifest: a
   const radarCsvs = Array.isArray(paths.radarCsvs) ? paths.radarCsvs : [];
   const predictions = paths.predictions && fs.existsSync(paths.predictions) ? readJsonPreview(paths.predictions) : null;
   const expectedChunks = Math.max(1, Number(manifest?.expected_chunks || 0) || radarBins.length || radarCsvs.length || (Array.isArray(predictions?.timeline) ? predictions.timeline.length : 0) || 6);
-  const storedChunks = radarBins.length;
+  const storedChunks = radarBins.length || Number(manifest?.container?.second_count || 0);
   const predictionByIndex = new Map<number, any>((predictions?.timeline || []).map((entry: any): [number, any] => [Number(entry?.chunk_index), entry]));
   const manifestByIndex = new Map<number, any>((manifest?.outputs?.radar?.chunks || []).map((entry: any): [number, any] => [Number(entry?.chunk_index), entry]));
   const analyzedChunks = Array.from(manifestByIndex.values()).filter((entry) => ['occupied', 'empty'].includes(String(entry?.status))).length
@@ -279,6 +285,7 @@ function contentTypeForMinuteFile(filePath: string): string {
   if (ext === '.json') return 'application/json';
   if (ext === '.jsonl') return 'application/x-ndjson';
   if (ext === '.mp4') return 'video/mp4';
+  if (ext === '.npz') return 'application/x-npz';
   if (ext === '.bin' || ext === '.dat') return 'application/octet-stream';
   return 'application/octet-stream';
 }
@@ -329,10 +336,11 @@ export function listMinuteSummaries(): MinuteSummary[] {
       state: completed ? 'ready' : 'collecting',
       uploaded: deviceInfo.uploaded,
       files: {
-        video: !!paths.video,
-        radar: !!paths.radar,
+        container: !!paths.container,
+        video: !!paths.video || Number(manifest?.container?.camera_frames || 0) > 0,
+        radar: !!paths.radar || Number(manifest?.container?.radar_samples || 0) > 0,
         xy_tracking: !!paths.xyTracking,
-        csi: !!(paths.csiCsv || paths.csiTimestamped || paths.csiSerial),
+        csi: !!(paths.csiCsv || paths.csiTimestamped || paths.csiSerial || Number(manifest?.container?.csi_samples || 0) > 0),
         manifest: !!paths.manifest,
         predictions: !!paths.predictions,
       },
@@ -342,6 +350,7 @@ export function listMinuteSummaries(): MinuteSummary[] {
         csi_csv: paths.csiCsv ? fs.statSync(paths.csiCsv).size : 0,
         csi_timestamped: paths.csiTimestamped ? fs.statSync(paths.csiTimestamped).size : 0,
         csi_serial: paths.csiSerial ? fs.statSync(paths.csiSerial).size : 0,
+        container: paths.container ? fs.statSync(paths.container).size : 0,
       },
       progress,
       dataFiles: listMinuteDataFiles(minuteDir),
@@ -361,7 +370,7 @@ export function getMinuteDetail(minute: string): MinuteDetail | null {
   const existingSummary = getMinuteSummary(minute);
   const parsed = MINUTE_ID_RE.exec(minute);
   if (!existingSummary && !parsed) return null;
-  const minuteName = existingSummary?.minuteName || parsed?.groups?.minute || minute;
+  const minuteName = existingSummary?.minuteName || parsed?.[2] || minute;
   const minuteDir = existingSummary?.path || path.join(MINUTES_DATA_DIR, minuteName);
   if (!fs.existsSync(minuteDir) || !fs.statSync(minuteDir).isDirectory()) return null;
 
@@ -388,10 +397,11 @@ export function getMinuteDetail(minute: string): MinuteDetail | null {
     state: completed ? 'ready' : 'collecting',
     uploaded: deviceInfo.uploaded,
       files: {
-        video: !!paths.video,
-        radar: !!paths.radar,
+        container: !!paths.container,
+        video: !!paths.video || Number(manifest?.container?.camera_frames || 0) > 0,
+        radar: !!paths.radar || Number(manifest?.container?.radar_samples || 0) > 0,
         xy_tracking: !!paths.xyTracking,
-        csi: !!(paths.csiCsv || paths.csiTimestamped || paths.csiSerial),
+        csi: !!(paths.csiCsv || paths.csiTimestamped || paths.csiSerial || Number(manifest?.container?.csi_samples || 0) > 0),
         manifest: !!paths.manifest,
         predictions: !!paths.predictions,
       },
@@ -401,6 +411,7 @@ export function getMinuteDetail(minute: string): MinuteDetail | null {
       csi_csv: paths.csiCsv ? fs.statSync(paths.csiCsv).size : 0,
         csi_timestamped: paths.csiTimestamped ? fs.statSync(paths.csiTimestamped).size : 0,
       csi_serial: paths.csiSerial ? fs.statSync(paths.csiSerial).size : 0,
+      container: paths.container ? fs.statSync(paths.container).size : 0,
     },
     progress,
     manifest,
@@ -415,6 +426,7 @@ export function getMinuteDetail(minute: string): MinuteDetail | null {
       csi_csv: paths.csiCsv,
       csi_timestamped: paths.csiTimestamped,
       csi_serial: paths.csiSerial,
+      container: paths.container,
         manifest: paths.manifest,
       predictions: paths.predictions,
       ffmpeg_log: paths.ffmpegLog,

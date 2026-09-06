@@ -27,6 +27,7 @@ export async function GET(
       csi_csv: detail.filePaths.csi_csv,
       csi_timestamped: detail.filePaths.csi_timestamped,
       csi_serial: detail.filePaths.csi_serial,
+      container: detail.filePaths.container,
       manifest: detail.filePaths.manifest,
       ffmpeg_log: detail.filePaths.ffmpeg_log,
     };
@@ -44,6 +45,7 @@ export async function GET(
     else if (ext === '.json') contentType = 'application/json';
     else if (ext === '.jsonl') contentType = 'application/x-ndjson';
     else if (ext === '.log') contentType = 'text/plain';
+    else if (ext === '.npz') contentType = 'application/x-npz';
 
     return new NextResponse(content, {
       headers: {

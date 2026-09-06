@@ -30,11 +30,12 @@ export async function GET() {
           completed: minute.completed,
           state: minute.state,
           files: {
-            video: minute.files.video,
-            radar: minute.files.radar,
-            xy_tracking: minute.files.xy_tracking,
-            csi: minute.files.csi,
-            manifest: minute.files.manifest,
+            container: Boolean(minute.files.container),
+            video: Boolean(minute.files.video),
+            radar: Boolean(minute.files.radar),
+            xy_tracking: Boolean(minute.files.xy_tracking),
+            csi: Boolean(minute.files.csi),
+            manifest: Boolean(minute.files.manifest),
           },
         });
       }

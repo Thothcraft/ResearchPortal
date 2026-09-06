@@ -5,6 +5,7 @@ import { useApi } from '@/hooks/useApi';
 import type { ApiError } from '@/hooks/useApi';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/contexts/ToastContext';
+import CaptureRangeTimeline from '@/components/CaptureRangeTimeline';
 import {
   Activity,
   BarChart3,
@@ -27,6 +28,8 @@ type Sensor = {
   key?: string;
   name?: string;
   available?: boolean;
+  devices?: string[];
+  receiver_count?: number;
 };
 
 type CaptureSettings = {
@@ -43,6 +46,7 @@ type CaptureSettings = {
   prediction_label_style: 'occupancy' | 'presence';
   people_count_label_enabled: boolean;
   sleep_study_enabled: boolean;
+  csi_device_ids: Record<string, string>;
   calibrations?: Record<string, unknown>;
   revision: number;
   updated_at?: string | null;
@@ -139,6 +143,17 @@ type LocalMinuteSummary = {
   }>;
 };
 
+type DownloadFileHandle = {
+  createWritable: () => Promise<WritableStream<Uint8Array>>;
+};
+
+type DownloadPickerWindow = Window & {
+  showSaveFilePicker?: (options: {
+    suggestedName: string;
+    types: Array<{ description: string; accept: Record<string, string[]> }>;
+  }) => Promise<DownloadFileHandle>;
+};
+
 const DEFAULT_SENSORS: Record<string, boolean> = {
   usb_camera: true,
   dreamhat_radar: true,
@@ -163,6 +178,34 @@ function humanBytes(bytes?: number): string {
     unit += 1;
   }
   return `${value.toFixed(value >= 10 || unit === 0 ? 0 : 1)} ${units[unit]}`;
+}
+
+function normalizedLabel(value: string): string {
+  return value.trim().toLowerCase();
+}
+
+function timestampedArchiveName(): string {
+  const stamp = new Date().toISOString().replace(/[-:]/g, '').replace('T', '_').slice(0, 15);
+  return `thoth-captures-${stamp}.zip`;
+}
+
+async function saveDownloadResponse(response: Response, fallbackName: string, handle?: DownloadFileHandle): Promise<void> {
+  if (handle && response.body) {
+    const writable = await handle.createWritable();
+    await response.body.pipeTo(writable);
+    return;
+  }
+
+  const blob = await response.blob();
+  const objectUrl = window.URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  const disposition = response.headers.get('content-disposition') || '';
+  anchor.href = objectUrl;
+  anchor.download = disposition.match(/filename="?([^";]+)"?/i)?.[1] || fallbackName;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  window.URL.revokeObjectURL(objectUrl);
 }
 
 function parseServerTime(value?: string | null): number {
@@ -219,6 +262,9 @@ function normalizeSettings(
     prediction_label_style: value?.prediction_label_style === 'presence' ? 'presence' : 'occupancy',
     people_count_label_enabled: value?.people_count_label_enabled === true,
     sleep_study_enabled: value?.sleep_study_enabled === true,
+    csi_device_ids: value?.csi_device_ids && typeof value.csi_device_ids === 'object'
+      ? Object.fromEntries(Object.entries(value.csi_device_ids).map(([port, id]) => [port, String(id)]))
+      : {},
     calibrations: value?.calibrations || {},
     revision: Number(value?.revision || 0),
     updated_at: value?.updated_at || null,
@@ -302,6 +348,9 @@ function DevicePanel({
   onSaveSettings,
   onDownloadCloudFile,
   onDownloadMinute,
+  onDownloadMinutes,
+  onDeleteMinutes,
+  onUpdateMinuteLabels,
   onUploadMinute,
   onRename,
   onRemove,
@@ -313,6 +362,9 @@ function DevicePanel({
   onSaveSettings: (deviceId: string, settings: CaptureSettings) => Promise<CaptureSettings>;
   onDownloadCloudFile: (fileId: number, filename?: string) => Promise<void>;
   onDownloadMinute: (minute: string, deviceId: string) => Promise<void>;
+  onDownloadMinutes: (minutes: string[], deviceId: string) => Promise<void>;
+  onDeleteMinutes: (minutes: string[], deviceId: string, all?: boolean) => Promise<void>;
+  onUpdateMinuteLabels: (minute: string, deviceId: string, labels: string[]) => Promise<void>;
   onUploadMinute: (minute: string, deviceId: string) => Promise<void>;
   onRename: (deviceId: string, name: string) => Promise<void>;
   onRemove: (deviceId: string) => Promise<void>;
@@ -330,14 +382,62 @@ function DevicePanel({
   const [draftVoteChunks, setDraftVoteChunks] = useState(settings.occupancy_vote_chunks);
   const [draftPredictionStyle, setDraftPredictionStyle] = useState(settings.prediction_label_style);
   const [draftPeopleLabels, setDraftPeopleLabels] = useState(settings.people_count_label_enabled);
+  const [draftCsiDeviceIds, setDraftCsiDeviceIds] = useState(settings.csi_device_ids);
+  const [newLabel, setNewLabel] = useState('');
+  const [selectedMinutes, setSelectedMinutes] = useState<Set<string>>(new Set());
+  const [bulkLabels, setBulkLabels] = useState<string[]>([]);
+  const [downloadBusy, setDownloadBusy] = useState(false);
   const [draftName, setDraftName] = useState(device.device_name || device.device_id);
   const [openMinute, setOpenMinute] = useState<string | null>(null);
+  const [minuteLabelDrafts, setMinuteLabelDrafts] = useState<Record<string, string>>({});
   const [settingsStatus, setSettingsStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [settingsError, setSettingsError] = useState('');
+  const selectAllRef = useRef<HTMLInputElement>(null);
 
   const matchedMinutes = useMemo(() => {
     return minutes.filter((minute) => matchesDevice(device, minute));
   }, [device, minutes]);
+  const selectableMinutes = useMemo(
+    () => matchedMinutes.filter((minute) => minute.completed).map((minute) => minute.minute),
+    [matchedMinutes],
+  );
+  const downloadableMinutes = useMemo(
+    () => matchedMinutes.filter((minute) => minute.uploaded).map((minute) => minute.minute),
+    [matchedMinutes],
+  );
+  const labelMatchedMinutes = useMemo(() => {
+    if (!bulkLabels.length) return [];
+    const selectedLabels = bulkLabels.map(normalizedLabel);
+    return matchedMinutes
+      .filter((minute) => {
+        const minuteLabels = new Set(minute.labels.map(normalizedLabel));
+        return minute.uploaded && selectedLabels.every((label) => minuteLabels.has(label));
+      })
+      .map((minute) => minute.minute);
+  }, [bulkLabels, matchedMinutes]);
+  const availableDownloadLabels = useMemo(() => {
+    const labels = new Map<string, string>();
+    matchedMinutes.filter((minute) => minute.uploaded).forEach((minute) => {
+      minute.labels.forEach((label) => {
+        const clean = label.trim();
+        if (clean && !labels.has(normalizedLabel(clean))) labels.set(normalizedLabel(clean), clean);
+      });
+    });
+    return Array.from(labels.values()).sort((left, right) => left.localeCompare(right));
+  }, [matchedMinutes]);
+  const selectedDownloadableMinutes = downloadableMinutes.filter((minute) => selectedMinutes.has(minute));
+  const allMinutesSelected = selectableMinutes.length > 0
+    && selectableMinutes.every((minute) => selectedMinutes.has(minute));
+  const someMinutesSelected = selectableMinutes.some((minute) => selectedMinutes.has(minute));
+  const csiSensor = useMemo(
+    () => sensors.find((item) => (item.sensor_type || item.key) === 'esp32_csi'),
+    [sensors],
+  );
+  const csiDevices = useMemo(() => {
+    return Array.isArray(csiSensor?.devices) ? csiSensor.devices : [];
+  }, [csiSensor]);
+  const csiCount = Math.max(csiDevices.length, Number(csiSensor?.receiver_count || 0));
+  const csiDisplay = csiCount > 1 ? `csix${csiCount}` : csiCount === 1 ? 'csi' : 'CSI offline';
 
   useEffect(() => {
     setDraftLabel(settings.labels.join(', '));
@@ -349,7 +449,27 @@ function DevicePanel({
     setDraftVoteChunks(settings.occupancy_vote_chunks);
     setDraftPredictionStyle(settings.prediction_label_style);
     setDraftPeopleLabels(settings.people_count_label_enabled);
+    setDraftCsiDeviceIds(settings.csi_device_ids);
   }, [settings]);
+
+  useEffect(() => {
+    const available = new Set(selectableMinutes);
+    setSelectedMinutes((current) => new Set(Array.from(current).filter((minute) => available.has(minute))));
+  }, [selectableMinutes]);
+
+  useEffect(() => {
+    if (selectAllRef.current) {
+      selectAllRef.current.indeterminate = someMinutesSelected && !allMinutesSelected;
+    }
+  }, [allMinutesSelected, someMinutesSelected]);
+
+  useEffect(() => {
+    const available = new Map(availableDownloadLabels.map((label) => [normalizedLabel(label), label]));
+    setBulkLabels((current) => current.flatMap((label) => {
+      const canonical = available.get(normalizedLabel(label));
+      return canonical ? [canonical] : [];
+    }));
+  }, [availableDownloadLabels]);
 
   const saveSettings = async () => {
     setSettingsStatus('saving');
@@ -369,6 +489,7 @@ function DevicePanel({
       prediction_label_style: draftPredictionStyle,
       people_count_label_enabled: draftPeopleLabels,
       sleep_study_enabled: false,
+      csi_device_ids: draftCsiDeviceIds,
       calibrations: settings.calibrations || {},
       revision: settings.revision,
       updated_at: settings.updated_at,
@@ -379,6 +500,82 @@ function DevicePanel({
     } catch (error) {
       setSettingsStatus('error');
       setSettingsError(error instanceof Error ? error.message : 'Unable to save settings');
+    }
+  };
+
+  const appendLabel = async () => {
+    const additions = newLabel.split(',').map((label) => label.trim()).filter(Boolean);
+    if (!additions.length) return;
+    setSettingsStatus('saving');
+    setSettingsError('');
+    try {
+      const canonical = await onSaveSettings(device.device_uuid, {
+        ...settings,
+        labels: Array.from(new Set([...settings.labels, ...additions])),
+        csi_device_ids: draftCsiDeviceIds,
+      });
+      setDraftLabel(canonical.labels.join(', '));
+      setNewLabel('');
+      setSettingsStatus('saved');
+    } catch (error) {
+      setSettingsStatus('error');
+      setSettingsError(error instanceof Error ? error.message : 'Unable to add label');
+    }
+  };
+
+  const removeLabel = async (label: string) => {
+    setSettingsStatus('saving');
+    setSettingsError('');
+    try {
+      const canonical = await onSaveSettings(device.device_uuid, {
+        ...settings,
+        labels: settings.labels.filter((item) => item !== label),
+        csi_device_ids: draftCsiDeviceIds,
+      });
+      setDraftLabel(canonical.labels.join(', '));
+      setSettingsStatus('saved');
+    } catch (error) {
+      setSettingsStatus('error');
+      setSettingsError(error instanceof Error ? error.message : 'Unable to remove label');
+    }
+  };
+
+  const toggleMinute = (minute: string) => {
+    setSelectedMinutes((current) => {
+      const next = new Set(current);
+      next.has(minute) ? next.delete(minute) : next.add(minute);
+      return next;
+    });
+  };
+
+  const toggleAllMinutes = () => {
+    setSelectedMinutes(allMinutesSelected ? new Set() : new Set(selectableMinutes));
+  };
+
+  const toggleBulkLabel = (label: string) => {
+    setBulkLabels((current) => current.includes(label)
+      ? current.filter((item) => item !== label)
+      : [...current, label]);
+  };
+
+  const startDownload = async (minuteIds: string[]) => {
+    if (!minuteIds.length || downloadBusy) return;
+    setDownloadBusy(true);
+    try {
+      await onDownloadMinutes(minuteIds, device.device_uuid);
+    } finally {
+      setDownloadBusy(false);
+    }
+  };
+
+  const saveMinuteLabels = async (minute: string, currentLabels: string[]) => {
+    const value = minuteLabelDrafts[minute] ?? currentLabels.join(', ');
+    const labels = value.split(',').map((label) => label.trim()).filter(Boolean);
+    try {
+      await onUpdateMinuteLabels(minute, device.device_uuid, labels);
+      setMinuteLabelDrafts((current) => ({ ...current, [minute]: labels.join(', ') }));
+    } catch {
+      // The parent owns user-facing error reporting; retain the draft for retry.
     }
   };
 
@@ -411,6 +608,7 @@ function DevicePanel({
               <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1">IP {device.ip_address || 'N/A'}</span>
               <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1">Last seen {device.last_seen ? new Date(parseServerTime(device.last_seen)).toLocaleString() : 'N/A'}</span>
               <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1">{matchedMinutes.length} captured minutes</span>
+              <span className={`rounded-full border px-2.5 py-1 font-semibold ${csiCount ? 'border-cyan-300 bg-cyan-50 text-cyan-900' : 'border-slate-200 bg-white text-slate-600'}`}>{csiDisplay}</span>
             </div>
           </div>
         </div>
@@ -431,10 +629,23 @@ function DevicePanel({
               {settingsOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
             </button>
             {settingsOpen && <div className="mt-5">
-            <div className="mb-6"><label className="text-xs font-semibold uppercase tracking-wide text-slate-700">Device name</label><div className="mt-2 flex gap-2"><input value={draftName} onChange={(event) => setDraftName(event.target.value)} className="min-w-0 flex-1 border border-slate-400 bg-white px-3 py-2"/><button type="button" onClick={() => onRename(device.device_uuid, draftName)} className="inline-flex items-center gap-2 bg-slate-950 px-3 text-sm font-semibold text-white"><Pencil className="h-4 w-4"/>Save</button></div><button type="button" onClick={() => onRemove(device.device_uuid)} className="mt-3 inline-flex items-center gap-2 text-sm font-semibold text-red-700"><Trash2 className="h-4 w-4"/>Remove device</button></div>
+            <div className="mb-6"><label className="text-xs font-semibold uppercase tracking-wide text-slate-700">Device ID</label><div className="mt-2 flex gap-2"><input value={draftName} onChange={(event) => setDraftName(event.target.value)} className="min-w-0 flex-1 border border-slate-400 bg-white px-3 py-2"/><button type="button" onClick={() => onRename(device.device_uuid, draftName)} className="inline-flex items-center gap-2 bg-slate-950 px-3 text-sm font-semibold text-white"><Pencil className="h-4 w-4"/>Save</button></div><p className="mt-1 text-xs text-slate-600">The hardware UUID remains unchanged.</p><button type="button" onClick={() => onRemove(device.device_uuid)} className="mt-3 inline-flex items-center gap-2 text-sm font-semibold text-red-700"><Trash2 className="h-4 w-4"/>Remove device</button></div>
             <div className="mb-4 flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-slate-800">
               <SlidersHorizontal className="h-4 w-4" />
               Ongoing collection
+            </div>
+            <div className="mb-5 border border-cyan-300 bg-cyan-50 p-3">
+              <label className="text-sm font-medium text-slate-950">Labels for the current and following minutes</label>
+              <div className="mt-2 flex flex-wrap gap-2" aria-label="Current labels">
+                {settings.labels.length ? settings.labels.map((label) => (
+                  <span key={label} className="inline-flex items-center gap-1 rounded-full border border-cyan-400 bg-white px-2.5 py-1 text-xs font-semibold text-slate-800">
+                    {label}
+                    <button type="button" onClick={() => removeLabel(label)} aria-label={`Remove ${label}`} className="text-slate-500 hover:text-red-700">×</button>
+                  </span>
+                )) : <span className="text-xs text-slate-600">No manual labels added.</span>}
+              </div>
+              <div className="mt-3 flex gap-2"><input value={newLabel} onChange={(event) => setNewLabel(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); appendLabel(); } }} placeholder="participant-01, baseline" className="min-w-0 flex-1 border border-slate-400 bg-white px-3 py-2 text-sm"/><button type="button" onClick={appendLabel} className="bg-slate-950 px-3 text-sm font-semibold text-white">Add</button></div>
+              <p className="mt-2 text-xs text-slate-600">Separate multiple labels with commas. They synchronize to capture settings and new minutes.</p>
             </div>
             <label className="block text-sm font-medium text-slate-950">
               Preset labels
@@ -486,6 +697,7 @@ function DevicePanel({
               <label className="block text-sm font-medium text-slate-950">Prediction labels<select value={draftPredictionStyle} onChange={(event) => setDraftPredictionStyle(event.target.value as CaptureSettings['prediction_label_style'])} className="mt-2 w-full border border-slate-400 bg-white px-3 py-2"><option value="occupancy">occupied / empty</option><option value="presence">present / absent</option></select></label>
             </div>
             <label className="mt-3 flex items-center justify-between gap-4 border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-950"><span>Add numeric people-count labels</span><input type="checkbox" checked={draftPeopleLabels} onChange={(event) => setDraftPeopleLabels(event.target.checked)} className="h-5 w-5" /></label>
+            {csiDevices.length > 0 && <div className="mt-5 border border-slate-300 bg-white p-3"><div className="text-sm font-semibold text-slate-950">CSI receiver device IDs</div><div className="mt-3 space-y-3">{csiDevices.map((port, index) => <label key={port} className="block text-xs text-slate-700"><span className="font-mono">{port}</span><input value={draftCsiDeviceIds[port] || `csi-${index + 1}`} onChange={(event) => setDraftCsiDeviceIds((current) => ({ ...current, [port]: event.target.value }))} className="mt-1 w-full border border-slate-400 bg-white px-3 py-2 text-sm text-slate-950"/></label>)}</div></div>}
             <button
               type="button"
               onClick={saveSettings}
@@ -504,7 +716,7 @@ function DevicePanel({
               <div className="space-y-2">
                 {sensors.length ? sensors.map((sensor) => (
                   <div key={sensor.sensor_type || sensor.key || sensor.name} className="flex justify-between gap-3 border border-slate-300 px-3 py-2 text-sm">
-                    <span className="font-medium text-slate-950">{sensor.name || sensor.sensor_type || sensor.key}</span>
+                    <span className="font-medium text-slate-950">{sensor.name || sensor.sensor_type || sensor.key}{(sensor.sensor_type || sensor.key) === 'esp32_csi' && Array.isArray(sensor.devices) && sensor.devices.length ? <small className="ml-2 font-mono text-slate-500">{sensor.devices.join(', ')}</small> : null}</span>
                     <span className={sensor.available ? 'text-emerald-800' : 'text-slate-600'}>{sensor.available ? 'Online' : 'Offline'}</span>
                   </div>
                 )) : (
@@ -516,10 +728,67 @@ function DevicePanel({
           </section>
 
           <section className="min-w-0 p-4 sm:p-5">
-            <div className="mb-4 flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-slate-800">
-              <FolderOpen className="h-4 w-4" />
-              Captured minutes
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-slate-800"><FolderOpen className="h-4 w-4" />Captured minutes</div>
+              <div className="flex flex-wrap items-center gap-2 text-xs">
+                <details className="relative">
+                  <summary className="inline-flex cursor-pointer list-none items-center gap-1.5 border border-slate-400 bg-white px-2.5 py-1.5 font-semibold text-slate-950">
+                    Matching labels{bulkLabels.length ? ` (${bulkLabels.length})` : ''}<ChevronDown className="h-3.5 w-3.5"/>
+                  </summary>
+                  <div className="absolute right-0 z-20 mt-1 min-w-60 border border-slate-300 bg-white p-2 shadow-xl">
+                    {availableDownloadLabels.length ? (
+                      <>
+                        <div className="max-h-56 space-y-1 overflow-y-auto">
+                          {availableDownloadLabels.map((label) => (
+                            <label key={label} className="flex cursor-pointer items-center gap-2 px-2 py-1.5 hover:bg-slate-50">
+                              <input type="checkbox" checked={bulkLabels.includes(label)} onChange={() => toggleBulkLabel(label)} className="h-4 w-4 accent-slate-950" />
+                              <span>{label}</span>
+                            </label>
+                          ))}
+                        </div>
+                        <div className="mt-2 flex items-center justify-between border-t border-slate-200 px-2 pt-2 text-[11px] text-slate-600">
+                          <span>{bulkLabels.length ? `${labelMatchedMinutes.length} uploaded minute${labelMatchedMinutes.length === 1 ? '' : 's'} matching all` : 'Choose one or more labels'}</span>
+                          {bulkLabels.length > 0 && <button type="button" onClick={() => setBulkLabels([])} className="font-semibold underline">Clear</button>}
+                        </div>
+                      </>
+                    ) : <div className="px-2 py-1.5 text-slate-600">No uploaded minute labels</div>}
+                  </div>
+                </details>
+                <label className="inline-flex items-center gap-2 border border-slate-400 bg-white px-2.5 py-1.5 font-semibold text-slate-950">
+                  <input ref={selectAllRef} type="checkbox" disabled={!selectableMinutes.length} checked={allMinutesSelected} onChange={toggleAllMinutes} className="h-4 w-4 accent-slate-950 disabled:opacity-40" />
+                  Select all
+                </label>
+                <details className="relative">
+                  <summary className="inline-flex cursor-pointer list-none items-center gap-1.5 bg-slate-950 px-2.5 py-1.5 font-semibold text-white"><Download className="h-3.5 w-3.5"/>{downloadBusy ? 'Downloading…' : 'Download'}<ChevronDown className="h-3.5 w-3.5"/></summary>
+                  <div className="absolute right-0 z-20 mt-1 grid min-w-56 border border-slate-300 bg-white p-1 shadow-xl">
+                    <button type="button" disabled={downloadBusy || !selectedDownloadableMinutes.length} onClick={() => startDownload(selectedDownloadableMinutes)} className="px-3 py-2 text-left font-semibold disabled:text-slate-400">Download selected ({selectedDownloadableMinutes.length})</button>
+                    <button type="button" disabled={downloadBusy || !labelMatchedMinutes.length} onClick={() => startDownload(labelMatchedMinutes)} className="px-3 py-2 text-left font-semibold disabled:text-slate-400">Download matching labels ({labelMatchedMinutes.length})</button>
+                  </div>
+                </details>
+                <details className="relative">
+                  <summary className="inline-flex cursor-pointer list-none items-center gap-1.5 border border-red-300 bg-white px-2.5 py-1.5 font-semibold text-red-700">Delete<ChevronDown className="h-3.5 w-3.5"/></summary>
+                  <div className="absolute right-0 z-20 mt-1 grid min-w-52 border border-slate-300 bg-white p-1 shadow-xl">
+                    <button type="button" disabled={!selectedMinutes.size} onClick={() => onDeleteMinutes(Array.from(selectedMinutes), device.device_uuid)} className="px-3 py-2 text-left font-semibold text-red-700 disabled:text-slate-400">Delete selected ({selectedMinutes.size})</button>
+                    <button type="button" disabled={!selectableMinutes.length} onClick={() => onDeleteMinutes([], device.device_uuid, true)} className="px-3 py-2 text-left font-semibold text-red-700 disabled:text-slate-400">Delete all minutes</button>
+                  </div>
+                </details>
+              </div>
             </div>
+            <CaptureRangeTimeline
+              items={[...matchedMinutes].sort((left, right) => left.minute.localeCompare(right.minute)).map((minute) => {
+                const chunks = minute.progress?.chunks || [];
+                const latest = chunks.filter((chunk) => chunk.state !== 'waiting').at(-1);
+                return {
+                  id: minute.minute,
+                  disabled: !minute.completed,
+                  state: !minute.completed ? 'current' : latest?.state === 'occupied' ? 'occupied' : latest?.state === 'empty' ? 'empty' : 'missing',
+                };
+              })}
+              selected={selectedMinutes}
+              onSelectionChange={setSelectedMinutes}
+              onOpen={setOpenMinute}
+            />
+            <p className="mb-4 mt-2 text-xs text-slate-600">{selectedMinutes.size} selected · click or drag a range · Shift extends · Ctrl/Cmd toggles · double-click opens</p>
             <div className="space-y-3">
               {matchedMinutes.map((minute) => {
                 const dataFiles = minute.dataFiles || [];
@@ -532,7 +801,7 @@ function DevicePanel({
                   <div key={minute.minute} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
                     <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                       <div>
-                        <div className="font-mono text-base font-semibold text-slate-950">{minute.minute}</div>
+                        <div className="flex items-center gap-2"><input type="checkbox" aria-label={`Select ${minute.minute}`} disabled={!minute.completed} checked={selectedMinutes.has(minute.minute)} onChange={() => toggleMinute(minute.minute)} className="h-4 w-4 accent-slate-950 disabled:opacity-30"/><div className="font-mono text-base font-semibold text-slate-950">{minute.minute}</div></div>
                         <div className="mt-1 text-sm text-slate-700">
                           {new Date(parseServerTime(minute.created || minute.modified)).toLocaleString()} · {fileCount} item · {humanBytes(totalSize)}
                         </div>
@@ -552,6 +821,18 @@ function DevicePanel({
                             </span>
                           )}
                         </div>
+                        {minute.completed && <details className="mt-2 text-xs">
+                          <summary className="cursor-pointer font-semibold text-slate-700 underline">Edit captured labels</summary>
+                          <div className="mt-2 flex max-w-xl gap-2">
+                            <input
+                              aria-label={`Labels for ${minute.minute}`}
+                              value={minuteLabelDrafts[minute.minute] ?? minute.labels.join(', ')}
+                              onChange={(event) => setMinuteLabelDrafts((current) => ({ ...current, [minute.minute]: event.target.value }))}
+                              className="min-w-0 flex-1 border border-slate-400 bg-white px-2 py-1.5"
+                            />
+                            <button type="button" onClick={() => saveMinuteLabels(minute.minute, minute.labels)} className="bg-slate-950 px-3 py-1.5 font-semibold text-white">Save</button>
+                          </div>
+                        </details>}
                         <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
                           <span className={`rounded-full px-2.5 py-1 font-semibold ${minute.uploaded ? 'bg-blue-50 text-blue-700' : 'bg-amber-50 text-amber-800'}`}>
                             {minute.uploaded ? 'Uploaded' : 'On device only'}
@@ -583,7 +864,7 @@ function DevicePanel({
                           View predictions
                         </button>
                         {!minute.uploaded && <button type="button" onClick={() => onUploadMinute(minute.minute, device.device_uuid).catch((error) => window.alert(error instanceof Error ? error.message : 'Upload request failed'))} className="inline-flex items-center justify-center gap-2 rounded-lg border border-cyan-700 bg-cyan-50 px-3 py-2 text-sm font-semibold text-cyan-950 hover:bg-cyan-100"><FolderOpen className="h-4 w-4"/>Upload files</button>}
-                        {fileCount > 0 && (
+                        {minute.uploaded && fileCount > 0 && (
                           <button
                             type="button"
                             onClick={() => onDownloadMinute(minute.minute, device.device_uuid)}
@@ -710,9 +991,14 @@ export default function DevicesPage() {
 
   useEffect(() => {
     if (authLoading || !user?.token) return;
+    const refresh = () => { if (document.visibilityState === 'visible') loadData(false); };
     loadData(true);
-    const timer = window.setInterval(() => loadData(false), 15000);
-    return () => window.clearInterval(timer);
+    const timer = window.setInterval(refresh, 15000);
+    document.addEventListener('visibilitychange', refresh);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener('visibilitychange', refresh);
+    };
   }, [authLoading, loadData, user?.token]);
 
   const loadLiveChunks = useCallback(async () => {
@@ -752,9 +1038,14 @@ export default function DevicesPage() {
 
   useEffect(() => {
     if (authLoading || !user?.token) return;
-    loadLiveChunks();
-    const timer = window.setInterval(loadLiveChunks, 500);
-    return () => window.clearInterval(timer);
+    const refresh = () => { if (document.visibilityState === 'visible') loadLiveChunks(); };
+    refresh();
+    const timer = window.setInterval(refresh, 5000);
+    document.addEventListener('visibilitychange', refresh);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener('visibilitychange', refresh);
+    };
   }, [authLoading, loadLiveChunks, user?.token]);
 
   const liveMinutes = useMemo<LocalMinuteSummary[]>(() => Object.entries(liveCaptures).flatMap(([deviceId, live]) => {
@@ -852,7 +1143,12 @@ export default function DevicesPage() {
   const renameDevice = async (deviceId: string, name: string) => {
     const cleanName = name.trim();
     if (!cleanName) return;
-    await put(`/device/${deviceId}`, { device_name: cleanName });
+    try {
+      await put(`/device/${deviceId}/identity`, { device_id: cleanName, device_name: cleanName });
+    } catch (error) {
+      if (![404, 405].includes(Number((error as ApiError)?.status))) throw error;
+      await put(`/device/${deviceId}`, { device_id: cleanName, device_name: cleanName });
+    }
     setDevices((current) => current.map((device) => device.device_uuid === deviceId ? { ...device, device_name: cleanName } : device));
     toast.success('Device renamed', cleanName);
   };
@@ -900,6 +1196,83 @@ export default function DevicesPage() {
       window.URL.revokeObjectURL(objectUrl);
     } catch (err) {
       toast.error('Download failed', err instanceof Error ? err.message : 'Unable to download');
+    }
+  }, [toast, user?.token]);
+
+  const downloadSelectedMinutes = useCallback(async (selected: string[], deviceId: string) => {
+    if (!selected.length) return;
+    let fileHandle: DownloadFileHandle | undefined;
+    try {
+      const pickerWindow = window as DownloadPickerWindow;
+      if (pickerWindow.showSaveFilePicker) {
+        try {
+          fileHandle = await pickerWindow.showSaveFilePicker({
+            suggestedName: timestampedArchiveName(),
+            types: [{ description: 'ZIP archive', accept: { 'application/zip': ['.zip'] } }],
+          });
+        } catch (error) {
+          if (error instanceof DOMException && error.name === 'AbortError') return;
+          throw error;
+        }
+      }
+      const response = await fetch('/api/proxy/file/minutes/download', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(user?.token ? { Authorization: `Bearer ${user.token}` } : {}),
+        },
+        body: JSON.stringify({ minutes: selected, device_id: deviceId }),
+      });
+      if (!response.ok) throw new Error(await response.text());
+      await saveDownloadResponse(response, timestampedArchiveName(), fileHandle);
+      toast.success('Download complete', `${selected.length} minute${selected.length === 1 ? '' : 's'} saved`);
+    } catch (error) {
+      toast.error('Download failed', error instanceof Error ? error.message : 'Unable to download selected minutes');
+    }
+  }, [toast, user?.token]);
+
+  const deleteSelectedMinutes = useCallback(async (selected: string[], deviceId: string, all = false) => {
+    const count = all ? 'all uploaded' : String(selected.length);
+    if ((!all && !selected.length) || !window.confirm(`Delete ${count} minute${selected.length === 1 ? '' : 's'} from cloud storage and the paired device? This cannot be undone.`)) return;
+    try {
+      const response = await post('/file/minutes/delete', { minutes: selected, device_id: deviceId, all });
+      const failures = Array.isArray(response?.storage_failures) ? response.storage_failures : [];
+      if (failures.length) {
+        toast.error('Deletion partially completed', `${failures.length} cloud file${failures.length === 1 ? '' : 's'} could not be removed; retry after storage recovers`);
+      } else {
+        toast.success('Minutes deleted', `${response?.minute_count || 0} minute${response?.minute_count === 1 ? '' : 's'} queued or removed`);
+      }
+      await loadData(true);
+    } catch (error) {
+      toast.error('Delete failed', error instanceof Error ? error.message : 'Unable to delete cloud minutes');
+    }
+  }, [loadData, post, toast]);
+
+  const updateMinuteLabels = useCallback(async (minute: string, deviceId: string, labels: string[]) => {
+    try {
+      const response = await fetch(`/api/proxy/device/${encodeURIComponent(deviceId)}/captures/${encodeURIComponent(minute)}/labels`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(user?.token ? { Authorization: `Bearer ${user.token}` } : {}),
+        },
+        body: JSON.stringify({ labels }),
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body?.detail || body?.error || 'Unable to update labels');
+      setMinutes((current) => current.map((item) => (
+        item.deviceKey === deviceId && item.minute === minute ? { ...item, labels: body.labels || labels } : item
+      )));
+      setDeviceFiles((current) => ({
+        ...current,
+        [deviceId]: (current[deviceId] || []).map((file) => (
+          file.filename === minute ? { ...file, labels: body.labels || labels } : file
+        )),
+      }));
+      toast.success('Labels saved', body.sync_status === 'queued_until_online' ? 'The device will apply them when it reconnects' : 'Cloud and device metadata are synchronizing');
+    } catch (error) {
+      toast.error('Label update failed', error instanceof Error ? error.message : 'Unable to update labels');
+      throw error;
     }
   }, [toast, user?.token]);
 
@@ -975,6 +1348,9 @@ export default function DevicesPage() {
             onRemove={removeDevice}
             onDownloadCloudFile={(fileId, filename = 'file') => downloadFromUrl(`/api/proxy/file/${fileId}`, filename)}
             onDownloadMinute={(minute, deviceId) => downloadFromUrl(`/api/proxy/file/minute/${minute}/download?device_id=${encodeURIComponent(deviceId)}`, `${minute}.zip`)}
+            onDownloadMinutes={downloadSelectedMinutes}
+            onDeleteMinutes={deleteSelectedMinutes}
+            onUpdateMinuteLabels={updateMinuteLabels}
             onUploadMinute={async (minute, deviceId) => {
               const response = await fetch(`/api/proxy/device/${encodeURIComponent(deviceId)}/captures/${encodeURIComponent(minute)}/request-upload`, {
                 method: 'POST',

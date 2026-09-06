@@ -46,9 +46,6 @@ async function proxy(
 ) {
   const targetUrl = buildTargetUrl(pathParts, request.url);
 
-  console.log(`[Proxy] ${request.method} ${targetUrl}`);
-  console.log(`[Proxy] Backend URL: ${API_BASE_URL}`);
-
   const method = request.method.toUpperCase();
   const headers = filterHeaders(request.headers);
 
@@ -60,58 +57,20 @@ async function proxy(
           ? await request.text()
           : undefined;
 
-    if (body !== undefined) {
-      console.log(`[Proxy] Body length: ${body.length}`);
-    }
-
-    const https = require('https');
-    const http = require('http');
-    const url = new URL(targetUrl);
-    const isHttps = url.protocol === 'https:';
-
-    const options = {
-      hostname: url.hostname,
-      port: url.port || (isHttps ? 443 : 80),
-      path: url.pathname + url.search,
+    const response = await fetch(targetUrl, {
       method,
-      headers: Object.fromEntries(headers),
-    };
-
-    const response = await new Promise<{ statusCode?: number; headers: Record<string, string | string[] | undefined>; body: Buffer }>((resolve, reject) => {
-      const lib = isHttps ? https : http;
-      const req = lib.request(options, (res: any) => {
-        const chunks: Buffer[] = [];
-        res.on('data', (chunk: Buffer) => chunks.push(chunk));
-        res.on('end', () => {
-          resolve({
-            statusCode: res.statusCode,
-            headers: res.headers,
-            body: Buffer.concat(chunks),
-          });
-        });
-      });
-
-      req.on('error', reject);
-      req.setTimeout(45000, () => {
-        req.destroy(new Error('Backend request timeout'));
-      });
-
-      if (body) {
-        req.write(body);
-      }
-
-      req.end();
+      headers,
+      body,
+      cache: 'no-store',
+      redirect: 'manual',
+      signal: request.signal,
     });
 
     const responseHeaders = new Headers();
-    Object.entries(response.headers).forEach(([key, value]) => {
+    response.headers.forEach((value, key) => {
       const lower = key.toLowerCase();
       if (lower !== 'transfer-encoding' && lower !== 'content-encoding') {
-        if (Array.isArray(value)) {
-          responseHeaders.set(key, value.join(', '));
-        } else if (value !== undefined) {
-          responseHeaders.set(key, value);
-        }
+        responseHeaders.set(key, value);
       }
     });
 
@@ -119,8 +78,10 @@ async function proxy(
     responseHeaders.set('Pragma', 'no-cache');
     responseHeaders.set('Expires', '0');
 
+    // Forward the upstream body without buffering. This is especially
+    // important for multi-minute ZIPs, which can be several gigabytes.
     return new NextResponse(response.body, {
-      status: response.statusCode,
+      status: response.status,
       headers: responseHeaders,
     });
   } catch (error: any) {
