@@ -101,6 +101,7 @@ type DeviceFileSummary = {
   progress?: any;
   metadata?: { label?: string; labels?: string[] };
   model_predictions?: Array<{ model_name?: string; timeline?: Array<Record<string, unknown>> }>;
+  radar_frame_count?: number;
   upload?: { state: 'queued' | 'preparing' | 'uploading' | 'finalizing' | 'completed' | 'failed'; bytes_total?: number; bytes_uploaded?: number; files_total?: number; files_uploaded?: number; error?: string | null };
 };
 
@@ -145,6 +146,7 @@ type LocalMinuteSummary = {
   }>;
   upload?: DeviceFileSummary['upload'];
   modelPredictions?: DeviceFileSummary['model_predictions'];
+  radarFrameCount?: number;
 };
 
 type DownloadFileHandle = {
@@ -802,7 +804,8 @@ function DevicePanel({
                             {minute.uploaded ? 'Uploaded' : 'On device only'}
                           </span>
                         </div>
-                        {minute.modelPredictions?.flatMap(model => (model.timeline || []).slice(-1)).map((prediction, index) => <div key={index} className="mt-2 text-xs text-violet-800">{String(prediction.model_name || 'Model')}: {String(prediction.status === 'ok' ? prediction.class : prediction.status)}</div>)}
+                        <div className="mt-2 text-xs font-medium text-cyan-900">Radar frames this minute: {minute.radarFrameCount == null ? 'not reported' : minute.radarFrameCount}</div>
+                        {minute.modelPredictions?.flatMap(model => (model.timeline || []).slice(-1)).map((prediction, index) => <div key={index} className="mt-2 text-xs text-violet-800">{String(prediction.model_name || 'Model')} · chunk {Number(prediction.chunk_index ?? 0) + 1} · {String(prediction.timestamp || '')} · status {String(prediction.status || 'unknown')}{prediction.status === 'ok' ? ` · class ${String(prediction.class || 'unknown')} · confidence ${(Number(prediction.confidence || 0) * 100).toFixed(1)}% · scores ${JSON.stringify(prediction.scores || {})}` : prediction.reason ? ` · reason ${String(prediction.reason)}` : ''}</div>)}
                         {upload && upload.state !== 'completed' && <div className="mt-3 text-xs font-semibold text-cyan-900"><div>{upload.state === 'queued' && !device.online ? 'Queued · device offline' : upload.state}{upload.state === 'uploading' ? ` · ${transferPercent}% · ${upload.files_uploaded || 0}/${upload.files_total || 0} files` : ''}</div>{upload.state === 'uploading' && <div className="mt-1 h-1.5 overflow-hidden rounded bg-cyan-100"><div className="h-full bg-cyan-600" style={{ width: `${transferPercent}%` }} /></div>}{upload.error ? <div className="mt-1 text-red-700">{upload.error}</div> : null}</div>}
                         {dataFiles.length > 0 && (
                           <div className="mt-2 flex flex-wrap gap-2 text-xs text-slate-700">
@@ -937,6 +940,7 @@ export default function DevicesPage() {
           dataFiles: [{ filename: file.filename, relativePath: file.filename, path: '', size: Number(file.size || 0), modified: file.modified_at || '', contentType: 'capture/minute' }],
           upload: file.upload,
           modelPredictions: file.model_predictions,
+          radarFrameCount: file.radar_frame_count,
         };
       })));
       setSettings((current) => Object.fromEntries(entries.map((entry) => {
