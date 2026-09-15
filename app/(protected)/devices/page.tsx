@@ -100,6 +100,8 @@ type DeviceFileSummary = {
   } | null;
   progress?: any;
   metadata?: { label?: string; labels?: string[] };
+  model_predictions?: Array<{ model_name?: string; timeline?: Array<Record<string, unknown>> }>;
+  upload?: { state: 'queued' | 'preparing' | 'uploading' | 'finalizing' | 'completed' | 'failed'; bytes_total?: number; bytes_uploaded?: number; files_total?: number; files_uploaded?: number; error?: string | null };
 };
 
 type LocalMinuteSummary = {
@@ -141,6 +143,8 @@ type LocalMinuteSummary = {
     modified: string;
     contentType: string;
   }>;
+  upload?: DeviceFileSummary['upload'];
+  modelPredictions?: DeviceFileSummary['model_predictions'];
 };
 
 type DownloadFileHandle = {
@@ -359,7 +363,7 @@ function DevicePanel({
   files: DeviceFileSummary[];
   minutes: LocalMinuteSummary[];
   settings: CaptureSettings;
-  onSaveSettings: (deviceId: string, settings: CaptureSettings) => Promise<CaptureSettings>;
+  onSaveSettings: (deviceId: string, settings: Partial<CaptureSettings>) => Promise<CaptureSettings>;
   onDownloadCloudFile: (fileId: number, filename?: string) => Promise<void>;
   onDownloadMinute: (minute: string, deviceId: string) => Promise<void>;
   onDownloadMinutes: (minutes: string[], deviceId: string) => Promise<void>;
@@ -478,17 +482,6 @@ function DevicePanel({
       const canonical = await onSaveSettings(device.device_uuid, {
       labels: draftLabel.split(',').map((label) => label.trim()).filter(Boolean),
       sensors: { ...DEFAULT_SENSORS, ...draftSensors },
-      radar_detection_threshold_normalized: draftRadarThreshold,
-      occupancy_threshold_percent: draftOccupancyThreshold,
-      yellow_threshold_percent: settings.yellow_threshold_percent,
-      green_threshold_percent: settings.green_threshold_percent,
-      auto_occupancy_label_enabled: draftAutoLabel,
-      chunk_seconds: settings.chunk_seconds,
-      system_mode: draftSystemMode,
-      occupancy_vote_chunks: draftVoteChunks,
-      prediction_label_style: draftPredictionStyle,
-      people_count_label_enabled: draftPeopleLabels,
-      sleep_study_enabled: false,
       csi_device_ids: draftCsiDeviceIds,
       calibrations: settings.calibrations || {},
       revision: settings.revision,
@@ -669,34 +662,7 @@ function DevicePanel({
                 </label>
               ))}
             </div>
-            <label className="mt-5 block text-sm font-medium text-slate-950">
-              Radar detection threshold
-              <div className="mt-2 flex items-center gap-3">
-                <input type="range" min="0.05" max="0.95" step="0.01" value={draftRadarThreshold} onChange={(event) => setDraftRadarThreshold(Number(event.target.value))} className="min-w-0 flex-1 accent-slate-950" />
-                <output className="w-16 text-right font-mono text-xs">{draftRadarThreshold.toFixed(2)}</output>
-              </div>
-            </label>
-            <label className="mt-5 flex items-center justify-between gap-4 border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-950">
-              <span>Automatic occupancy labels</span>
-              <input type="checkbox" checked={draftAutoLabel} onChange={(event) => setDraftAutoLabel(event.target.checked)} className="h-5 w-5" />
-            </label>
-            <label className="mt-5 block border border-slate-300 bg-white p-3 text-sm font-medium text-slate-950">
-              Occupied when detected frames reach
-              <div className="mt-2 flex items-center gap-3"><input type="range" min="10" max="100" step="10" value={draftOccupancyThreshold} onChange={(event) => setDraftOccupancyThreshold(Number(event.target.value))} className="min-w-0 flex-1 accent-emerald-600" /><output className="w-16 text-right font-mono text-xs">{draftOccupancyThreshold.toFixed(0)}%</output></div>
-            </label>
-            <div className="mt-5 grid grid-cols-2 gap-3">
-              <div className="border border-slate-300 bg-slate-50 px-3 py-2 text-sm"><div className="font-medium text-slate-950">Chunk size</div><div className="mt-2 font-mono text-xs">10 radar frames</div></div>
-              <label className="block text-sm font-medium text-slate-950">System mode
-                <select value={draftSystemMode} onChange={(event) => setDraftSystemMode(event.target.value as CaptureSettings['system_mode'])} className="mt-2 w-full border border-slate-400 bg-white px-3 py-2">
-                  <option value="responsive">Responsive</option><option value="balanced">Balanced</option><option value="precision">Precision</option>
-                </select>
-              </label>
-            </div>
-            <div className="mt-5 grid grid-cols-2 gap-3">
-              <label className="block text-sm font-medium text-slate-950">Chunks required for minute vote<input type="number" min="1" max="60" step="1" value={draftVoteChunks} onChange={(event) => setDraftVoteChunks(Math.min(60, Math.max(1, Math.floor(Number(event.target.value) || 1))))} className="mt-2 w-full border border-slate-400 bg-white px-3 py-2" /></label>
-              <label className="block text-sm font-medium text-slate-950">Prediction labels<select value={draftPredictionStyle} onChange={(event) => setDraftPredictionStyle(event.target.value as CaptureSettings['prediction_label_style'])} className="mt-2 w-full border border-slate-400 bg-white px-3 py-2"><option value="occupancy">occupied / empty</option><option value="presence">present / absent</option></select></label>
-            </div>
-            <label className="mt-3 flex items-center justify-between gap-4 border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-950"><span>Add numeric people-count labels</span><input type="checkbox" checked={draftPeopleLabels} onChange={(event) => setDraftPeopleLabels(event.target.checked)} className="h-5 w-5" /></label>
+            <p className="mt-5 border border-violet-200 bg-violet-50 p-3 text-sm text-violet-950">Classification settings have moved to <a href="/models" className="font-semibold underline">Models</a>. No semantic prediction runs unless you enable an uploaded model.</p>
             {csiDevices.length > 0 && <div className="mt-5 border border-slate-300 bg-white p-3"><div className="text-sm font-semibold text-slate-950">CSI receiver device IDs</div><div className="mt-3 space-y-3">{csiDevices.map((port, index) => <label key={port} className="block text-xs text-slate-700"><span className="font-mono">{port}</span><input value={draftCsiDeviceIds[port] || `csi-${index + 1}`} onChange={(event) => setDraftCsiDeviceIds((current) => ({ ...current, [port]: event.target.value }))} className="mt-1 w-full border border-slate-400 bg-white px-3 py-2 text-sm text-slate-950"/></label>)}</div></div>}
             <button
               type="button"
@@ -781,7 +747,7 @@ function DevicePanel({
                 return {
                   id: minute.minute,
                   disabled: !minute.completed,
-                  state: !minute.completed ? 'current' : latest?.state === 'occupied' ? 'occupied' : latest?.state === 'empty' ? 'empty' : 'missing',
+                  state: !minute.completed ? 'current' : 'missing',
                 };
               })}
               selected={selectedMinutes}
@@ -797,6 +763,8 @@ function DevicePanel({
                 const availableChunks = minute.progress?.chunks || [];
                 const latestChunk = availableChunks.filter((chunk) => chunk.state === 'occupied' || chunk.state === 'empty').at(-1)
                   || availableChunks.filter((chunk) => chunk.state !== 'waiting').at(-1);
+                const upload = minute.upload;
+                const transferPercent = upload?.bytes_total ? Math.min(100, Math.round(Number(upload.bytes_uploaded || 0) * 100 / Number(upload.bytes_total))) : 0;
                 return (
                   <div key={minute.minute} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
                     <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
@@ -815,11 +783,7 @@ function DevicePanel({
                             <span key={`${minute.minute}:${label}`} className="border border-slate-300 bg-slate-50 px-2 py-1">
                               {label}
                             </span>
-                          )) : (
-                            <span className="border border-slate-300 bg-slate-50 px-2 py-1">
-                              no-radar-data
-                            </span>
-                          )}
+                          )) : <span className="text-slate-500">No human labels</span>}
                         </div>
                         {minute.completed && <details className="mt-2 text-xs">
                           <summary className="cursor-pointer font-semibold text-slate-700 underline">Edit captured labels</summary>
@@ -838,12 +802,8 @@ function DevicePanel({
                             {minute.uploaded ? 'Uploaded' : 'On device only'}
                           </span>
                         </div>
-                        {latestChunk && (
-                          <div className="mt-3 inline-flex items-center gap-2 text-xs font-semibold capitalize text-slate-700" aria-label="Latest chunk prediction">
-                            <span role="img" aria-label={latestChunk.prediction || latestChunk.state} className="h-3 w-3 rounded-full ring-2 ring-white" style={chunkDotStyle(latestChunk.state, latestChunk.classification)} />
-                            Chunk {latestChunk.index + 1} · {latestChunk.prediction || latestChunk.state}
-                          </div>
-                        )}
+                        {minute.modelPredictions?.flatMap(model => (model.timeline || []).slice(-1)).map((prediction, index) => <div key={index} className="mt-2 text-xs text-violet-800">{String(prediction.model_name || 'Model')}: {String(prediction.status === 'ok' ? prediction.class : prediction.status)}</div>)}
+                        {upload && upload.state !== 'completed' && <div className="mt-3 text-xs font-semibold text-cyan-900"><div>{upload.state === 'queued' && !device.online ? 'Queued · device offline' : upload.state}{upload.state === 'uploading' ? ` · ${transferPercent}% · ${upload.files_uploaded || 0}/${upload.files_total || 0} files` : ''}</div>{upload.state === 'uploading' && <div className="mt-1 h-1.5 overflow-hidden rounded bg-cyan-100"><div className="h-full bg-cyan-600" style={{ width: `${transferPercent}%` }} /></div>}{upload.error ? <div className="mt-1 text-red-700">{upload.error}</div> : null}</div>}
                         {dataFiles.length > 0 && (
                           <div className="mt-2 flex flex-wrap gap-2 text-xs text-slate-700">
                             {dataFiles.slice(0, 6).map((file) => (
@@ -861,7 +821,7 @@ function DevicePanel({
                           className="inline-flex items-center justify-center gap-2 rounded-lg border border-slate-950 bg-slate-950 px-3 py-2 text-sm font-semibold text-white hover:bg-slate-800"
                         >
                           <BarChart3 className="h-4 w-4" />
-                          View predictions
+                          View details
                         </button>
                         {!minute.uploaded && <button type="button" onClick={() => onUploadMinute(minute.minute, device.device_uuid).catch((error) => window.alert(error instanceof Error ? error.message : 'Upload request failed'))} className="inline-flex items-center justify-center gap-2 rounded-lg border border-cyan-700 bg-cyan-50 px-3 py-2 text-sm font-semibold text-cyan-950 hover:bg-cyan-100"><FolderOpen className="h-4 w-4"/>Upload files</button>}
                         {minute.uploaded && fileCount > 0 && (
@@ -975,6 +935,8 @@ export default function DevicesPage() {
           files: { video: sensors.includes('video'), radar: sensors.includes('radar'), csi: sensors.includes('csi'), manifest: true, predictions: false },
           sizes: { total: Number(file.size || 0) },
           dataFiles: [{ filename: file.filename, relativePath: file.filename, path: '', size: Number(file.size || 0), modified: file.modified_at || '', contentType: 'capture/minute' }],
+          upload: file.upload,
+          modelPredictions: file.model_predictions,
         };
       })));
       setSettings((current) => Object.fromEntries(entries.map((entry) => {
@@ -993,7 +955,7 @@ export default function DevicesPage() {
     if (authLoading || !user?.token) return;
     const refresh = () => { if (document.visibilityState === 'visible') loadData(false); };
     loadData(true);
-    const timer = window.setInterval(refresh, 15000);
+    const timer = window.setInterval(refresh, 5000);
     document.addEventListener('visibilitychange', refresh);
     return () => {
       window.clearInterval(timer);
@@ -1119,7 +1081,7 @@ export default function DevicesPage() {
     });
   }, [onlineOnly, query, rows]);
 
-  const saveSettings = async (deviceId: string, nextSettings: CaptureSettings) => {
+  const saveSettings = async (deviceId: string, nextSettings: Partial<CaptureSettings>) => {
     let submitted = nextSettings;
     let response;
     try {

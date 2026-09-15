@@ -41,6 +41,7 @@ export default function FolderUploadModal({
   const [totalFiles, setTotalFiles] = useState(0);
   const [successfulFiles, setSuccessfulFiles] = useState(0);
   const [failedFiles, setFailedFiles] = useState(0);
+  const [activeFilename, setActiveFilename] = useState('');
   
   const folderInputRef = useRef<HTMLInputElement>(null);
   const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
@@ -165,15 +166,19 @@ export default function FolderUploadModal({
       const folderResult = await folderResponse.json();
       const folderId = folderResult.id;
 
-      setUploadStatus('processing');
+      setUploadStatus('uploading');
 
-      // Upload files one by one using FormData (handles large files efficiently)
+      // Upload files one by one while aggregating browser transfer progress by bytes.
       let successful = 0;
       let failed = 0;
       const errors: string[] = [];
+      const totalBytes = files.reduce((sum, item) => sum + item.file.size, 0);
+      let completedBytes = 0;
 
       for (let i = 0; i < files.length; i++) {
         const { file, relativePath } = files[i];
+        setActiveFilename(relativePath);
+        setUploadStatus('uploading');
         
         try {
           const formData = new FormData();
@@ -186,30 +191,40 @@ export default function FolderUploadModal({
           formData.append('labels', JSON.stringify(labels));
           formData.append('relative_path', relativePath);
 
-          const uploadResponse = await fetch(`${apiUrl}/file/upload-multipart`, {
-            method: 'POST',
-            headers: {
-              'Authorization': `Bearer ${token}`,
-            },
-            body: formData,
+          const uploadResponse = await new Promise<{ ok: boolean; detail?: string }>((resolve, reject) => {
+            const xhr = new XMLHttpRequest();
+            xhr.open('POST', `${apiUrl}/file/upload-multipart`);
+            xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+            xhr.upload.onprogress = event => {
+              const sent = event.lengthComputable ? event.loaded : 0;
+              setUploadProgress(totalBytes ? ((completedBytes + sent) / totalBytes) * 100 : 100);
+              if (event.lengthComputable && event.loaded === event.total) setUploadStatus('processing');
+            };
+            xhr.onload = () => {
+              let body: { detail?: string } = {};
+              try { body = JSON.parse(xhr.responseText || '{}'); } catch { /* response may be empty */ }
+              resolve({ ok: xhr.status >= 200 && xhr.status < 300, detail: body.detail });
+            };
+            xhr.onerror = () => reject(new Error('Network transfer failed'));
+            xhr.send(formData);
           });
 
           if (uploadResponse.ok) {
             successful++;
           } else {
             failed++;
-            const errData = await uploadResponse.json().catch(() => ({}));
-            errors.push(`${file.name}: ${errData.detail || 'Upload failed'}`);
+            errors.push(`${relativePath}: ${uploadResponse.detail || 'Upload failed'}`);
           }
         } catch (fileError) {
           failed++;
           errors.push(`${file.name}: ${fileError instanceof Error ? fileError.message : 'Unknown error'}`);
         }
 
+        completedBytes += file.size;
         setProcessedFiles(i + 1);
         setSuccessfulFiles(successful);
         setFailedFiles(failed);
-        setUploadProgress(((i + 1) / files.length) * 100);
+        setUploadProgress(totalBytes ? (completedBytes / totalBytes) * 100 : 100);
       }
 
       if (failed === 0) {
@@ -219,11 +234,11 @@ export default function FolderUploadModal({
         }, 1500);
       } else if (successful === 0) {
         setUploadStatus('error');
-        setErrorMessage(errors.slice(0, 5).join('\n'));
+        setErrorMessage(errors.join('\n'));
       } else {
         // Partial success
         setUploadStatus('completed');
-        setErrorMessage(`${failed} file(s) failed to upload`);
+        setErrorMessage(`${failed} file(s) failed:\n${errors.join('\n')}`);
         setTimeout(() => {
           onUploadComplete(folderId, folderName.trim());
         }, 2000);
@@ -252,6 +267,7 @@ export default function FolderUploadModal({
     setTotalFiles(0);
     setSuccessfulFiles(0);
     setFailedFiles(0);
+    setActiveFilename('');
     onClose();
   };
 
@@ -303,8 +319,8 @@ export default function FolderUploadModal({
                   uploadStatus === 'error' ? 'text-red-400' :
                   'text-indigo-400'
                 }`}>
-                  {uploadStatus === 'uploading' && 'Uploading files...'}
-                  {uploadStatus === 'processing' && `Processing files (${processedFiles}/${totalFiles})...`}
+                  {uploadStatus === 'uploading' && `Transferring ${activeFilename} (${processedFiles + 1}/${totalFiles})`}
+                  {uploadStatus === 'processing' && `Server processing ${activeFilename} (${processedFiles + 1}/${totalFiles})`}
                   {uploadStatus === 'completed' && `Upload complete! ${successfulFiles} files uploaded.`}
                   {uploadStatus === 'error' && 'Upload failed'}
                 </span>
@@ -328,7 +344,7 @@ export default function FolderUploadModal({
               )}
               
               {errorMessage && (
-                <p className="text-red-400 text-sm mt-2">{errorMessage}</p>
+                <p className="whitespace-pre-wrap text-red-400 text-sm mt-2">{errorMessage}</p>
               )}
             </div>
           )}

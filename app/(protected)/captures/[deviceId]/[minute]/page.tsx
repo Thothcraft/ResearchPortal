@@ -403,36 +403,14 @@ export default function CaptureViewerPage() {
   const chunks = Array.from(chunkByIndex.values())
     .filter((chunk) => chunk.state !== 'waiting')
     .sort((a, b) => a.index - b.index);
+  const humanLabels = Array.isArray(manifest?.labels) ? manifest.labels : [];
+  const modelPredictions = Array.isArray(manifest?.model_predictions) ? manifest.model_predictions : [];
 
   return <div className="space-y-6 text-slate-950">
     <header className="border border-slate-300 bg-white p-5"><div className="text-xs font-semibold uppercase text-slate-600">Live capture metadata</div><h1 className="mt-1 font-mono text-2xl font-semibold">{params.minute}</h1><p className="mt-2 text-sm text-slate-700">Device {params.deviceId}</p></header>
     {waiting && <div className="sr-only" role="status">Live metadata is updating while capture files remain on the device.</div>}
-    <section className="border border-slate-300 bg-white p-4">
-      <div className="mb-4"><div className="text-xs font-semibold uppercase tracking-wide text-slate-600">Detection windows</div><h2 className="mt-1 text-xl font-semibold">All captured chunks and detections</h2></div>
-      {chunks.length ? <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-        {chunks.map((chunk) => {
-          const location = chunk.location && Number.isFinite(Number(chunk.location.x)) && Number.isFinite(Number(chunk.location.y))
-            ? `${Number(chunk.location.x).toFixed(2)}, ${Number(chunk.location.y).toFixed(2)} m`
-            : 'N/A';
-          return <article key={chunk.index} className="overflow-hidden border border-slate-200 bg-slate-50">
-            <div className="flex items-center justify-between gap-3 p-4 pb-3">
-              <strong>Chunk {chunk.index + 1}</strong>
-              <span className="inline-flex items-center gap-2 text-xs font-semibold uppercase text-slate-600"><span className="h-2.5 w-2.5 rounded-full" style={chunkDotStyle(chunk.state, chunk.classification)} />{chunk.prediction}</span>
-            </div>
-            {chunk.xyMap ? <CompactXYMap map={chunk.xyMap} /> : <div className="flex aspect-square items-center justify-center bg-slate-950 text-xs font-medium text-slate-400">{chunk.state === 'loading' ? 'Map loading' : 'Map unavailable'}</div>}
-            <div className="grid grid-cols-2 gap-3 p-4 text-sm">
-              <div><span className="block text-xs text-slate-500">Detected frames</span>{chunk.detectedFrames} / {chunk.evaluatedFrames}</div>
-              <div><span className="block text-xs text-slate-500">Detection ratio</span>{(chunk.ratio * 100).toFixed(1)}%</div>
-              <div><span className="block text-xs text-slate-500">People</span>{chunk.peopleCount}</div>
-              <div><span className="block text-xs text-slate-500">Normalized peak</span>{chunk.score == null ? 'N/A' : chunk.score.toFixed(3)}</div>
-              <div className="col-span-2"><span className="block text-xs text-slate-500">Coordinates</span>{location}</div>
-              {chunk.error && <div className="col-span-2 text-red-700">{chunk.error}</div>}
-            </div>
-          </article>;
-        })}
-      </div> : <div className="border border-dashed border-slate-300 p-8 text-sm text-slate-500">Waiting for the first 10-frame chunk.</div>}
-    </section>
-    <section className="border border-slate-300 bg-white p-4"><h2 className="mb-3 font-semibold">X / Y localization</h2>{documents['xy-tracking'] || documents['xy_tracking'] ? <Heatmap payload={documents['xy-tracking'] || documents['xy_tracking']} tracking /> : <div className="p-8 text-sm text-slate-500">Not available</div>}</section>
+    <section className="border border-slate-300 bg-white p-4"><div className="text-xs font-semibold uppercase tracking-wide text-slate-600">Human labels</div><div className="mt-3 flex flex-wrap gap-2">{humanLabels.length ? humanLabels.map((label: string) => <span key={label} className="rounded-full border border-cyan-300 bg-cyan-50 px-3 py-1 text-sm">{label}</span>) : <span className="text-sm text-slate-500">No labels were authored for this minute.</span>}</div></section>
+    <section className="border border-slate-300 bg-white p-4"><div className="mb-4"><div className="text-xs font-semibold uppercase tracking-wide text-slate-600">User models</div><h2 className="mt-1 text-xl font-semibold">Prediction timelines</h2></div><div className="space-y-3">{modelPredictions.map((model: any) => <article key={model.model_id} className="rounded-xl border border-slate-200 p-4"><h3 className="font-semibold">{model.model_name} <span className="text-xs text-slate-500">{model.model_version}</span></h3><div className="mt-3 flex flex-wrap gap-2">{(model.timeline || []).map((item: any, index: number) => <span key={`${item.chunk_index}-${index}`} title={item.timestamp} className={`rounded-full border px-3 py-1 text-xs ${item.status === 'error' ? 'border-red-300 text-red-800' : 'border-violet-300 bg-violet-50 text-violet-900'}`}>Chunk {Number(item.chunk_index) + 1}: {item.status === 'ok' ? `${item.class} · ${(Number(item.confidence) * 100).toFixed(1)}%` : `${item.status}${item.reason ? ` · ${item.reason}` : ''}`}</span>)}</div></article>)}{!modelPredictions.length ? <div className="border border-dashed border-slate-300 p-8 text-sm text-slate-500">No enabled user model produced a result.</div> : null}</div></section>
     <section className="border border-slate-300 bg-white p-4"><h2 className="mb-3 font-semibold">Camera</h2>{videoUrl ? <video controls src={videoUrl} className="max-h-[70vh] w-full bg-black" /> : cameraUrl ? <div className="space-y-3"><Image unoptimized src={cameraUrl} width={1280} height={720} alt={`Camera frame for second ${cameraSecond + 1}`} className="max-h-[70vh] w-full bg-black object-contain"/><div className="flex items-center gap-3 text-xs"><button type="button" onClick={() => setCameraPlaying((value) => !value)} className="border border-slate-300 bg-white px-3 py-1.5 font-semibold">{cameraPlaying ? 'Pause' : 'Play'}</button><input aria-label="Camera second" type="range" min={0} max={Math.max(0, Number(containerMetadata?.seconds?.length || 1) - 1)} value={cameraSecond} onChange={(event) => { setCameraPlaying(false); setCameraSecond(Number(event.target.value)); }} className="min-w-0 flex-1 accent-cyan-600"/><span className="font-mono">{cameraSecond + 1}s</span></div></div> : <div className="p-8 text-sm text-slate-500">No camera frames in this minute.</div>}</section>
     <div className="text-xs text-slate-500">{assets.length} cloud assets</div>
   </div>;
