@@ -401,7 +401,9 @@ function DevicePanel({
   const selectAllRef = useRef<HTMLInputElement>(null);
 
   const matchedMinutes = useMemo(() => {
-    return minutes.filter((minute) => matchesDevice(device, minute));
+    return minutes
+      .filter((minute) => matchesDevice(device, minute))
+      .sort((a, b) => b.minute.localeCompare(a.minute)); // newest first
   }, [device, minutes]);
   const selectableMinutes = useMemo(
     () => matchedMinutes.filter((minute) => minute.completed).map((minute) => minute.minute),
@@ -806,6 +808,18 @@ function DevicePanel({
                         </div>
                         <div className="mt-2 text-xs font-medium text-cyan-900">Radar frames this minute: {minute.radarFrameCount == null ? 'not reported' : minute.radarFrameCount}</div>
                         {minute.modelPredictions?.flatMap(model => (model.timeline || []).slice(-1)).map((prediction, index) => <div key={index} className="mt-2 text-xs text-violet-800">{String(prediction.model_name || 'Model')} · chunk {Number(prediction.chunk_index ?? 0) + 1} · {String(prediction.timestamp || '')} · status {String(prediction.status || 'unknown')}{prediction.status === 'ok' ? ` · class ${String(prediction.class || 'unknown')} · confidence ${(Number(prediction.confidence || 0) * 100).toFixed(1)}% · scores ${JSON.stringify(prediction.scores || {})}` : prediction.reason ? ` · reason ${String(prediction.reason)}` : ''}</div>)}
+                        {minute.progress && (
+                          <div className="mt-3 flex max-w-xl items-start gap-2" aria-label="Chunk timeline">
+                              {minute.progress.chunks.slice(0, 6).map((chunk) => {
+                                const color = chunk.state === 'occupied' ? 'bg-emerald-500' : chunk.state === 'empty' ? 'bg-red-500' : chunk.state === 'collecting' ? 'animate-pulse bg-blue-500' : ['stored', 'analyzing'].includes(chunk.state) ? 'animate-pulse bg-cyan-500' : chunk.state === 'error' ? 'bg-amber-500' : 'bg-slate-300';
+                                const ratio = typeof chunk.ratio === 'number' && Number.isFinite(chunk.ratio) ? Math.min(1, Math.max(0, chunk.ratio)) : null;
+                                const pizza = ratio != null ? `conic-gradient(#10b981 0% ${(ratio * 100).toFixed(1)}%, #ef4444 ${(ratio * 100).toFixed(1)}% 100%)` : null;
+                                const location = Array.isArray(chunk.location) ? chunk.location.join(', ') : chunk.location ? `${chunk.location.x ?? '?'}, ${chunk.location.y ?? '?'}` : 'n/a';
+                                const detail = [`Chunk ${chunk.index + 1}`, chunk.prediction || chunk.state, chunk.detectedFrames == null || chunk.evaluatedFrames == null ? null : `${chunk.detectedFrames} / ${chunk.evaluatedFrames} frames`, chunk.ratio == null ? null : `ratio ${(chunk.ratio * 100).toFixed(1)}%`, `coordinates ${location}`, chunk.score == null ? null : `confidence ${chunk.score}`, chunk.error].filter(Boolean).join(' · ');
+                                return <div key={chunk.index} className="min-w-0 flex-1 text-center" title={detail}><div role="img" tabIndex={0} title={detail} aria-label={detail} style={pizza ? { background: pizza } : undefined} className={`mx-auto h-3 w-3 rounded-full ring-2 ring-white ${pizza ? '' : color}`} /></div>;
+                              })}
+                          </div>
+                        )}
                         {upload && upload.state !== 'completed' && <div className="mt-3 text-xs font-semibold text-cyan-900"><div>{upload.state === 'queued' && !device.online ? 'Queued · device offline' : upload.state}{upload.state === 'uploading' ? ` · ${transferPercent}% · ${upload.files_uploaded || 0}/${upload.files_total || 0} files` : ''}</div>{upload.state === 'uploading' && <div className="mt-1 h-1.5 overflow-hidden rounded bg-cyan-100"><div className="h-full bg-cyan-600" style={{ width: `${transferPercent}%` }} /></div>}{upload.error ? <div className="mt-1 text-red-700">{upload.error}</div> : null}</div>}
                         {dataFiles.length > 0 && (
                           <div className="mt-2 flex flex-wrap gap-2 text-xs text-slate-700">
