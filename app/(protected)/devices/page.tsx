@@ -125,7 +125,7 @@ type LocalMinuteSummary = {
     storagePercent: number;
     predictionPercent: number;
     chunkSeconds?: number | null;
-    chunks: Array<{ index: number; state: 'waiting' | 'collecting' | 'stored' | 'analyzing' | 'occupied' | 'empty' | 'error'; classification?: 'red' | 'green'; prediction?: string; location?: any; ratio?: number; progress?: number; score?: number; detectedFrames?: number; evaluatedFrames?: number; targetCount?: number; peopleCount?: number; targets?: any[]; labels?: string[]; activityLabels?: string[]; activity?: any; join?: any; xyMap?: any; cameraFilename?: string; error?: string }>;
+    chunks: Array<{ index: number; state: 'waiting' | 'collecting' | 'stored' | 'analyzing' | 'occupied' | 'empty' | 'error'; classification?: 'red' | 'green'; prediction?: string; location?: any; ratio?: number; progress?: number; score?: number; detectedFrames?: number; evaluatedFrames?: number; targetCount?: number; peopleCount?: number; targets?: any[]; labels?: string[]; activityLabels?: string[]; activity?: any; join?: any; xyMap?: any; cameraFilename?: string; features?: any; error?: string }>;
   };
   completed: boolean;
   state: 'ready' | 'collecting';
@@ -325,6 +325,7 @@ function normalizeProgress(value: any): NonNullable<LocalMinuteSummary['progress
       join: source.join,
       xyMap: source.xy_map ?? source.xyMap,
       cameraFilename: source.camera_filename ?? source.cameraFilename,
+      features: source.features,
       error: source.error == null ? undefined : String(source.error),
     } as NonNullable<LocalMinuteSummary['progress']>['chunks'][number];
   });
@@ -337,6 +338,90 @@ function normalizeProgress(value: any): NonNullable<LocalMinuteSummary['progress
     chunkSeconds: Number(value?.chunk_seconds ?? value?.chunkSeconds ?? 10),
     chunks,
   };
+}
+
+function Sparkline({ values, color, height = 30 }: { values: number[]; color: string; height?: number }) {
+  if (!Array.isArray(values) || values.length < 2) return null;
+  const max = Math.max(...values);
+  const min = Math.min(...values);
+  const range = max - min || 1;
+  const w = 140;
+  const pts = values.map((v, i) => `${((i / (values.length - 1)) * w).toFixed(1)},${(height - ((v - min) / range) * (height - 2) - 1).toFixed(1)}`).join(' ');
+  return <svg width={w} height={height} className="block" aria-hidden="true"><polyline points={pts} fill="none" stroke={color} strokeWidth="1.5" /></svg>;
+}
+
+function StftHeatmap({ stft }: { stft: { shape?: number[]; magnitude?: number[][] } }) {
+  const ref = useRef<HTMLCanvasElement>(null);
+  useEffect(() => {
+    const canvas = ref.current;
+    const mag = stft?.magnitude;
+    if (!canvas || !Array.isArray(mag) || !mag.length) return;
+    const F = mag.length;
+    const T = Array.isArray(mag[0]) ? mag[0].length : 0;
+    if (!F || !T) return;
+    canvas.width = T;
+    canvas.height = F;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    let max = 1e-9;
+    for (const row of mag) for (const v of row) if (v > max) max = v;
+    const img = ctx.createImageData(T, F);
+    for (let f = 0; f < F; f++) {
+      for (let t = 0; t < T; t++) {
+        const v = Math.min(1, (mag[f][t] || 0) / max);
+        const i = ((F - 1 - f) * T + t) * 4; // low freq at bottom
+        img.data[i] = Math.round(40 + 215 * v);
+        img.data[i + 1] = Math.round(60 + 60 * (1 - v));
+        img.data[i + 2] = Math.round(200 - 160 * v);
+        img.data[i + 3] = 255;
+      }
+    }
+    ctx.putImageData(img, 0, 0);
+  }, [stft]);
+  if (!stft?.magnitude?.length) return null;
+  return <canvas ref={ref} className="h-20 w-full rounded border border-slate-200" style={{ imageRendering: 'pixelated' }} aria-label="CSI STFT spectrogram" />;
+}
+
+function LiveSignalPanel({ features }: { features: any }) {
+  if (!features) return null;
+  const snr: number[] = Array.isArray(features.radar_snr_db) ? features.radar_snr_db : [];
+  const amp: number[] = Array.isArray(features.csi_amplitude_mean) ? features.csi_amplitude_mean : [];
+  const variance: number[] = Array.isArray(features.csi_rolling_var) ? features.csi_rolling_var : [];
+  const stft = features.csi_stft;
+  if (!snr.length && !amp.length && !variance.length && !stft?.magnitude?.length) return null;
+  return (
+    <div className="mt-3 max-w-xl rounded border border-slate-200 bg-slate-50 p-3">
+      <div className="mb-2 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-slate-600">
+        <Activity className="h-3.5 w-3.5" />Live signal
+      </div>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        {snr.length > 1 && (
+          <div>
+            <div className="text-[11px] text-slate-500">Radar SNR · {snr.at(-1)} dB</div>
+            <Sparkline values={snr} color="#0ea5e9" />
+          </div>
+        )}
+        {amp.length > 1 && (
+          <div>
+            <div className="text-[11px] text-slate-500">CSI amplitude</div>
+            <Sparkline values={amp} color="#8b5cf6" />
+          </div>
+        )}
+        {variance.length > 1 && (
+          <div>
+            <div className="text-[11px] text-slate-500">CSI rolling var (motion)</div>
+            <Sparkline values={variance} color="#10b981" />
+          </div>
+        )}
+      </div>
+      {stft?.magnitude?.length > 0 && (
+        <div className="mt-3">
+          <div className="mb-1 text-[11px] text-slate-500">CSI STFT — low freq = motion, high freq = noise</div>
+          <StftHeatmap stft={stft} />
+        </div>
+      )}
+    </div>
+  );
 }
 
 function chunkDotStyle(state: string, classification?: string) {
@@ -857,6 +942,10 @@ function DevicePanel({
                               })}
                           </div>
                         )}
+                        {minute.state === 'collecting' && (() => {
+                          const latestFeatures = availableChunks.map((chunk) => chunk.features).filter(Boolean).at(-1);
+                          return latestFeatures ? <LiveSignalPanel features={latestFeatures} /> : null;
+                        })()}
                         {upload && upload.state !== 'completed' && <div className="mt-3 text-xs font-semibold text-cyan-900"><div>{upload.state === 'queued' && !device.online ? 'Queued · device offline' : upload.state}{upload.state === 'uploading' ? ` · ${transferPercent}% · ${upload.files_uploaded || 0}/${upload.files_total || 0} files` : ''}</div>{upload.state === 'uploading' && <div className="mt-1 h-1.5 overflow-hidden rounded bg-cyan-100"><div className="h-full bg-cyan-600" style={{ width: `${transferPercent}%` }} /></div>}{upload.error ? <div className="mt-1 text-red-700">{upload.error}</div> : null}</div>}
                         {dataFiles.length > 0 && (
                           <div className="mt-2 flex flex-wrap gap-2 text-xs text-slate-700">
@@ -1084,6 +1173,7 @@ export default function DevicesPage() {
       activity_labels: chunk.activity_labels || [],
       xy_map: chunk.xy_map,
       camera_filename: chunk.camera_filename,
+      features: chunk.features,
     }));
     const progress = normalizeProgress({
       expected_chunks: 60,

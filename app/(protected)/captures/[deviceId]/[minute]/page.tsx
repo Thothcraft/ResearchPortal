@@ -207,6 +207,208 @@ function LinePlot({ points }: { points: number[] }) {
   return <svg viewBox="0 0 800 260" className="w-full bg-slate-950"><path d={path} fill="none" stroke="#22d3ee" strokeWidth="2" /></svg>;
 }
 
+type SensorWindow = {
+  sensor: string;
+  hz?: number;
+  t_ns: number[];
+  real: boolean[];
+  amp?: number[][][];      // csi: [G, rx, sc]
+  values?: number[][];     // sense: [G, channels]
+  channels?: any;          // csi: subcarrier count; sense: channel names
+  source_index?: number[]; // radar/camera: held source index
+};
+
+const SENSOR_TABS = [
+  { id: 'radar', label: 'Radar' },
+  { id: 'csi', label: 'CSI' },
+  { id: 'camera', label: 'Camera' },
+  { id: 'sense', label: 'Sense' },
+] as const;
+
+/** Timeline strip: one cell per grid tick, bright = measured, dim = held/interpolated. */
+function RealMaskStrip({ real, cursorIndex, onSeek, count }: { real: boolean[]; cursorIndex: number; onSeek: (i: number) => void; count: number }) {
+  const ref = useRef<HTMLCanvasElement>(null);
+  useEffect(() => {
+    const canvas = ref.current;
+    if (!canvas || !count) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    const w = canvas.width, h = canvas.height;
+    ctx.clearRect(0, 0, w, h);
+    for (let i = 0; i < count; i++) {
+      ctx.fillStyle = real[i] ? '#22d3ee' : '#334155';
+      const x = i * w / count;
+      ctx.fillRect(x, 0, Math.max(1, w / count), h);
+    }
+    // cursor
+    ctx.fillStyle = '#f8fafc';
+    ctx.fillRect(cursorIndex * w / count, 0, Math.max(2, w / count), h);
+  }, [real, cursorIndex, count]);
+  return (
+    <canvas
+      ref={ref}
+      width={800}
+      height={36}
+      className="h-9 w-full cursor-crosshair rounded bg-slate-950"
+      onClick={(e) => {
+        const rect = (e.target as HTMLCanvasElement).getBoundingClientRect();
+        const frac = (e.clientX - rect.left) / rect.width;
+        onSeek(Math.max(0, Math.min(count - 1, Math.round(frac * count))));
+      }}
+    />
+  );
+}
+
+/** CSI amplitude heatmap for one grid tick: rows = receivers, cols = subcarriers. */
+function CsiHeatmap({ amp }: { amp: number[][] }) {
+  const ref = useRef<HTMLCanvasElement>(null);
+  useEffect(() => {
+    const canvas = ref.current;
+    if (!canvas || !Array.isArray(amp) || !amp.length) return;
+    const rows = amp.length;
+    const cols = Math.max(...amp.map((r) => (Array.isArray(r) ? r.length : 0)));
+    if (!cols) return;
+    const flat = amp.flat();
+    const max = Math.max(...flat.map(Number), 1e-6);
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    amp.forEach((row, y) => row.forEach((v, x) => {
+      const [r, g, b] = viridis((Number(v) || 0) / max);
+      ctx.fillStyle = `rgb(${r} ${g} ${b})`;
+      ctx.fillRect(x * canvas.width / cols, y * canvas.height / rows, canvas.width / cols + 1, canvas.height / rows + 1);
+    }));
+  }, [amp]);
+  return <canvas ref={ref} width={520} height={Math.max(40, amp.length * 40)} className="w-full rounded bg-slate-950" />;
+}
+
+function SensorScrubber({ minute, deviceId, token, durationSeconds }: { minute: string; deviceId: string; token?: string | null; durationSeconds: number }) {
+  const [sensor, setSensor] = useState<string>('csi');
+  const [window, setWindow] = useState<SensorWindow | null>(null);
+  const [cursor, setCursor] = useState(0); // seconds offset into the minute
+  const [loading, setLoading] = useState(false);
+  const [unavailable, setUnavailable] = useState(false);
+  const [senseChannel, setSenseChannel] = useState(0);
+  const [cameraUrl, setCameraUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!token) return;
+    let cancelled = false;
+    setLoading(true);
+    setUnavailable(false);
+    fetch(`/api/proxy/file/minute/${encodeURIComponent(minute)}/container/sensor/${sensor}?device_id=${encodeURIComponent(deviceId)}`, {
+      headers: { Authorization: `Bearer ${token}` }, cache: 'no-store',
+    })
+      .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
+      .then((d) => { if (!cancelled) setWindow(d?.window || null); })
+      .catch(() => { if (!cancelled) { setWindow(null); setUnavailable(true); } })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [sensor, minute, deviceId, token]);
+
+  const count = window?.t_ns?.length || 0;
+  const hz = Number(window?.hz) || 1;
+  const cursorIndex = count ? Math.min(count - 1, Math.max(0, Math.round(cursor * hz))) : 0;
+  const isReal = Boolean(window?.real?.[cursorIndex]);
+
+  // Camera: the held source index is the synchronized second; fetch that frame.
+  const cameraSecond = sensor === 'camera' && window?.source_index ? Number(window.source_index[cursorIndex] ?? 0) : null;
+  useEffect(() => {
+    if (cameraSecond == null || !token) { setCameraUrl(null); return; }
+    let cancelled = false;
+    fetch(`/api/proxy/file/minute/${encodeURIComponent(minute)}/container/camera/${cameraSecond}?device_id=${encodeURIComponent(deviceId)}`, {
+      headers: { Authorization: `Bearer ${token}` }, cache: 'no-store',
+    })
+      .then((r) => (r.ok ? r.blob() : Promise.reject(r.status)))
+      .then((blob) => { if (!cancelled) setCameraUrl((old) => { if (old) URL.revokeObjectURL(old); return URL.createObjectURL(blob); }); })
+      .catch(() => { if (!cancelled) setCameraUrl(null); });
+    return () => { cancelled = true; };
+  }, [cameraSecond, minute, deviceId, token]);
+  useEffect(() => () => { if (cameraUrl) URL.revokeObjectURL(cameraUrl); }, [cameraUrl]);
+
+  const senseChannels: string[] = sensor === 'sense' && Array.isArray(window?.channels) ? window.channels : [];
+  const senseSeries: number[] = sensor === 'sense' && window?.values
+    ? window.values.map((row) => Number(row?.[senseChannel]) || 0)
+    : [];
+
+  return (
+    <section className="border border-slate-300 bg-white p-4">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <div className="text-xs font-semibold uppercase tracking-wide text-slate-600">Minute explorer</div>
+          <h2 className="mt-1 text-xl font-semibold">Per-sensor time scrubber</h2>
+        </div>
+        <div className="flex gap-1">
+          {SENSOR_TABS.map((tab) => (
+            <button key={tab.id} type="button" onClick={() => setSensor(tab.id)}
+              className={`rounded-md border px-3 py-1.5 text-xs font-semibold ${sensor === tab.id ? 'border-cyan-600 bg-cyan-600 text-white' : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'}`}>
+              {tab.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {unavailable && (
+        <div className="rounded border border-dashed border-slate-300 p-6 text-sm text-slate-500">
+          This capture predates the resampled-grid schema, so per-sensor time windows are unavailable.
+        </div>
+      )}
+      {loading && <div className="p-4 text-sm text-slate-500">Loading {sensor} grid…</div>}
+
+      {!loading && window && count > 0 && (
+        <div className="space-y-3">
+          <RealMaskStrip real={window.real || []} cursorIndex={cursorIndex} count={count} onSeek={(i) => setCursor(i / hz)} />
+          <div className="flex items-center gap-3 text-xs">
+            <input aria-label="Minute position" type="range" min={0} max={Math.max(1, durationSeconds)}
+              step={1 / hz} value={cursor}
+              onChange={(e) => setCursor(Number(e.target.value))} className="min-w-0 flex-1 accent-cyan-600" />
+            <span className="w-24 text-right font-mono">{cursor.toFixed(2)}s</span>
+            <span className={`rounded-full px-2 py-0.5 font-semibold ${isReal ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-600'}`}>
+              {isReal ? 'measured' : 'held'}
+            </span>
+          </div>
+
+          {sensor === 'csi' && window.amp && (
+            <div>
+              <div className="mb-1 text-[11px] font-medium text-slate-500">CSI amplitude · {window.amp[cursorIndex]?.length || 0} receiver(s) × {window.amp[cursorIndex]?.[0]?.length || 0} subcarriers</div>
+              <CsiHeatmap amp={window.amp[cursorIndex] || []} />
+            </div>
+          )}
+
+          {sensor === 'sense' && (
+            <div>
+              <div className="mb-2 flex items-center gap-2 text-xs">
+                <label className="font-medium text-slate-600">Channel</label>
+                <select value={senseChannel} onChange={(e) => setSenseChannel(Number(e.target.value))} className="rounded border border-slate-300 px-2 py-1">
+                  {senseChannels.map((name, i) => <option key={name} value={i}>{name}</option>)}
+                </select>
+                <span className="font-mono text-slate-700">{Number(senseSeries[cursorIndex] || 0).toFixed(3)}</span>
+              </div>
+              <LinePlot points={senseSeries} />
+            </div>
+          )}
+
+          {sensor === 'camera' && (
+            <div>
+              <div className="mb-1 text-[11px] font-medium text-slate-500">Camera frame · second {cameraSecond ?? '—'}</div>
+              {cameraUrl
+                ? <img src={cameraUrl} alt={`Camera at ${cursor.toFixed(2)}s`} className="max-h-[50vh] w-full rounded bg-black object-contain" />
+                : <div className="rounded border border-dashed border-slate-300 p-6 text-sm text-slate-500">No camera frame held at this time.</div>}
+            </div>
+          )}
+
+          {sensor === 'radar' && (
+            <div className="rounded border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+              Radar grid index <strong>{cursorIndex}</strong> → source frame <strong>{window.source_index?.[cursorIndex] ?? '—'}</strong>.
+              Frame-level radar playback uses the localization heatmap below.
+            </div>
+          )}
+        </div>
+      )}
+    </section>
+  );
+}
+
 export default function CaptureViewerPage() {
   const params = useParams<{ deviceId: string; minute: string }>();
   const { user } = useAuth();
@@ -417,6 +619,7 @@ export default function CaptureViewerPage() {
     {waiting && <div className="sr-only" role="status">Live metadata is updating while capture files remain on the device.</div>}
     <section className="border border-slate-300 bg-slate-50 p-4"><div className="text-xs font-semibold uppercase tracking-wide text-slate-600">Radar capture</div><div className="mt-2 flex flex-wrap gap-6 text-sm"><span><strong>{Number(radarSummary.sample_count || 0)}</strong> frames captured this minute</span><span><strong>{Number(radarSummary.chunk_count || 0)}</strong> complete chunks</span><span><strong>{Number(radarSummary.average_sampling_rate_hz || 0).toFixed(2)}</strong> Hz average</span></div></section>
     <section className="border border-slate-300 bg-white p-4"><div className="text-xs font-semibold uppercase tracking-wide text-slate-600">Capture data summary</div><div className="mt-2 grid gap-2 text-sm sm:grid-cols-2 lg:grid-cols-4"><div>CSI samples: <strong>{csiSamples || Number(csiSummary.sample_count || 0)}</strong></div><div>CSI receivers: <strong>{Number(csiSummary.receiver_count || csiReceivers.length || 0)}</strong></div><div>Camera frames: <strong>{Number(cameraSummary.sample_count || cameraSummary.frame_count || 0)}</strong></div><div>Sense HAT samples: <strong>{Number(senseSummary.sample_count || 0)}</strong></div></div></section>
+    <SensorScrubber minute={params.minute} deviceId={params.deviceId} token={user?.token} durationSeconds={Number(manifest?.duration_seconds) || 60} />
     <section className="border border-slate-300 bg-white p-4"><div className="text-xs font-semibold uppercase tracking-wide text-slate-600">Human labels</div><div className="mt-3 flex flex-wrap gap-2">{humanLabels.length ? humanLabels.map((label: string) => <span key={label} className="rounded-full border border-cyan-300 bg-cyan-50 px-3 py-1 text-sm">{label}</span>) : <span className="text-sm text-slate-500">No labels were authored for this minute.</span>}</div></section>
     <section className="border border-slate-300 bg-white p-4"><div className="mb-4"><div className="text-xs font-semibold uppercase tracking-wide text-slate-600">User models</div><h2 className="mt-1 text-xl font-semibold">Prediction timelines</h2></div><div className="space-y-3">{modelPredictions.map((model: any) => <article key={model.model_id} className="rounded-xl border border-slate-200 p-4"><h3 className="font-semibold">{model.model_name} <span className="text-xs text-slate-500">{model.model_version}</span></h3><div className="mt-3 space-y-2">{(model.timeline || []).map((item: any, index: number) => <div key={`${item.chunk_index}-${index}`} className="rounded-lg bg-slate-50 px-3 py-2 text-xs"><div><strong>Chunk {Number(item.chunk_index) + 1}</strong> · {item.timestamp} · status {item.status}</div>{item.status === 'ok' ? <div className="mt-1">Class: <strong>{item.class}</strong> · confidence {(Number(item.confidence) * 100).toFixed(1)}% · scores {JSON.stringify(item.scores || {})}</div> : <div className="mt-1">{item.reason ? `Reason: ${item.reason}` : item.error ? `Error: ${item.error}` : 'No additional details.'}</div>}</div>)}</div></article>)}{!modelPredictions.length ? <div className="border border-dashed border-slate-300 p-8 text-sm text-slate-500">No enabled user model produced a result.</div> : null}</div></section>
     <section className="border border-slate-300 bg-white p-4"><h2 className="mb-3 font-semibold">Camera</h2>{videoUrl ? <video controls src={videoUrl} className="max-h-[70vh] w-full bg-black" /> : cameraUrl ? <div className="space-y-3"><Image unoptimized src={cameraUrl} width={1280} height={720} alt={`Camera frame for second ${cameraSecond + 1}`} className="max-h-[70vh] w-full bg-black object-contain"/><div className="flex items-center gap-3 text-xs"><button type="button" onClick={() => setCameraPlaying((value) => !value)} className="border border-slate-300 bg-white px-3 py-1.5 font-semibold">{cameraPlaying ? 'Pause' : 'Play'}</button><input aria-label="Camera second" type="range" min={0} max={Math.max(0, Number(containerMetadata?.seconds?.length || 1) - 1)} value={cameraSecond} onChange={(event) => { setCameraPlaying(false); setCameraSecond(Number(event.target.value)); }} className="min-w-0 flex-1 accent-cyan-600"/><span className="font-mono">{cameraSecond + 1}s</span></div></div> : <div className="p-8 text-sm text-slate-500">No camera frames in this minute.</div>}</section>
