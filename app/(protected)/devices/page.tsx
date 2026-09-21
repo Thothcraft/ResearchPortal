@@ -19,6 +19,8 @@ import {
   SlidersHorizontal,
   Pencil,
   Link2,
+  Play,
+  Square,
   Trash2,
   X,
 } from 'lucide-react';
@@ -360,11 +362,13 @@ function DevicePanel({
   onUploadMinute,
   onRename,
   onRemove,
+  onSendCommand,
 }: {
   device: Device;
   files: DeviceFileSummary[];
   minutes: LocalMinuteSummary[];
   settings: CaptureSettings;
+  onSendCommand: (deviceId: string, command: string, payload?: Record<string, unknown>) => Promise<unknown>;
   onSaveSettings: (deviceId: string, settings: Partial<CaptureSettings>) => Promise<CaptureSettings>;
   onDownloadCloudFile: (fileId: number, filename?: string) => Promise<void>;
   onDownloadMinute: (minute: string, deviceId: string) => Promise<void>;
@@ -375,6 +379,7 @@ function DevicePanel({
   onRename: (deviceId: string, name: string) => Promise<void>;
   onRemove: (deviceId: string) => Promise<void>;
 }) {
+  const toast = useToast();
   const hardware = device.hardware_info || {};
   const sensors = hardware.sensors || hardware.available_sensors || [];
   const [expanded, setExpanded] = useState(false);
@@ -393,6 +398,7 @@ function DevicePanel({
   const [selectedMinutes, setSelectedMinutes] = useState<Set<string>>(new Set());
   const [bulkLabels, setBulkLabels] = useState<string[]>([]);
   const [downloadBusy, setDownloadBusy] = useState(false);
+  const [collectionBusy, setCollectionBusy] = useState<'start' | 'stop' | null>(null);
   const [draftName, setDraftName] = useState(device.device_name || device.device_id);
   const [openMinute, setOpenMinute] = useState<string | null>(null);
   const [minuteLabelDrafts, setMinuteLabelDrafts] = useState<Record<string, string>>({});
@@ -478,6 +484,19 @@ function DevicePanel({
       return canonical ? [canonical] : [];
     }));
   }, [availableDownloadLabels]);
+
+  const runCollectionCommand = async (action: 'start' | 'stop') => {
+    setCollectionBusy(action);
+    try {
+      await onSendCommand(device.device_uuid, `${action}_collection`);
+      toast.success(action === 'start' ? 'Collection starting' : 'Collection stopping',
+        'The device will apply the command on its next heartbeat.');
+    } catch (error) {
+      toast.error('Command failed', error instanceof Error ? error.message : `Unable to ${action} collection`);
+    } finally {
+      setCollectionBusy(null);
+    }
+  };
 
   const saveSettings = async () => {
     setSettingsStatus('saving');
@@ -621,6 +640,24 @@ function DevicePanel({
           {openMinute ? <iframe title={`Captured minute ${openMinute}`} src={`/captures/${encodeURIComponent(device.device_uuid)}/${encodeURIComponent(openMinute)}?embedded=1`} className="h-[calc(94vh-82px)] w-full border-0"/> : <>
           <div className="grid gap-0 lg:grid-cols-[360px_1fr]">
           <section className="border-b border-slate-200 p-4 sm:p-5 lg:border-b-0 lg:border-r">
+            <div className="mb-4 grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                disabled={collectionBusy !== null}
+                onClick={() => runCollectionCommand('start')}
+                className="inline-flex items-center justify-center gap-2 bg-emerald-700 px-3 py-2.5 text-sm font-semibold text-white transition hover:bg-emerald-800 disabled:opacity-50"
+              >
+                <Play className="h-4 w-4" />{collectionBusy === 'start' ? 'Starting…' : 'Start'}
+              </button>
+              <button
+                type="button"
+                disabled={collectionBusy !== null}
+                onClick={() => runCollectionCommand('stop')}
+                className="inline-flex items-center justify-center gap-2 bg-red-700 px-3 py-2.5 text-sm font-semibold text-white transition hover:bg-red-800 disabled:opacity-50"
+              >
+                <Square className="h-4 w-4" />{collectionBusy === 'stop' ? 'Stopping…' : 'Stop'}
+              </button>
+            </div>
             <button type="button" onClick={() => setSettingsOpen((value) => !value)} className="flex w-full items-center justify-between border border-slate-300 bg-white px-3 py-3 text-left text-sm font-semibold">
               <span className="inline-flex items-center gap-2"><SlidersHorizontal className="h-4 w-4" />Collection settings</span>
               {settingsOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
@@ -1133,6 +1170,12 @@ export default function DevicesPage() {
     toast.success('Device renamed', cleanName);
   };
 
+  const sendDeviceCommand = async (deviceId: string, command: string, payload: Record<string, unknown> = {}) => {
+    const response = await post(`/device/${deviceId}/commands`, { command, payload });
+    if (!response?.success) throw new Error(response?.message || `Failed to send ${command}`);
+    return response;
+  };
+
   const removeDevice = async (deviceId: string) => {
     const device = devices.find((item) => item.device_uuid === deviceId);
     const name = device?.device_name || deviceId;
@@ -1324,6 +1367,7 @@ export default function DevicesPage() {
             minutes={visibleMinutes}
             settings={settings[device.device_uuid] || normalizeSettings(device.hardware_info?.capture_settings)}
             onSaveSettings={saveSettings}
+            onSendCommand={sendDeviceCommand}
             onRename={renameDevice}
             onRemove={removeDevice}
             onDownloadCloudFile={(fileId, filename = 'file') => downloadFromUrl(`/api/proxy/file/${fileId}`, filename)}
