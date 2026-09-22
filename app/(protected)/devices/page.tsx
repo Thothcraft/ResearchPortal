@@ -1244,7 +1244,7 @@ export default function DevicesPage() {
     if (!response?.success) throw new Error(response?.message || 'Unable to save settings');
     const readback = await get(`/device/${deviceId}/capture-settings`);
     const canonical = normalizeSettings(readback?.capture_settings || response.capture_settings);
-    if (canonical.revision <= submitted.revision) throw new Error('Brain did not persist a new settings revision');
+    if (submitted.revision !== undefined && canonical.revision <= submitted.revision) throw new Error('Brain did not persist a new settings revision');
     setSettings((current) => ({ ...current, [deviceId]: canonical }));
     toast.success('Saved', 'The device will apply processing changes at the next second boundary');
     return canonical;
