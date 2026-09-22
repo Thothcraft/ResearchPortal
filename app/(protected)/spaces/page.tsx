@@ -42,7 +42,7 @@ export default function SpacesPage() {
   const load = useCallback(async () => {
     try {
       const [sp, st, dev] = await Promise.all([
-        get('/spaces'), get('/spaces/state'), get('/device'),
+        get('/spaces'), get('/spaces/state'), get('/device/list?include_offline=true'),
       ]);
       setSpaces(sp.spaces || []);
       const map: Record<number, SpaceState> = {};
