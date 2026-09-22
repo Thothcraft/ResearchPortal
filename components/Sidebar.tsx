@@ -4,18 +4,23 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
-import { Home, Monitor, LogOut, Users, BookOpen, Shield, UserRound, Settings, ChevronUp, Boxes } from 'lucide-react';
+import { Home, Monitor, LogOut, BookOpen, Shield, UserRound, Settings, ChevronUp, Boxes, Database } from 'lucide-react';
 
 export default function Sidebar() {
   const pathname = usePathname();
-  const { logout, user } = useAuth();
+  const { logout, user, entitlements } = useAuth();
   const [moreOpen, setMoreOpen] = useState(false);
+  const plan = user?.plan || 'free';
   const items = [
     { name: 'Home', href: '/home', icon: Home },
     { name: 'Devices', href: '/devices', icon: Monitor },
+    { name: 'Data', href: '/captures', icon: Database },
     { name: 'Models', href: '/models', icon: Boxes },
+    // Labs are a Research-plan entitlement, not an org feature.
+    ...(entitlements?.labs || plan === 'research'
+      ? [{ name: 'Labs', href: '/labs', icon: BookOpen }]
+      : []),
     ...(user?.role === 1 ? [{ name: 'Admin', href: '/admin', icon: Shield }] : []),
-    ...(user?.role === 2 ? [{ name: 'Members', href: '/members', icon: Users }, { name: 'Labs', href: '/labs', icon: BookOpen }] : []),
   ];
   const signOut = async () => {
     const registration = await navigator.serviceWorker?.ready.catch(() => null);
@@ -31,7 +36,7 @@ export default function Sidebar() {
     })}</nav>
     <div className="portal-account">
       <button type="button" onClick={() => setMoreOpen((value) => !value)} className="!mt-0 flex w-full items-center justify-between text-left">
-        <div><p>{user?.username}</p><small>{user?.role === 1 ? 'Admin' : user?.role === 2 ? 'Organization' : 'Researcher'}</small></div>
+        <div><p>{user?.username}</p><small>{user?.role === 1 ? 'Admin' : `${plan.charAt(0).toUpperCase() + plan.slice(1)} plan`}</small></div>
         <ChevronUp className={`transition-transform ${moreOpen ? '' : 'rotate-180'}`} />
       </button>
       {moreOpen && <div className="mt-4 space-y-1 border-t border-[#353530] pt-3">

@@ -353,7 +353,6 @@ export default function AdminDashboard() {
                   >
                     <option value="free">Free</option>
                     <option value="home">Home</option>
-                    <option value="pro">Pro</option>
                     <option value="research">Research</option>
                   </select>
                 </div>

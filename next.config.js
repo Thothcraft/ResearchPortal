@@ -7,13 +7,13 @@ const nextConfig = {
   },
   // Enable static exports for full static site generation
   output: 'standalone',
-  // Disable TypeScript type checking during build (handled by CI)
   typescript: {
-    ignoreBuildErrors: true,
+    // Type errors fail the build — fix them, don't hide them.
+    ignoreBuildErrors: false,
   },
-  // Disable ESLint during build (handled by CI)
   eslint: {
-    ignoreDuringBuilds: true,
+    // Lint errors fail the build.
+    ignoreDuringBuilds: false,
   },
 };
 

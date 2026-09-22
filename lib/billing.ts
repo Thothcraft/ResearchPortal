@@ -1,7 +1,6 @@
 export const BILLING_PLANS = [
   { id: 'free', title: 'Free' },
   { id: 'home', title: 'Home' },
-  { id: 'pro', title: 'Pro' },
   { id: 'research', title: 'Research' },
 ] as const;
 

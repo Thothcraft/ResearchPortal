@@ -32,13 +32,15 @@ export type MinuteSummary = {
   files: MinuteFiles;
   sizes: Record<string, number>;
   progress?: {
-    expectedChunks: number;
-    storedChunks: number;
-    analyzedChunks: number;
+    expectedSeconds: number;
+    storedSeconds: number;
+    analyzedSeconds: number;
     storagePercent: number;
     predictionPercent: number;
-    chunkSeconds?: number | null;
-    chunks: Array<{
+    secondSeconds?: number | null;
+    /** Legacy alias for `seconds` (pre-rename payloads). */
+    chunks?: Array<any>;
+    seconds: Array<{
       index: number;
       state: 'waiting' | 'collecting' | 'stored' | 'analyzing' | 'occupied' | 'empty' | 'error';
       stored: boolean;
@@ -156,7 +158,7 @@ function resolvedMinuteLabels(
   completed: boolean,
 ): string[] {
   if (labels.length) return labels;
-  const analyzed = (progress?.chunks || []).filter((chunk) => chunk.state === 'occupied' || chunk.state === 'empty');
+  const analyzed = (progress?.seconds || (progress as any)?.chunks || []).filter((chunk: any) => chunk.state === 'occupied' || chunk.state === 'empty');
   const latest = analyzed.at(-1);
   if (latest) {
     return [latest.state, latest.state === 'occupied' ? 'present' : 'absent'];
@@ -233,19 +235,19 @@ function getMinuteProgress(paths: ReturnType<typeof getMinutePaths>, manifest: a
   const radarBins = Array.isArray(paths.radarBins) ? paths.radarBins : [];
   const radarCsvs = Array.isArray(paths.radarCsvs) ? paths.radarCsvs : [];
   const predictions = paths.predictions && fs.existsSync(paths.predictions) ? readJsonPreview(paths.predictions) : null;
-  const expectedChunks = Math.max(1, Number(manifest?.expected_chunks || 0) || radarBins.length || radarCsvs.length || (Array.isArray(predictions?.timeline) ? predictions.timeline.length : 0) || 6);
-  const storedChunks = radarBins.length || Number(manifest?.container?.second_count || 0);
-  const predictionByIndex = new Map<number, any>((predictions?.timeline || []).map((entry: any): [number, any] => [Number(entry?.chunk_index), entry]));
-  const manifestByIndex = new Map<number, any>((manifest?.outputs?.radar?.chunks || []).map((entry: any): [number, any] => [Number(entry?.chunk_index), entry]));
-  const analyzedChunks = Array.from(manifestByIndex.values()).filter((entry) => ['occupied', 'empty'].includes(String(entry?.status))).length
+  const expectedSeconds = Math.max(1, Number(manifest?.expected_seconds ?? manifest?.expected_chunks ?? 0) || radarBins.length || radarCsvs.length || (Array.isArray(predictions?.timeline) ? predictions.timeline.length : 0) || 6);
+  const storedSeconds = radarBins.length || Number(manifest?.container?.second_count || 0);
+  const predictionByIndex = new Map<number, any>((predictions?.timeline || []).map((entry: any): [number, any] => [Number(entry?.second_index ?? entry?.chunk_index), entry]));
+  const manifestByIndex = new Map<number, any>((manifest?.outputs?.radar?.seconds || manifest?.outputs?.radar?.chunks || []).map((entry: any): [number, any] => [Number(entry?.second_index ?? entry?.chunk_index), entry]));
+  const analyzedSeconds = Array.from(manifestByIndex.values()).filter((entry) => ['occupied', 'empty'].includes(String(entry?.status))).length
     || (Array.isArray(predictions?.timeline) ? predictions.timeline.length : 0);
-  const chunks = Array.from({ length: expectedChunks }, (_, index) => {
+  const seconds = Array.from({ length: expectedSeconds }, (_, index) => {
     const prediction = predictionByIndex.get(index);
-    const recorded = index < storedChunks;
-    const manifestChunk = manifestByIndex.get(index);
-    const manifestState = String(manifestChunk?.status || '');
-    const occupied = prediction?.occupied ?? manifestChunk?.occupied;
-    const state: NonNullable<MinuteSummary['progress']>['chunks'][number]['state'] = manifestState === 'error'
+    const recorded = index < storedSeconds;
+    const manifestSecond = manifestByIndex.get(index);
+    const manifestState = String(manifestSecond?.status || '');
+    const occupied = prediction?.occupied ?? manifestSecond?.occupied;
+    const state: NonNullable<MinuteSummary['progress']>['seconds'][number]['state'] = manifestState === 'error'
       ? 'error'
       : prediction
         ? (occupied === true ? 'occupied' : 'empty')
@@ -259,23 +261,23 @@ function getMinuteProgress(paths: ReturnType<typeof getMinutePaths>, manifest: a
       stored: recorded,
       analyzed: Boolean(prediction) || manifestState === 'occupied' || manifestState === 'empty',
       prediction: prediction?.prediction ?? manifestState,
-      classification: prediction?.classification ?? manifestChunk?.classification,
-      location: prediction?.location ?? manifestChunk?.location,
-      ratio: prediction?.ratio ?? manifestChunk?.ratio,
-      score: prediction?.score ?? manifestChunk?.score,
-      detectedFrames: prediction?.detected_frames ?? manifestChunk?.detected_frames,
-      evaluatedFrames: prediction?.evaluated_frames ?? manifestChunk?.evaluated_frames,
-      error: manifestChunk?.error,
+      classification: prediction?.classification ?? manifestSecond?.classification,
+      location: prediction?.location ?? manifestSecond?.location,
+      ratio: prediction?.ratio ?? manifestSecond?.ratio,
+      score: prediction?.score ?? manifestSecond?.score,
+      detectedFrames: prediction?.detected_frames ?? manifestSecond?.detected_frames,
+      evaluatedFrames: prediction?.evaluated_frames ?? manifestSecond?.evaluated_frames,
+      error: manifestSecond?.error,
     };
   });
   return {
-    expectedChunks,
-    storedChunks,
-    analyzedChunks,
-    storagePercent: Math.min(100, (storedChunks / expectedChunks) * 100),
-    predictionPercent: Math.min(100, (analyzedChunks / expectedChunks) * 100),
-    chunkSeconds: Number(manifest?.chunk_seconds || 0) || null,
-    chunks,
+    expectedSeconds,
+    storedSeconds,
+    analyzedSeconds,
+    storagePercent: Math.min(100, (storedSeconds / expectedSeconds) * 100),
+    predictionPercent: Math.min(100, (analyzedSeconds / expectedSeconds) * 100),
+    secondSeconds: Number(manifest?.chunk_seconds || 0) || null,
+    seconds,
   };
 }
 

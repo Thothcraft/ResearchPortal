@@ -8,16 +8,12 @@ export function middleware(request: NextRequest) {
   const publicRoutes = ['/auth', '/api/proxy'];
   
   // Protected routes
-  const protectedRoutes = ['/home', '/devices', '/data', '/processing', '/training', '/chatbot', '/settings'];
-  
-  // Role-specific routes
+  const protectedRoutes = ['/home', '/devices', '/captures', '/minutes', '/models', '/processing', '/profile', '/settings', '/labs'];
   const adminRoutes = ['/admin'];
-  const orgRoutes = ['/members', '/labs'];
   
   // Check if accessing a protected route
   const isProtectedRoute = protectedRoutes.some(route => pathname.startsWith(route));
   const isAdminRoute = adminRoutes.some(route => pathname.startsWith(route));
-  const isOrgRoute = orgRoutes.some(route => pathname.startsWith(route));
   
   // Allow access to public routes and static assets
   if (publicRoutes.some(route => pathname.startsWith(route)) || 
@@ -37,9 +33,17 @@ export function middleware(request: NextRequest) {
     return NextResponse.next();
   }
   
-  // Skip middleware for protected routes - let client-side auth handle it
-  // since we use localStorage for token storage
-  if (isProtectedRoute || isAdminRoute || isOrgRoute) {
+  // Protected routes require the HttpOnly session cookie. Bearer-token
+  // sessions (legacy localStorage) still work for API calls, but a fresh
+  // page load without a cookie redirects to sign-in.
+  if (isProtectedRoute) {
+    const hasSession = request.cookies.has('thoth_session');
+    const hasLegacyAuth = request.cookies.has('auth_token');
+    if (!hasSession && !hasLegacyAuth) {
+      const url = request.nextUrl.clone();
+      url.pathname = '/auth';
+      return NextResponse.redirect(url);
+    }
     return NextResponse.next();
   }
   

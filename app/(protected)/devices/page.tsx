@@ -119,13 +119,15 @@ type LocalMinuteSummary = {
   labels: string[];
   occupancy?: DeviceFileSummary['occupancy'];
   progress?: {
-    expectedChunks: number;
-    storedChunks: number;
-    analyzedChunks: number;
+    expectedSeconds: number;
+    storedSeconds: number;
+    analyzedSeconds: number;
     storagePercent: number;
     predictionPercent: number;
-    chunkSeconds?: number | null;
-    chunks: Array<{ index: number; state: 'waiting' | 'collecting' | 'stored' | 'analyzing' | 'occupied' | 'empty' | 'error'; classification?: 'red' | 'green'; prediction?: string; location?: any; ratio?: number; progress?: number; score?: number; detectedFrames?: number; evaluatedFrames?: number; targetCount?: number; peopleCount?: number; targets?: any[]; labels?: string[]; activityLabels?: string[]; activity?: any; join?: any; xyMap?: any; cameraFilename?: string; features?: any; error?: string }>;
+    secondSeconds?: number | null;
+    /** Legacy alias for `seconds` (pre-rename payloads). */
+    chunks?: any[];
+    seconds: Array<{ index: number; state: 'waiting' | 'collecting' | 'stored' | 'analyzing' | 'occupied' | 'empty' | 'error'; classification?: 'red' | 'green'; prediction?: string; location?: any; ratio?: number; progress?: number; score?: number; detectedFrames?: number; evaluatedFrames?: number; targetCount?: number; peopleCount?: number; targets?: any[]; labels?: string[]; activityLabels?: string[]; activity?: any; join?: any; xyMap?: any; cameraFilename?: string; features?: any; error?: string }>;
   };
   completed: boolean;
   state: 'ready' | 'collecting';
@@ -289,21 +291,21 @@ function labelsForFile(file: DeviceFileSummary): string[] {
   ];
   const labels = Array.from(new Set(candidates.map((value) => String(value || '').trim()).filter(Boolean)));
   if (labels.length) return labels;
-  const chunks = Array.isArray(file.progress?.chunks) ? file.progress.chunks : [];
-  const latest = chunks.filter((chunk: any) => ['occupied', 'empty'].includes(String(chunk?.state))).at(-1);
+  const seconds = Array.isArray(file.progress?.chunks) ? (file.progress.seconds ?? file.progress.chunks) : [];
+  const latest = seconds.filter((second: any) => ['occupied', 'empty'].includes(String(second?.state))).at(-1);
   if (latest) {
     const state = String(latest.state);
     return [state, state === 'occupied' ? 'present' : 'absent'];
   }
-  return [chunks.some((chunk: any) => String(chunk?.state || '') !== 'waiting') ? 'processing' : 'no-radar-data'];
+  return [seconds.some((second: any) => String(second?.state || '') !== 'waiting') ? 'processing' : 'no-radar-data'];
 }
 
 function normalizeProgress(value: any): NonNullable<LocalMinuteSummary['progress']> {
   const allowedStates = new Set(['waiting', 'collecting', 'stored', 'analyzing', 'occupied', 'empty', 'error']);
-  const sourceChunks = Array.isArray(value?.chunks) ? value.chunks : [];
-  const expectedChunks = Math.max(1, Math.floor(Number(value?.expected_chunks ?? value?.expectedChunks ?? sourceChunks.length) || 6));
-  const chunks = Array.from({ length: expectedChunks }, (_, index) => {
-    const source = sourceChunks.find((chunk: any) => Number(chunk?.index) === index) || {};
+  const sourceChunks = Array.isArray(value?.seconds ?? value?.chunks) ? (value.seconds ?? value.chunks) : [];
+  const expectedSeconds = Math.max(1, Math.floor(Number((value?.expected_seconds ?? value?.expected_chunks) ?? value?.expectedSeconds ?? sourceChunks.length) || 6));
+  const seconds = Array.from({ length: expectedSeconds }, (_, index) => {
+    const source = sourceChunks.find((second: any) => Number(second?.index) === index) || {};
     const state = allowedStates.has(String(source.state)) ? source.state : 'waiting';
     return {
       index,
@@ -327,16 +329,16 @@ function normalizeProgress(value: any): NonNullable<LocalMinuteSummary['progress
       cameraFilename: source.camera_filename ?? source.cameraFilename,
       features: source.features,
       error: source.error == null ? undefined : String(source.error),
-    } as NonNullable<LocalMinuteSummary['progress']>['chunks'][number];
+    } as NonNullable<LocalMinuteSummary['progress']>['seconds'][number];
   });
   return {
-    expectedChunks,
-    storedChunks: Number(value?.stored_chunks ?? value?.storedChunks ?? 0),
-    analyzedChunks: Number(value?.analyzed_chunks ?? value?.analyzedChunks ?? 0),
+    expectedSeconds,
+    storedSeconds: Number((value?.stored_seconds ?? value?.stored_chunks) ?? value?.storedSeconds ?? 0),
+    analyzedSeconds: Number((value?.analyzed_seconds ?? value?.analyzed_chunks) ?? value?.analyzedSeconds ?? 0),
     storagePercent: Number(value?.storage_percent ?? value?.storagePercent ?? 0),
     predictionPercent: Number(value?.prediction_percent ?? value?.predictionPercent ?? 0),
-    chunkSeconds: Number(value?.chunk_seconds ?? value?.chunkSeconds ?? 10),
-    chunks,
+    secondSeconds: Number(value?.chunk_seconds ?? value?.secondSeconds ?? 10),
+    seconds,
   };
 }
 
@@ -424,7 +426,7 @@ function LiveSignalPanel({ features }: { features: any }) {
   );
 }
 
-function chunkDotStyle(state: string, classification?: string) {
+function secondDotStyle(state: string, classification?: string) {
   const background = state === 'occupied' || classification === 'green'
     ? 'hsl(145 68% 39%)'
     : state === 'empty' || classification === 'red'
@@ -475,7 +477,7 @@ function DevicePanel({
   const [draftOccupancyThreshold, setDraftOccupancyThreshold] = useState(settings.occupancy_threshold_percent);
   const [draftAutoLabel, setDraftAutoLabel] = useState(settings.auto_occupancy_label_enabled);
   const [draftSystemMode, setDraftSystemMode] = useState(settings.system_mode);
-  const [draftVoteChunks, setDraftVoteChunks] = useState(settings.occupancy_vote_chunks);
+  const [draftVoteSeconds, setDraftVoteSeconds] = useState(settings.occupancy_vote_chunks);
   const [draftPredictionStyle, setDraftPredictionStyle] = useState(settings.prediction_label_style);
   const [draftPeopleLabels, setDraftPeopleLabels] = useState(settings.people_count_label_enabled);
   const [draftCsiDeviceIds, setDraftCsiDeviceIds] = useState(settings.csi_device_ids);
@@ -545,7 +547,7 @@ function DevicePanel({
     setDraftOccupancyThreshold(settings.occupancy_threshold_percent);
     setDraftAutoLabel(settings.auto_occupancy_label_enabled);
     setDraftSystemMode(settings.system_mode);
-    setDraftVoteChunks(settings.occupancy_vote_chunks);
+    setDraftVoteSeconds(settings.occupancy_vote_chunks);
     setDraftPredictionStyle(settings.prediction_label_style);
     setDraftPeopleLabels(settings.people_count_label_enabled);
     setDraftCsiDeviceIds(settings.csi_device_ids);
@@ -868,8 +870,8 @@ function DevicePanel({
             </div>
             <CaptureRangeTimeline
               items={[...matchedMinutes].sort((left, right) => left.minute.localeCompare(right.minute)).map((minute) => {
-                const chunks = minute.progress?.chunks || [];
-                const latest = chunks.filter((chunk) => chunk.state !== 'waiting').at(-1);
+                const seconds = (minute.progress?.seconds ?? minute.progress?.chunks) || [];
+                const latest = seconds.filter((second) => second.state !== 'waiting').at(-1);
                 return {
                   id: minute.minute,
                   disabled: !minute.completed,
@@ -886,9 +888,9 @@ function DevicePanel({
                 const dataFiles = minute.dataFiles || [];
                 const fileCount = dataFiles.length;
                 const totalSize = dataFiles.reduce((sum, file) => sum + Number(file.size || 0), 0);
-                const availableChunks = minute.progress?.chunks || [];
-                const latestChunk = availableChunks.filter((chunk) => chunk.state === 'occupied' || chunk.state === 'empty').at(-1)
-                  || availableChunks.filter((chunk) => chunk.state !== 'waiting').at(-1);
+                const availableSeconds = (minute.progress?.seconds ?? minute.progress?.chunks) || [];
+                const latestSecond = availableSeconds.filter((second) => second.state === 'occupied' || second.state === 'empty').at(-1)
+                  || availableSeconds.filter((second) => second.state !== 'waiting').at(-1);
                 const upload = minute.upload;
                 const transferPercent = upload?.bytes_total ? Math.min(100, Math.round(Number(upload.bytes_uploaded || 0) * 100 / Number(upload.bytes_total))) : 0;
                 return (
@@ -929,21 +931,21 @@ function DevicePanel({
                           </span>
                         </div>
                         <div className="mt-2 text-xs font-medium text-cyan-900">Radar frames this minute: {minute.radarFrameCount == null ? 'not reported' : minute.radarFrameCount}</div>
-                        {minute.modelPredictions?.flatMap(model => (model.timeline || []).slice(-1)).map((prediction, index) => <div key={index} className="mt-2 text-xs text-violet-800">{String(prediction.model_name || 'Model')} · chunk {Number(prediction.chunk_index ?? 0) + 1} · {String(prediction.timestamp || '')} · status {String(prediction.status || 'unknown')}{prediction.status === 'ok' ? ` · class ${String(prediction.class || 'unknown')} · confidence ${(Number(prediction.confidence || 0) * 100).toFixed(1)}% · scores ${JSON.stringify(prediction.scores || {})}` : prediction.reason ? ` · reason ${String(prediction.reason)}` : ''}</div>)}
+                        {minute.modelPredictions?.flatMap(model => (model.timeline || []).slice(-1)).map((prediction, index) => <div key={index} className="mt-2 text-xs text-violet-800">{String(prediction.model_name || 'Model')} · second {Number((prediction.second_index ?? prediction.chunk_index) ?? 0) + 1} · {String(prediction.timestamp || '')} · status {String(prediction.status || 'unknown')}{prediction.status === 'ok' ? ` · class ${String(prediction.class || 'unknown')} · confidence ${(Number(prediction.confidence || 0) * 100).toFixed(1)}% · scores ${JSON.stringify(prediction.scores || {})}` : prediction.reason ? ` · reason ${String(prediction.reason)}` : ''}</div>)}
                         {minute.progress && (
-                          <div className="mt-3 flex max-w-xl items-start gap-2" aria-label="Chunk timeline">
-                              {minute.progress.chunks.slice(0, 6).map((chunk) => {
-                                const color = chunk.state === 'occupied' ? 'bg-emerald-500' : chunk.state === 'empty' ? 'bg-red-500' : chunk.state === 'collecting' ? 'animate-pulse bg-blue-500' : ['stored', 'analyzing'].includes(chunk.state) ? 'animate-pulse bg-cyan-500' : chunk.state === 'error' ? 'bg-amber-500' : 'bg-slate-300';
-                                const ratio = typeof chunk.ratio === 'number' && Number.isFinite(chunk.ratio) ? Math.min(1, Math.max(0, chunk.ratio)) : null;
+                          <div className="mt-3 flex max-w-xl items-start gap-2" aria-label="Second timeline">
+                              {(minute.progress.seconds ?? minute.progress.chunks).slice(0, 6).map((second) => {
+                                const color = second.state === 'occupied' ? 'bg-emerald-500' : second.state === 'empty' ? 'bg-red-500' : second.state === 'collecting' ? 'animate-pulse bg-blue-500' : ['stored', 'analyzing'].includes(second.state) ? 'animate-pulse bg-cyan-500' : second.state === 'error' ? 'bg-amber-500' : 'bg-slate-300';
+                                const ratio = typeof second.ratio === 'number' && Number.isFinite(second.ratio) ? Math.min(1, Math.max(0, second.ratio)) : null;
                                 const pizza = ratio != null ? `conic-gradient(#10b981 0% ${(ratio * 100).toFixed(1)}%, #ef4444 ${(ratio * 100).toFixed(1)}% 100%)` : null;
-                                const location = Array.isArray(chunk.location) ? chunk.location.join(', ') : chunk.location ? `${chunk.location.x ?? '?'}, ${chunk.location.y ?? '?'}` : 'n/a';
-                                const detail = [`Chunk ${chunk.index + 1}`, chunk.prediction || chunk.state, chunk.detectedFrames == null || chunk.evaluatedFrames == null ? null : `${chunk.detectedFrames} / ${chunk.evaluatedFrames} frames`, chunk.ratio == null ? null : `ratio ${(chunk.ratio * 100).toFixed(1)}%`, `coordinates ${location}`, chunk.score == null ? null : `confidence ${chunk.score}`, chunk.error].filter(Boolean).join(' · ');
-                                return <div key={chunk.index} className="min-w-0 flex-1 text-center" title={detail}><div role="img" tabIndex={0} title={detail} aria-label={detail} style={pizza ? { background: pizza } : undefined} className={`mx-auto h-3 w-3 rounded-full ring-2 ring-white ${pizza ? '' : color}`} /></div>;
+                                const location = Array.isArray(second.location) ? second.location.join(', ') : second.location ? `${second.location.x ?? '?'}, ${second.location.y ?? '?'}` : 'n/a';
+                                const detail = [`Second ${second.index + 1}`, second.prediction || second.state, second.detectedFrames == null || second.evaluatedFrames == null ? null : `${second.detectedFrames} / ${second.evaluatedFrames} frames`, second.ratio == null ? null : `ratio ${(second.ratio * 100).toFixed(1)}%`, `coordinates ${location}`, second.score == null ? null : `confidence ${second.score}`, second.error].filter(Boolean).join(' · ');
+                                return <div key={second.index} className="min-w-0 flex-1 text-center" title={detail}><div role="img" tabIndex={0} title={detail} aria-label={detail} style={pizza ? { background: pizza } : undefined} className={`mx-auto h-3 w-3 rounded-full ring-2 ring-white ${pizza ? '' : color}`} /></div>;
                               })}
                           </div>
                         )}
                         {minute.state === 'collecting' && (() => {
-                          const latestFeatures = availableChunks.map((chunk) => chunk.features).filter(Boolean).at(-1);
+                          const latestFeatures = availableSeconds.map((second) => second.features).filter(Boolean).at(-1);
                           return latestFeatures ? <LiveSignalPanel features={latestFeatures} /> : null;
                         })()}
                         {upload && upload.state !== 'completed' && <div className="mt-3 text-xs font-semibold text-cyan-900"><div>{upload.state === 'queued' && !device.online ? 'Queued · device offline' : upload.state}{upload.state === 'uploading' ? ` · ${transferPercent}% · ${upload.files_uploaded || 0}/${upload.files_total || 0} files` : ''}</div>{upload.state === 'uploading' && <div className="mt-1 h-1.5 overflow-hidden rounded bg-cyan-100"><div className="h-full bg-cyan-600" style={{ width: `${transferPercent}%` }} /></div>}{upload.error ? <div className="mt-1 text-red-700">{upload.error}</div> : null}</div>}
@@ -1022,7 +1024,7 @@ export default function DevicesPage() {
   const [deviceFiles, setDeviceFiles] = useState<Record<string, DeviceFileSummary[]>>({});
   const [minutes, setMinutes] = useState<LocalMinuteSummary[]>([]);
   const [settings, setSettings] = useState<Record<string, CaptureSettings>>({});
-  const [liveCaptures, setLiveCaptures] = useState<Record<string, { minute: string | null; chunks: any[]; cursor: string | null }>>({});
+  const [liveCaptures, setLiveCaptures] = useState<Record<string, { minute: string | null; seconds: any[]; chunks?: any[]; cursor: string | null }>>({});
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState('');
   const [onlineOnly, setOnlineOnly] = useState(false);
@@ -1107,31 +1109,32 @@ export default function DevicesPage() {
     };
   }, [authLoading, loadData, user?.token]);
 
-  const loadLiveChunks = useCallback(async () => {
+  const loadLiveSeconds = useCallback(async () => {
     if (authLoading || !user?.token || liveLoadInFlight.current) return;
     liveLoadInFlight.current = true;
     try {
       const suffix = liveCursorRef.current ? `?after=${encodeURIComponent(liveCursorRef.current)}` : '';
-      const response = await get(`/device/live-chunks${suffix}`).catch(() => null);
+      const response = await get(`/device/live-seconds${suffix}`).catch(() => null);
       if (!response?.success) return;
       if (response.cursor) liveCursorRef.current = response.cursor;
       setLiveCaptures((current) => {
         const next = { ...current };
         Object.entries(response.devices || {}).forEach(([deviceId, value]) => {
-          const update = value as { minute?: string; chunks?: any[] };
+          const update = value as { minute?: string; seconds?: any[]; chunks?: any[] };
           const previous = next[deviceId];
           const minute = update.minute || null;
           const merged = new Map<number, any>(
             previous?.minute === minute
-              ? previous.chunks.map((chunk) => [Number(chunk.chunk_index), chunk])
+              ? (previous.seconds ?? previous.chunks).map((second) => [Number((second.second_index ?? second.chunk_index)), second])
               : [],
           );
-          (Array.isArray(update.chunks) ? update.chunks : []).forEach((chunk: any) => {
-            merged.set(Number(chunk.chunk_index), chunk);
+          const incoming = update.seconds ?? update.chunks;
+          (Array.isArray(incoming) ? incoming : []).forEach((second: any) => {
+            merged.set(Number((second.second_index ?? second.chunk_index)), second);
           });
           next[deviceId] = {
             minute,
-            chunks: Array.from(merged.values()).sort((a, b) => Number(a.chunk_index) - Number(b.chunk_index)),
+            seconds: Array.from(merged.values()).sort((a, b) => Number((a.second_index ?? a.chunk_index)) - Number((b.second_index ?? b.chunk_index))),
             cursor: response.cursor || previous?.cursor || null,
           };
         });
@@ -1144,7 +1147,7 @@ export default function DevicesPage() {
 
   useEffect(() => {
     if (authLoading || !user?.token) return;
-    const refresh = () => { if (document.visibilityState === 'visible') loadLiveChunks(); };
+    const refresh = () => { if (document.visibilityState === 'visible') loadLiveSeconds(); };
     refresh();
     const timer = window.setInterval(refresh, 5000);
     document.addEventListener('visibilitychange', refresh);
@@ -1152,36 +1155,36 @@ export default function DevicesPage() {
       window.clearInterval(timer);
       document.removeEventListener('visibilitychange', refresh);
     };
-  }, [authLoading, loadLiveChunks, user?.token]);
+  }, [authLoading, loadLiveSeconds, user?.token]);
 
   const liveMinutes = useMemo<LocalMinuteSummary[]>(() => Object.entries(liveCaptures).flatMap(([deviceId, live]) => {
     if (!live.minute) return [];
-    const chunks = live.chunks.map((chunk) => ({
-      index: Number(chunk.chunk_index),
-      state: chunk.status === 'occupied' || chunk.status === 'empty' ? chunk.status : 'collecting',
-      classification: chunk.occupancy?.classification,
-      prediction: chunk.occupancy?.label,
-      location: chunk.location,
-      ratio: Number(chunk.occupancy?.ratio || 0),
-      progress: chunk.status === 'occupied' || chunk.status === 'empty' ? 1 : 0.5,
-      score: Number(chunk.score || 0),
-      detected_frames: Number(chunk.occupancy?.detected_frames || 0),
-      evaluated_frames: Number(chunk.occupancy?.evaluated_frames || 0),
-      people_count: Number(chunk.people_count || 0),
-      targets: chunk.targets || [],
-      labels: chunk.labels || [],
-      activity_labels: chunk.activity_labels || [],
-      xy_map: chunk.xy_map,
-      camera_filename: chunk.camera_filename,
-      features: chunk.features,
+    const seconds = (live.seconds ?? live.chunks).map((second) => ({
+      index: Number((second.second_index ?? second.chunk_index)),
+      state: second.status === 'occupied' || second.status === 'empty' ? second.status : 'collecting',
+      classification: second.occupancy?.classification,
+      prediction: second.occupancy?.label,
+      location: second.location,
+      ratio: Number(second.occupancy?.ratio || 0),
+      progress: second.status === 'occupied' || second.status === 'empty' ? 1 : 0.5,
+      score: Number(second.score || 0),
+      detected_frames: Number(second.occupancy?.detected_frames || 0),
+      evaluated_frames: Number(second.occupancy?.evaluated_frames || 0),
+      people_count: Number(second.people_count || 0),
+      targets: second.targets || [],
+      labels: second.labels || [],
+      activity_labels: second.activity_labels || [],
+      xy_map: second.xy_map,
+      camera_filename: second.camera_filename,
+      features: second.features,
     }));
     const progress = normalizeProgress({
-      expected_chunks: 60,
-      stored_chunks: chunks.length,
-      analyzed_chunks: chunks.filter((chunk) => chunk.state === 'occupied' || chunk.state === 'empty').length,
-      chunks,
+      expected_seconds: 60,
+      stored_seconds: seconds.length,
+      analyzed_seconds: seconds.filter((second) => second.state === 'occupied' || second.state === 'empty').length,
+      seconds,
     });
-    const latest = chunks.at(-1);
+    const latest = seconds.at(-1);
     return [{
       minute: live.minute,
       minuteName: live.minute,
@@ -1203,7 +1206,7 @@ export default function DevicesPage() {
       completed: false,
       state: 'collecting',
       uploaded: false,
-      files: { video: chunks.some((chunk) => chunk.camera_filename), radar: true, csi: true, manifest: true, predictions: false },
+      files: { video: seconds.some((second) => second.camera_filename), radar: true, csi: true, manifest: true, predictions: false },
       sizes: {},
     }];
   }), [liveCaptures]);
@@ -1243,7 +1246,7 @@ export default function DevicesPage() {
     const canonical = normalizeSettings(readback?.capture_settings || response.capture_settings);
     if (canonical.revision <= submitted.revision) throw new Error('Brain did not persist a new settings revision');
     setSettings((current) => ({ ...current, [deviceId]: canonical }));
-    toast.success('Saved', 'The device will apply processing changes at the next chunk boundary');
+    toast.success('Saved', 'The device will apply processing changes at the next second boundary');
     return canonical;
   };
 

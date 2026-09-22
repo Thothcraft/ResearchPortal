@@ -66,7 +66,7 @@ export default function SettingsPage() {
     }));
   };
 
-  const openCheckout = async (plan: 'home' | 'pro' | 'research') => {
+  const openCheckout = async (plan: 'home' | 'research') => {
     if (user?.plan && user.plan !== 'free') {
       await openBillingPortal();
       return;
@@ -309,8 +309,8 @@ export default function SettingsPage() {
           <div className="flex gap-2 rounded-xl bg-white/5 p-1 border border-white/10">
             <span className="flex-1 rounded-lg bg-indigo-600 px-3 py-2 text-center text-sm font-semibold text-white">Monthly billing</span>
           </div>
-          <div className="grid gap-3 md:grid-cols-3">
-            {(['home', 'pro', 'research'] as const).map((plan) => (
+          <div className="grid gap-3 md:grid-cols-2">
+            {(['home', 'research'] as const).map((plan) => (
               <button key={plan} type="button" disabled={Boolean(billingLoading)} onClick={() => openCheckout(plan)} className="rounded-xl border border-white/10 bg-white/5 p-4 text-left text-white transition hover:bg-white/10 disabled:opacity-60">
                 {plan === 'research' ? <Crown className="mb-2 h-5 w-5" /> : <Zap className="mb-2 h-5 w-5" />}
                 <h4 className="font-semibold capitalize">{billingLoading === plan ? 'Opening…' : plan}</h4>

@@ -6,14 +6,16 @@ import { useRouter } from 'next/navigation';
 type User = {
   username: string;
   token: string;
-  role?: number;  // 0=user, 1=admin, 2=organization
+  role?: number;  // 0=user, 1=admin
   plan?: string;
-  org_name?: string;
   userId?: number;
 } | null;
 
+type Entitlements = Record<string, any> | null;
+
 type AuthContextType = {
   user: User;
+  entitlements: Entitlements;
   login: (username: string, password: string) => Promise<boolean>;
   register: (username: string, email: string, password: string) => Promise<{
     success: boolean;
@@ -47,9 +49,29 @@ function tokenIsExpired(token: string): boolean {
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User>(null);
+  const [entitlements, setEntitlements] = useState<Entitlements>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const router = useRouter();
+
+  // Fetch the plan entitlement set — drives gated UI (Labs, downloads).
+  const refreshEntitlements = async () => {
+    try {
+      const res = await fetch('/api/proxy/account/entitlements', {
+        headers: { Accept: 'application/json' },
+        cache: 'no-store',
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setEntitlements(data.entitlements || null);
+        if (data.plan) {
+          setUser((u) => (u ? { ...u, plan: data.plan } : u));
+        }
+      }
+    } catch {
+      /* entitlements are best-effort; pages degrade gracefully */
+    }
+  };
 
   // Restore only a token whose account still exists. Long-lived JWTs from a
   // removed account must not trap the browser inside a broken protected shell.
@@ -80,12 +102,34 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           username: profile.username || stored.username,
           role: profile.role ?? stored.role ?? 0,
           plan: profile.plan ?? stored.plan,
-          org_name: profile.org_name ?? stored.org_name,
           userId: profile.userId ?? profile.user_id ?? stored.userId,
           token,
         };
         localStorage.setItem('user', JSON.stringify(restored));
         if (active) setUser(restored);
+        refreshEntitlements();
+        return;
+      } catch {
+        // Stored bearer token failed — fall back to the HttpOnly
+        // session cookie (the proxy forwards it to Brain).
+      }
+      try {
+        const response = await fetch('/api/proxy/profile', {
+          headers: { Accept: 'application/json' },
+          cache: 'no-store',
+        });
+        if (!response.ok) throw new Error('No valid session');
+        const profile = await response.json();
+        const restored = {
+          username: profile.username,
+          role: profile.role ?? 0,
+          plan: profile.plan,
+          userId: profile.userId ?? profile.user_id,
+          token: '',  // cookie session — no bearer token needed
+        };
+        localStorage.setItem('user', JSON.stringify(restored));
+        if (active) setUser(restored);
+        refreshEntitlements();
       } catch {
         clearStoredAuth();
       }
@@ -156,16 +200,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         token: data.access_token,
         role: data.role ?? 0,  // Default to user role if not provided
         plan: data.plan || null,
-        org_name: data.org_name || null,
         userId: data.user_id,
       };
 
-      // Store token and user data
+      // Store token and user data. The login response also sets the
+      // HttpOnly thoth_session cookie (forwarded by the proxy), which
+      // becomes the session restore path going forward.
       localStorage.setItem('auth_token', data.access_token);
       localStorage.setItem('user', JSON.stringify(userData));
 
       setUser(userData);
-      
+      refreshEntitlements();
+
       return true;
     } catch (error: any) {
       console.error('Login error:', error);
@@ -241,9 +287,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const logout = () => {
     navigator.serviceWorker?.ready.then((registration) => registration.active?.postMessage('CLEAR_PRIVATE_CACHE')).catch(() => undefined);
+    // Clear the HttpOnly session cookie server-side (best-effort).
+    fetch('/api/proxy/logout', { method: 'POST', cache: 'no-store' }).catch(() => undefined);
     localStorage.removeItem('auth_token');
     localStorage.removeItem('user');
     setUser(null);
+    setEntitlements(null);
     router.replace('/auth');
   };
 
@@ -251,6 +300,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     <AuthContext.Provider
       value={{
         user,
+        entitlements,
         login,
         register,
         logout,

@@ -7,7 +7,7 @@ import { useAuth } from '@/contexts/AuthContext';
 
 type Asset = { file_id: number; filename: string; kind?: string; content_type?: string };
 
-function chunkDotStyle(state: string, classification?: string | number) {
+function secondDotStyle(state: string, classification?: string | number) {
   const background = state === 'occupied' || classification === 'green'
     ? 'hsl(145 68% 39%)'
     : state === 'empty' || classification === 'red'
@@ -77,9 +77,9 @@ function CompactXYMap({ map }: { map: any }) {
   </div>;
 }
 
-function normalizeChunk(entry: any, fallbackIndex = 0) {
+function normalizeSecond(entry: any, fallbackIndex = 0) {
   const occupancy = entry?.occupancy && typeof entry.occupancy === 'object' ? entry.occupancy : {};
-  const index = Number(entry?.chunk_index ?? entry?.index ?? fallbackIndex);
+  const index = Number((entry?.second_index ?? entry?.chunk_index) ?? entry?.index ?? fallbackIndex);
   const status = String(entry?.status || entry?.state || occupancy?.label || 'loading');
   const state = status === 'occupied' || status === 'empty'
     ? status
@@ -420,8 +420,8 @@ export default function CaptureViewerPage() {
   const [cameraUrl, setCameraUrl] = useState('');
   const [cameraPlaying, setCameraPlaying] = useState(false);
   const [waiting, setWaiting] = useState(true);
-  const [liveChunks, setLiveChunks] = useState<any[]>([]);
-  const [storedChunks, setStoredChunks] = useState<any[]>([]);
+  const [liveSeconds, setLiveSeconds] = useState<any[]>([]);
+  const [storedSeconds, setStoredSeconds] = useState<any[]>([]);
   const liveCursor = useRef<string | null>(null);
   const liveLoading = useRef(false);
   const containerLoaded = useRef(false);
@@ -518,12 +518,12 @@ export default function CaptureViewerPage() {
     return () => window.clearInterval(timer);
   }, [cameraPlaying, cameraSeconds]);
 
-  const loadLiveChunks = useCallback(async () => {
+  const loadLiveSeconds = useCallback(async () => {
     if (!user?.token || liveLoading.current) return;
     liveLoading.current = true;
     try {
       const suffix = liveCursor.current ? `?after=${encodeURIComponent(liveCursor.current)}` : '';
-      const response = await fetch(`/api/proxy/device/${encodeURIComponent(params.deviceId)}/live-chunks${suffix}`, {
+      const response = await fetch(`/api/proxy/device/${encodeURIComponent(params.deviceId)}/live-seconds${suffix}`, {
         headers: { Authorization: `Bearer ${user.token}` },
         cache: 'no-store',
       });
@@ -531,12 +531,12 @@ export default function CaptureViewerPage() {
       const data = await response.json();
       if (data.cursor) liveCursor.current = data.cursor;
       if (data.minute !== params.minute) return;
-      setLiveChunks((current) => {
+      setLiveSeconds((current) => {
         const merged = new Map<number, any>(
-          current.map((chunk): [number, any] => [Number(chunk.chunk_index), chunk]),
+          current.map((second): [number, any] => [Number((second.second_index ?? second.chunk_index)), second]),
         );
-        (Array.isArray(data.chunks) ? data.chunks : []).forEach((chunk: any) => merged.set(Number(chunk.chunk_index), chunk));
-        return Array.from(merged.values()).sort((a, b) => Number(a.chunk_index) - Number(b.chunk_index));
+        (Array.isArray((data.seconds ?? data.chunks)) ? (data.seconds ?? data.chunks) : []).forEach((second: any) => merged.set(Number((second.second_index ?? second.chunk_index)), second));
+        return Array.from(merged.values()).sort((a, b) => Number((a.second_index ?? a.chunk_index)) - Number((b.second_index ?? b.chunk_index)));
       });
     } finally {
       liveLoading.current = false;
@@ -545,7 +545,7 @@ export default function CaptureViewerPage() {
 
   const captureFinalized = Boolean(containerMetadata || documents['manifest.json']?.capture_finished);
 
-  const loadStoredChunks = useCallback(async () => {
+  const loadStoredSeconds = useCallback(async () => {
     if (!user?.token) return;
     const response = await fetch(`/api/proxy/device/${encodeURIComponent(params.deviceId)}/files`, {
       headers: { Authorization: `Bearer ${user.token}` },
@@ -554,9 +554,9 @@ export default function CaptureViewerPage() {
     if (!response.ok) return;
     const data = await response.json();
     const minute = (Array.isArray(data?.files) ? data.files : []).find((file: any) => file?.filename === params.minute);
-    const chunks = minute?.progress?.chunks;
-    if (Array.isArray(chunks) && chunks.length) {
-      setStoredChunks(chunks);
+    const seconds = (minute?.progress?.seconds ?? minute?.progress?.chunks);
+    if (Array.isArray(seconds) && seconds.length) {
+      setStoredSeconds(seconds);
     }
   }, [params.deviceId, params.minute, user?.token]);
 
@@ -569,7 +569,7 @@ export default function CaptureViewerPage() {
 
   useEffect(() => {
     if (captureFinalized) return;
-    const refresh = () => { if (document.visibilityState === 'visible') loadLiveChunks(); };
+    const refresh = () => { if (document.visibilityState === 'visible') loadLiveSeconds(); };
     refresh();
     const timer = window.setInterval(refresh, 2000);
     document.addEventListener('visibilitychange', refresh);
@@ -577,33 +577,33 @@ export default function CaptureViewerPage() {
       window.clearInterval(timer);
       document.removeEventListener('visibilitychange', refresh);
     };
-  }, [captureFinalized, loadLiveChunks]);
+  }, [captureFinalized, loadLiveSeconds]);
 
   useEffect(() => {
-    loadStoredChunks();
-    if (storedChunks.length) return;
-    const timer = window.setInterval(loadStoredChunks, 5000);
+    loadStoredSeconds();
+    if (storedSeconds.length) return;
+    const timer = window.setInterval(loadStoredSeconds, 5000);
     return () => window.clearInterval(timer);
-  }, [loadStoredChunks, storedChunks.length]);
+  }, [loadStoredSeconds, storedSeconds.length]);
 
   const predictions = documents['predictions.json'];
   const manifest = documents['manifest.json'];
   const predictionTimeline = Array.isArray(predictions?.timeline) ? predictions.timeline : [];
-  const predictionByIndex = new Map<number, any>(predictionTimeline.map((entry: any): [number, any] => [Number(entry?.chunk_index), entry]));
-  const manifestChunks = Array.isArray(manifest?.outputs?.radar?.chunks) ? manifest.outputs.radar.chunks : [];
-  const chunkByIndex = new Map<number, any>();
-  storedChunks.forEach((entry: any) => chunkByIndex.set(Number(entry?.index), normalizeChunk(entry)));
-  manifestChunks.forEach((entry: any) => {
-    const prediction = predictionByIndex.get(Number(entry?.chunk_index));
-    chunkByIndex.set(Number(entry?.chunk_index), normalizeChunk(prediction ? { ...entry, ...prediction } : entry));
+  const predictionByIndex = new Map<number, any>(predictionTimeline.map((entry: any): [number, any] => [Number((entry?.second_index ?? entry?.chunk_index)), entry]));
+  const manifestSeconds = Array.isArray((manifest?.outputs?.radar?.seconds ?? manifest?.outputs?.radar?.chunks)) ? (manifest.outputs.radar.seconds ?? manifest.outputs.radar.chunks) : [];
+  const secondByIndex = new Map<number, any>();
+  storedSeconds.forEach((entry: any) => secondByIndex.set(Number(entry?.index), normalizeSecond(entry)));
+  manifestSeconds.forEach((entry: any) => {
+    const prediction = predictionByIndex.get(Number((entry?.second_index ?? entry?.chunk_index)));
+    secondByIndex.set(Number((entry?.second_index ?? entry?.chunk_index)), normalizeSecond(prediction ? { ...entry, ...prediction } : entry));
   });
   predictionTimeline.forEach((entry: any) => {
-    const index = Number(entry?.chunk_index);
-    if (!chunkByIndex.has(index)) chunkByIndex.set(index, normalizeChunk(entry));
+    const index = Number((entry?.second_index ?? entry?.chunk_index));
+    if (!secondByIndex.has(index)) secondByIndex.set(index, normalizeSecond(entry));
   });
-  liveChunks.forEach((entry: any) => chunkByIndex.set(Number(entry?.chunk_index), normalizeChunk(entry)));
-  const chunks = Array.from(chunkByIndex.values())
-    .filter((chunk) => chunk.state !== 'waiting')
+  liveSeconds.forEach((entry: any) => secondByIndex.set(Number((entry?.second_index ?? entry?.chunk_index)), normalizeSecond(entry)));
+  const seconds = Array.from(secondByIndex.values())
+    .filter((second) => second.state !== 'waiting')
     .sort((a, b) => a.index - b.index);
   const humanLabels = Array.isArray(manifest?.labels) ? manifest.labels : [];
   const modelPredictions = Array.isArray(manifest?.model_predictions) ? manifest.model_predictions : [];
@@ -617,11 +617,11 @@ export default function CaptureViewerPage() {
   return <div className="space-y-6 text-slate-950">
     <header className="border border-slate-300 bg-white p-5"><div className="text-xs font-semibold uppercase text-slate-600">Live capture metadata</div><h1 className="mt-1 font-mono text-2xl font-semibold">{params.minute}</h1><p className="mt-2 text-sm text-slate-700">Device {params.deviceId}</p></header>
     {waiting && <div className="sr-only" role="status">Live metadata is updating while capture files remain on the device.</div>}
-    <section className="border border-slate-300 bg-slate-50 p-4"><div className="text-xs font-semibold uppercase tracking-wide text-slate-600">Radar capture</div><div className="mt-2 flex flex-wrap gap-6 text-sm"><span><strong>{Number(radarSummary.sample_count || 0)}</strong> frames captured this minute</span><span><strong>{Number(radarSummary.chunk_count || 0)}</strong> complete chunks</span><span><strong>{Number(radarSummary.average_sampling_rate_hz || 0).toFixed(2)}</strong> Hz average</span></div></section>
+    <section className="border border-slate-300 bg-slate-50 p-4"><div className="text-xs font-semibold uppercase tracking-wide text-slate-600">Radar capture</div><div className="mt-2 flex flex-wrap gap-6 text-sm"><span><strong>{Number(radarSummary.sample_count || 0)}</strong> frames captured this minute</span><span><strong>{Number((radarSummary.second_count ?? radarSummary.chunk_count) || 0)}</strong> complete seconds</span><span><strong>{Number(radarSummary.average_sampling_rate_hz || 0).toFixed(2)}</strong> Hz average</span></div></section>
     <section className="border border-slate-300 bg-white p-4"><div className="text-xs font-semibold uppercase tracking-wide text-slate-600">Capture data summary</div><div className="mt-2 grid gap-2 text-sm sm:grid-cols-2 lg:grid-cols-4"><div>CSI samples: <strong>{csiSamples || Number(csiSummary.sample_count || 0)}</strong></div><div>CSI receivers: <strong>{Number(csiSummary.receiver_count || csiReceivers.length || 0)}</strong></div><div>Camera frames: <strong>{Number(cameraSummary.sample_count || cameraSummary.frame_count || 0)}</strong></div><div>Sense HAT samples: <strong>{Number(senseSummary.sample_count || 0)}</strong></div></div></section>
     <SensorScrubber minute={params.minute} deviceId={params.deviceId} token={user?.token} durationSeconds={Number(manifest?.duration_seconds) || 60} />
     <section className="border border-slate-300 bg-white p-4"><div className="text-xs font-semibold uppercase tracking-wide text-slate-600">Human labels</div><div className="mt-3 flex flex-wrap gap-2">{humanLabels.length ? humanLabels.map((label: string) => <span key={label} className="rounded-full border border-cyan-300 bg-cyan-50 px-3 py-1 text-sm">{label}</span>) : <span className="text-sm text-slate-500">No labels were authored for this minute.</span>}</div></section>
-    <section className="border border-slate-300 bg-white p-4"><div className="mb-4"><div className="text-xs font-semibold uppercase tracking-wide text-slate-600">User models</div><h2 className="mt-1 text-xl font-semibold">Prediction timelines</h2></div><div className="space-y-3">{modelPredictions.map((model: any) => <article key={model.model_id} className="rounded-xl border border-slate-200 p-4"><h3 className="font-semibold">{model.model_name} <span className="text-xs text-slate-500">{model.model_version}</span></h3><div className="mt-3 space-y-2">{(model.timeline || []).map((item: any, index: number) => <div key={`${item.chunk_index}-${index}`} className="rounded-lg bg-slate-50 px-3 py-2 text-xs"><div><strong>Chunk {Number(item.chunk_index) + 1}</strong> · {item.timestamp} · status {item.status}</div>{item.status === 'ok' ? <div className="mt-1">Class: <strong>{item.class}</strong> · confidence {(Number(item.confidence) * 100).toFixed(1)}% · scores {JSON.stringify(item.scores || {})}</div> : <div className="mt-1">{item.reason ? `Reason: ${item.reason}` : item.error ? `Error: ${item.error}` : 'No additional details.'}</div>}</div>)}</div></article>)}{!modelPredictions.length ? <div className="border border-dashed border-slate-300 p-8 text-sm text-slate-500">No enabled user model produced a result.</div> : null}</div></section>
+    <section className="border border-slate-300 bg-white p-4"><div className="mb-4"><div className="text-xs font-semibold uppercase tracking-wide text-slate-600">User models</div><h2 className="mt-1 text-xl font-semibold">Prediction timelines</h2></div><div className="space-y-3">{modelPredictions.map((model: any) => <article key={model.model_id} className="rounded-xl border border-slate-200 p-4"><h3 className="font-semibold">{model.model_name} <span className="text-xs text-slate-500">{model.model_version}</span></h3><div className="mt-3 space-y-2">{(model.timeline || []).map((item: any, index: number) => <div key={`${(item.second_index ?? item.chunk_index)}-${index}`} className="rounded-lg bg-slate-50 px-3 py-2 text-xs"><div><strong>Second {Number((item.second_index ?? item.chunk_index)) + 1}</strong> · {item.timestamp} · status {item.status}</div>{item.status === 'ok' ? <div className="mt-1">Class: <strong>{item.class}</strong> · confidence {(Number(item.confidence) * 100).toFixed(1)}% · scores {JSON.stringify(item.scores || {})}</div> : <div className="mt-1">{item.reason ? `Reason: ${item.reason}` : item.error ? `Error: ${item.error}` : 'No additional details.'}</div>}</div>)}</div></article>)}{!modelPredictions.length ? <div className="border border-dashed border-slate-300 p-8 text-sm text-slate-500">No enabled user model produced a result.</div> : null}</div></section>
     <section className="border border-slate-300 bg-white p-4"><h2 className="mb-3 font-semibold">Camera</h2>{videoUrl ? <video controls src={videoUrl} className="max-h-[70vh] w-full bg-black" /> : cameraUrl ? <div className="space-y-3"><Image unoptimized src={cameraUrl} width={1280} height={720} alt={`Camera frame for second ${cameraSecond + 1}`} className="max-h-[70vh] w-full bg-black object-contain"/><div className="flex items-center gap-3 text-xs"><button type="button" onClick={() => setCameraPlaying((value) => !value)} className="border border-slate-300 bg-white px-3 py-1.5 font-semibold">{cameraPlaying ? 'Pause' : 'Play'}</button><input aria-label="Camera second" type="range" min={0} max={Math.max(0, Number(containerMetadata?.seconds?.length || 1) - 1)} value={cameraSecond} onChange={(event) => { setCameraPlaying(false); setCameraSecond(Number(event.target.value)); }} className="min-w-0 flex-1 accent-cyan-600"/><span className="font-mono">{cameraSecond + 1}s</span></div></div> : <div className="p-8 text-sm text-slate-500">No camera frames in this minute.</div>}</section>
     <div className="text-xs text-slate-500">{assets.length} cloud assets</div>
   </div>;

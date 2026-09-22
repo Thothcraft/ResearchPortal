@@ -69,10 +69,17 @@ async function proxy(
     const responseHeaders = new Headers();
     response.headers.forEach((value, key) => {
       const lower = key.toLowerCase();
-      if (lower !== 'transfer-encoding' && lower !== 'content-encoding') {
+      if (lower !== 'transfer-encoding' && lower !== 'content-encoding' && lower !== 'set-cookie') {
         responseHeaders.set(key, value);
       }
     });
+
+    // Forward upstream Set-Cookie (HttpOnly session) to the browser.
+    // forEach() does not expose set-cookie, so read it explicitly.
+    const setCookies = (response.headers as any).getSetCookie?.() ?? [];
+    for (const cookie of setCookies) {
+      responseHeaders.append('set-cookie', cookie);
+    }
 
     responseHeaders.set('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0, private');
     responseHeaders.set('Pragma', 'no-cache');
