@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
-import { Home, Monitor, LogOut, BookOpen, Shield, UserRound, Settings, ChevronUp, Boxes, Database } from 'lucide-react';
+import { Home, Monitor, LogOut, BookOpen, Shield, UserRound, Settings, ChevronUp, Boxes, Database, Map } from 'lucide-react';
 
 export default function Sidebar() {
   const pathname = usePathname();
@@ -14,6 +14,7 @@ export default function Sidebar() {
   const items = [
     { name: 'Home', href: '/home', icon: Home },
     { name: 'Devices', href: '/devices', icon: Monitor },
+    { name: 'Spaces', href: '/spaces', icon: Map },
     { name: 'Data', href: '/captures', icon: Database },
     { name: 'Models', href: '/models', icon: Boxes },
     // Labs are a Research-plan entitlement, not an org feature.
