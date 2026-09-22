@@ -16,6 +16,13 @@ function tokenIsExpired(token: string | null): boolean {
   }
 }
 
+function storedToken(): string | null {
+  if (typeof window === 'undefined') return null;
+  // Session-only logins ("remember this device" off) keep the token in
+  // sessionStorage; remembered logins use localStorage.
+  return localStorage.getItem('auth_token') || sessionStorage.getItem('auth_token');
+}
+
 export const useApi = () => {
   const { user } = useAuth();
   const apiBaseUrl = '/api/proxy';
@@ -25,7 +32,7 @@ export const useApi = () => {
   tokenRef.current = user?.token;
 
   const getAuthHeaders = useCallback((): Record<string, string> => {
-    const token = tokenRef.current || (typeof window !== 'undefined' ? localStorage.getItem('auth_token') : null);
+    const token = tokenRef.current || storedToken();
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
       'Accept': 'application/json',
@@ -45,10 +52,12 @@ export const useApi = () => {
       if (response.status === 401) {
         // Polling endpoints can transiently return 401 while the backend is
         // restarting. Only end the browser session when the JWT itself expired.
-        const token = localStorage.getItem('auth_token');
+        const token = storedToken();
         if (tokenIsExpired(token)) {
           localStorage.removeItem('auth_token');
           localStorage.removeItem('user');
+          sessionStorage.removeItem('auth_token');
+          sessionStorage.removeItem('user');
           window.location.href = '/auth';
         }
         const unauthorized = new Error('Request was unauthorized; your session was retained.') as ApiError;

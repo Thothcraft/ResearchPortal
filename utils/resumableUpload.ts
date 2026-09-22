@@ -77,7 +77,7 @@ export class ResumableUpload {
    * Get authentication headers
    */
   private getAuthHeaders(): Record<string, string> {
-    const token = localStorage.getItem('auth_token');
+    const token = localStorage.getItem('auth_token') || sessionStorage.getItem('auth_token');
     if (!token) {
       throw new Error('Authentication required');
     }
@@ -265,7 +265,7 @@ export class ResumableUpload {
       {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${localStorage.getItem('auth_token')}`
+          'Authorization': `Bearer ${localStorage.getItem('auth_token') || sessionStorage.getItem('auth_token')}`
         },
         body: formData,
         signal

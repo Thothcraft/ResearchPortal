@@ -16,7 +16,7 @@ type Entitlements = Record<string, any> | null;
 type AuthContextType = {
   user: User;
   entitlements: Entitlements;
-  login: (username: string, password: string) => Promise<boolean>;
+  login: (username: string, password: string, remember?: boolean) => Promise<boolean>;
   register: (username: string, email: string, password: string) => Promise<{
     success: boolean;
     message: string;
@@ -45,6 +45,26 @@ function decodeTokenPayload(token: string): Record<string, any> | null {
 function tokenIsExpired(token: string): boolean {
   const expires = Number(decodeTokenPayload(token)?.exp);
   return Number.isFinite(expires) && expires * 1000 <= Date.now();
+}
+
+// "Remember this device" unchecked → credentials live in sessionStorage and
+// die with the browser tab; checked → localStorage across restarts.
+// auth_persist records which store the active session uses.
+function authStore(): Storage {
+  try {
+    return localStorage.getItem('auth_persist') === '0' ? sessionStorage : localStorage;
+  } catch {
+    return localStorage;
+  }
+}
+
+function clearStoredAuth() {
+  try {
+    localStorage.removeItem('auth_token');
+    localStorage.removeItem('user');
+    sessionStorage.removeItem('auth_token');
+    sessionStorage.removeItem('user');
+  } catch { /* storage unavailable */ }
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -77,41 +97,44 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // removed account must not trap the browser inside a broken protected shell.
   useEffect(() => {
     let active = true;
-    const clearStoredAuth = () => {
-      localStorage.removeItem('auth_token');
-      localStorage.removeItem('user');
+    const clearAuth = () => {
+      clearStoredAuth();
       if (active) setUser(null);
     };
     const restore = async () => {
-      const token = localStorage.getItem('auth_token');
-      const userStr = localStorage.getItem('user');
+      const store = authStore();
+      const token = store.getItem('auth_token');
+      const userStr = store.getItem('user');
       if (!token || tokenIsExpired(token)) {
+        // Fall through to the cookie path — with remember=0 the cookie is
+        // session-scoped, so it still dies with the browser while allowing
+        // other tabs in the same session to restore.
         clearStoredAuth();
-        return;
-      }
-      try {
-        const response = await fetch('/api/proxy/profile', {
-          headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
-          cache: 'no-store',
-        });
-        if (!response.ok) throw new Error(`Stored session rejected (${response.status})`);
-        const profile = await response.json();
-        const stored = userStr ? JSON.parse(userStr) : {};
-        const restored = {
-          ...stored,
-          username: profile.username || stored.username,
-          role: profile.role ?? stored.role ?? 0,
-          plan: profile.plan ?? stored.plan,
-          userId: profile.userId ?? profile.user_id ?? stored.userId,
-          token,
-        };
-        localStorage.setItem('user', JSON.stringify(restored));
-        if (active) setUser(restored);
-        refreshEntitlements();
-        return;
-      } catch {
-        // Stored bearer token failed — fall back to the HttpOnly
-        // session cookie (the proxy forwards it to Brain).
+      } else {
+        try {
+          const response = await fetch('/api/proxy/profile', {
+            headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+            cache: 'no-store',
+          });
+          if (!response.ok) throw new Error(`Stored session rejected (${response.status})`);
+          const profile = await response.json();
+          const stored = userStr ? JSON.parse(userStr) : {};
+          const restored = {
+            ...stored,
+            username: profile.username || stored.username,
+            role: profile.role ?? stored.role ?? 0,
+            plan: profile.plan ?? stored.plan,
+            userId: profile.userId ?? profile.user_id ?? stored.userId,
+            token,
+          };
+          store.setItem('user', JSON.stringify(restored));
+          if (active) setUser(restored);
+          refreshEntitlements();
+          return;
+        } catch {
+          // Stored bearer token failed — fall back to the HttpOnly
+          // session cookie (the proxy forwards it to Brain).
+        }
       }
       try {
         const response = await fetch('/api/proxy/profile', {
@@ -127,18 +150,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           userId: profile.userId ?? profile.user_id,
           token: '',  // cookie session — no bearer token needed
         };
-        localStorage.setItem('user', JSON.stringify(restored));
+        authStore().setItem('user', JSON.stringify(restored));
         if (active) setUser(restored);
         refreshEntitlements();
       } catch {
-        clearStoredAuth();
+        clearAuth();
       }
     };
     restore().finally(() => { if (active) setIsLoading(false); });
     return () => { active = false; };
   }, []);
 
-  const login = async (username: string, password: string): Promise<boolean> => {
+  const login = async (username: string, password: string, remember = true): Promise<boolean> => {
     setError(null);
 
     try {
@@ -153,7 +176,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         },
         body: JSON.stringify({
           username: username.trim(),
-          password
+          password,
+          remember
         }),
         signal: controller.signal,
       });
@@ -206,8 +230,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // Store token and user data. The login response also sets the
       // HttpOnly thoth_session cookie (forwarded by the proxy), which
       // becomes the session restore path going forward.
-      localStorage.setItem('auth_token', data.access_token);
-      localStorage.setItem('user', JSON.stringify(userData));
+      localStorage.setItem('auth_persist', remember ? '1' : '0');
+      const store = authStore();
+      clearStoredAuth();
+      store.setItem('auth_token', data.access_token);
+      store.setItem('user', JSON.stringify(userData));
 
       setUser(userData);
       refreshEntitlements();
@@ -289,8 +316,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     navigator.serviceWorker?.ready.then((registration) => registration.active?.postMessage('CLEAR_PRIVATE_CACHE')).catch(() => undefined);
     // Clear the HttpOnly session cookie server-side (best-effort).
     fetch('/api/proxy/logout', { method: 'POST', cache: 'no-store' }).catch(() => undefined);
-    localStorage.removeItem('auth_token');
-    localStorage.removeItem('user');
+    clearStoredAuth();
+    localStorage.removeItem('auth_persist');
     setUser(null);
     setEntitlements(null);
     router.replace('/auth');

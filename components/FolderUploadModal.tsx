@@ -83,7 +83,7 @@ export default function FolderUploadModal({
 
   const pollUploadStatus = useCallback(async (uploadIdToCheck: string) => {
     try {
-      const token = localStorage.getItem('auth_token');
+      const token = localStorage.getItem('auth_token') || sessionStorage.getItem('auth_token');
       const apiUrl = '/api/proxy';
       
       const response = await fetch(`${apiUrl}/folders/upload-status/${uploadIdToCheck}`, {
@@ -141,7 +141,7 @@ export default function FolderUploadModal({
     setFailedFiles(0);
 
     try {
-      const token = localStorage.getItem('auth_token');
+      const token = localStorage.getItem('auth_token') || sessionStorage.getItem('auth_token');
       const apiUrl = '/api/proxy';
 
       // First create the folder

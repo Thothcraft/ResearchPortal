@@ -27,7 +27,7 @@ const PLAN_H = 8;
 const SCALE = 60;  // px per meter
 
 export default function SpacesPage() {
-  const { get, post, put, del } = useApi();
+  const { get, post, put, delete: del } = useApi();
   const { user } = useAuth();
   const [spaces, setSpaces] = useState<Space[]>([]);
   const [states, setStates] = useState<Record<number, SpaceState>>({});

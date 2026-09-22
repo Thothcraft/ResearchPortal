@@ -13,6 +13,7 @@ export default function AuthPage() {
   const [registrationAvailable, setRegistrationAvailable] = useState<boolean | null>(null);
   const [emailVerificationAvailable, setEmailVerificationAvailable] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [remember, setRemember] = useState(true);
   const router = useRouter();
   const { login, register, error, isAuthenticated } = useAuth();
   useEffect(() => {
@@ -38,7 +39,7 @@ export default function AuthPage() {
     setIsSubmitting(true); setNotice('');
     try {
       if (mode === 'signin') {
-        if (await login(formData.username, formData.password)) router.replace('/home');
+        if (await login(formData.username, formData.password, remember)) router.replace('/home');
       } else {
         const result = await register(formData.username, formData.email, formData.password);
         if (result.success) {
@@ -66,6 +67,10 @@ export default function AuthPage() {
       <label htmlFor="username">{mode === 'signin' ? 'Username or verified email' : 'Username'}</label><input id="username" autoComplete="username" placeholder={mode === 'signin' ? 'you@example.com' : 'Choose a username'} value={formData.username} onChange={e => setFormData({ ...formData, username: e.target.value })}/>
       {mode === 'register' && <><label htmlFor="email">Email</label><input id="email" type="email" autoComplete="email" value={formData.email} onChange={e => setFormData({ ...formData, email: e.target.value })}/></>}
       <label htmlFor="password">Password</label><input id="password" type="password" minLength={6} autoComplete={mode === 'signin' ? 'current-password' : 'new-password'} value={formData.password} onChange={e => setFormData({ ...formData, password: e.target.value })}/>
+      {mode === 'signin' && <label htmlFor="remember" className="auth-remember" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem', cursor: 'pointer' }}>
+        <input id="remember" type="checkbox" checked={remember} onChange={e => setRemember(e.target.checked)} style={{ width: 'auto', margin: 0 }}/>
+        Remember this device
+      </label>}
       <div className="auth-actions"><button className="auth-primary" disabled={isSubmitting || (mode === 'register' && registrationAvailable !== true)}>{isSubmitting ? 'Please wait…' : mode === 'signin' ? 'Continue' : emailVerificationAvailable ? 'Register and verify email' : 'Create account'}</button>
       <button type="button" className="auth-secondary" onClick={() => { setMode(mode === 'signin' ? 'register' : 'signin'); setNotice(''); }}>{mode === 'signin' ? 'New here? Create an account' : 'Already registered? Sign in'}</button>
       {pendingEmail && mode === 'signin' && <button type="button" className="auth-secondary" onClick={resendVerification}>Resend verification email</button>}</div>
