@@ -62,6 +62,7 @@ type DeviceHardwareInfo = {
   sensors?: Sensor[];
   available_sensors?: Sensor[];
   hostname?: string;
+  lan_ip?: string;
   capture_settings?: CaptureSettings;
 };
 
@@ -725,6 +726,26 @@ function DevicePanel({
                 </span>
               )}
               <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1">IP {device.ip_address || 'N/A'}</span>
+              {(device.hardware_info?.hostname || device.hardware_info?.lan_ip || device.ip_address) && (
+                <a
+                  href={`http://${device.hardware_info?.hostname || device.hardware_info?.lan_ip || device.ip_address}:5000`}
+                  target="_blank"
+                  rel="noreferrer"
+                  onClick={(event) => event.stopPropagation()}
+                  className="inline-flex items-center gap-1 rounded-full border border-teal-300 bg-teal-50 px-2.5 py-1 font-semibold text-teal-900 hover:bg-teal-100"
+                  title="Open the node's local dashboard"
+                >
+                  <Link2 className="h-3 w-3" /> Local dashboard
+                </a>
+              )}
+              {(device.hardware_info?.hostname || device.hardware_info?.lan_ip || device.ip_address) && (
+                <span
+                  className="rounded-full border border-slate-200 bg-white px-2.5 py-1 font-mono text-[11px]"
+                  title="SSH into this node (OpenSSH on port 22)"
+                >
+                  ssh user@{device.hardware_info?.hostname || device.hardware_info?.lan_ip || device.ip_address}
+                </span>
+              )}
               <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1">Last seen {device.last_seen ? new Date(parseServerTime(device.last_seen)).toLocaleString() : 'N/A'}</span>
               <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1">{matchedMinutes.length} captured minutes</span>
               <span className={`rounded-full border px-2.5 py-1 font-semibold ${csiCount ? 'border-cyan-300 bg-cyan-50 text-cyan-900' : 'border-slate-200 bg-white text-slate-600'}`}>{csiDisplay}</span>
