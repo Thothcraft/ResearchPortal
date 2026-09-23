@@ -1,7 +1,7 @@
-{
+﻿{
   "name": "thothHUB",
   "short_name": "thothHUB",
-  "description": "Monitor Raspberry Pi–based Thoth wireless sensing devices.",
+  "description": "Manage Thoth sensing nodes, models, captures, and deployments on the Thothcraft platform.",
   "start_url": "/home",
   "scope": "/",
   "display": "standalone",

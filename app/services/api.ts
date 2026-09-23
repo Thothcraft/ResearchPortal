@@ -95,24 +95,6 @@ export interface DeviceInfo {
   sensors_enabled: boolean;
 }
 
-export interface TrainingJob {
-  job_id: string;
-  model: string;
-  status: string;
-  progress: string;
-  created_at: string;
-  best_accuracy?: number;
-}
-
-export interface FederatedSession {
-  session_id: string;
-  session_name: string;
-  status: string;
-  progress: string;
-  clients: number;
-  created_at: string;
-}
-
 // API Service
 class ApiService {
   private socket: Socket | null = null;
@@ -312,66 +294,6 @@ class ApiService {
     return response.data;
   }
 
-  // Training
-  async setupTraining(config: {
-    model: string;
-    data: string;
-    mode: string;
-    epochs?: number;
-    batch_size?: number;
-    learning_rate?: number;
-    device_id?: string;
-  }) {
-    const response = await api.post('/training/training/setup', config);
-    return response.data;
-  }
-
-  async getTrainingStatus(jobId?: string): Promise<TrainingJob | { jobs: TrainingJob[] }> {
-    const url = jobId ? `/training/training/status?job_id=${jobId}` : '/training/training/status';
-    const response = await api.get(url);
-    return response.data;
-  }
-
-  async controlTraining(jobId: string, action: 'pause' | 'resume' | 'cancel') {
-    const response = await api.post(`/training/training/${jobId}/control?action=${action}`);
-    return response.data;
-  }
-
-  async getTrainedModels(deviceId?: string) {
-    const url = deviceId ? `/training/training/models?device_id=${deviceId}` : '/training/training/models';
-    const response = await api.get(url);
-    return response.data;
-  }
-
-  async startFederatedTraining(config: {
-    session_name: string;
-    num_rounds: number;
-    min_clients: number;
-    max_clients?: number;
-    differential_privacy?: boolean;
-    noise_multiplier?: number;
-    model_config: any;
-  }) {
-    const response = await api.post('/training/federated/train', config);
-    return response.data;
-  }
-
-  async getFederatedStatus(sessionId?: string): Promise<FederatedSession | { sessions: FederatedSession[] }> {
-    const url = sessionId ? `/training/federated/status?session_id=${sessionId}` : '/training/federated/status';
-    const response = await api.get(url);
-    return response.data;
-  }
-
-  async joinFederatedSession(sessionId: string, deviceId: string, dataSamples: number) {
-    const response = await api.post(`/training/federated/${sessionId}/join`, null, {
-      params: {
-        device_id: deviceId,
-        data_samples: dataSamples
-      }
-    });
-    return response.data;
-  }
-
   // Data
   async uploadData(formData: FormData) {
     const response = await api.post('/upload', formData, {
@@ -406,7 +328,7 @@ class ApiService {
   }
 
   // ============================================
-  // Dataset Management (Cloud Training)
+  // Dataset Management
   // ============================================
 
   async createDataset(name: string, description?: string) {
@@ -444,41 +366,7 @@ class ApiService {
     return response.data;
   }
 
-  // Cloud Training
-  async startCloudTraining(config: {
-    dataset_id: number;
-    model_type: string;
-    epochs: number;
-    batch_size: number;
-    learning_rate: number;
-    validation_split: number;
-    model_name?: string;
-  }) {
-    const response = await api.post('/datasets/train/cloud', config);
-    return response.data;
-  }
-
-  async listCloudTrainingJobs(status?: string) {
-    const url = status ? `/datasets/train/jobs?status=${status}` : '/datasets/train/jobs';
-    const response = await api.get(url);
-    return response.data;
-  }
-
-  async getCloudTrainingJob(jobId: string) {
-    const response = await api.get(`/datasets/train/jobs/${jobId}`);
-    return response.data;
-  }
-
-  async cancelCloudTrainingJob(jobId: string) {
-    const response = await api.post(`/datasets/train/jobs/${jobId}/cancel`, {});
-    return response.data;
-  }
-
-  async deleteCloudTrainingJob(jobId: string) {
-    const response = await api.delete(`/datasets/train/jobs/${jobId}`);
-    return response.data;
-  }
-
+  // Model registry
   async listCloudTrainedModels() {
     const response = await api.get('/datasets/models');
     return response.data;

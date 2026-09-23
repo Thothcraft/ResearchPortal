@@ -66,7 +66,6 @@ export default function HomePage() {
           system_stats: {
             devices: { description: `${devices.filter((device) => device.online).length} of ${devices.length} devices are online` },
             files: { description: 'Captured minutes are indexed per device' },
-            training: { description: 'Training state is available through the portal' },
             models: { description: 'Model state is available through the portal' },
           },
         },

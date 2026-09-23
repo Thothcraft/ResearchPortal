@@ -11,7 +11,7 @@ const inter = Inter({
 
 export const metadata: Metadata = {
   title: "thothHUB",
-  description: "Monitor Raspberry Pi–based Thoth wireless sensing devices.",
+  description: "thothHUB — manage Thoth sensing nodes, models, captures, and deployments across the Thothcraft programmable sensing platform.",
   manifest: "/manifest.json",
 };
 

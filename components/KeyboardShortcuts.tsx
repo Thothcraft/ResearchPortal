@@ -12,7 +12,6 @@ const shortcuts: Shortcut[] = [
   { key: '?', description: 'Show keyboard shortcuts', category: 'General' },
   { key: 'N', description: 'Create new dataset', category: 'Datasets' },
   { key: 'D', description: 'Go to Devices', category: 'Navigation' },
-  { key: 'T', description: 'Go to Training', category: 'Navigation' },
   { key: 'H', description: 'Go to Home', category: 'Navigation' },
   { key: 'Escape', description: 'Close modal', category: 'General' },
   { key: 'Enter', description: 'Confirm action', category: 'General' },

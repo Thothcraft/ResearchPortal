@@ -174,16 +174,6 @@ export class ApiClient {
   }
 
   /**
-   * Get training jobs with deduplication
-   */
-  async getTrainingJobs(status?: string, ttl = 10000) {
-    const url = status 
-      ? `${this.baseUrl}/datasets/train/jobs?status=${status}`
-      : `${this.baseUrl}/datasets/train/jobs`;
-    return deduplicatedFetch(url, undefined, ttl);
-  }
-
-  /**
    * Get files with deduplication
    */
   async getFiles(options?: {
@@ -219,7 +209,6 @@ export const apiClient = new ApiClient();
 export function useDeduplicatedApi() {
   return {
     getModels: () => apiClient.getModels(),
-    getTrainingJobs: (status?: string) => apiClient.getTrainingJobs(status),
     getFiles: (options?: any) => apiClient.getFiles(options),
     getDevices: () => apiClient.getDevices(),
     clearCache: () => requestDeduplicator.clear(),
