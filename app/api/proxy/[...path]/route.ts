@@ -104,32 +104,39 @@ async function proxy(
   }
 }
 
-export async function GET(request: NextRequest, { params }: { params: { path: string[] } }) {
-  return proxy(request, params.path);
+export async function GET(request: NextRequest, { params }: { params: Promise<{ path: string[] }> }) {
+  const { path } = await params;
+  return proxy(request, path);
 }
 
-export async function POST(request: NextRequest, { params }: { params: { path: string[] } }) {
-  return proxy(request, params.path);
+export async function POST(request: NextRequest, { params }: { params: Promise<{ path: string[] }> }) {
+  const { path } = await params;
+  return proxy(request, path);
 }
 
-export async function PUT(request: NextRequest, { params }: { params: { path: string[] } }) {
-  return proxy(request, params.path);
+export async function PUT(request: NextRequest, { params }: { params: Promise<{ path: string[] }> }) {
+  const { path } = await params;
+  return proxy(request, path);
 }
 
-export async function DELETE(request: NextRequest, { params }: { params: { path: string[] } }) {
-  return proxy(request, params.path);
+export async function DELETE(request: NextRequest, { params }: { params: Promise<{ path: string[] }> }) {
+  const { path } = await params;
+  return proxy(request, path);
 }
 
-export async function PATCH(request: NextRequest, { params }: { params: { path: string[] } }) {
-  return proxy(request, params.path);
+export async function PATCH(request: NextRequest, { params }: { params: Promise<{ path: string[] }> }) {
+  const { path } = await params;
+  return proxy(request, path);
 }
 
-export async function OPTIONS(request: NextRequest, { params }: { params: { path: string[] } }) {
-  return proxy(request, params.path);
+export async function OPTIONS(request: NextRequest, { params }: { params: Promise<{ path: string[] }> }) {
+  const { path } = await params;
+  return proxy(request, path);
 }
 
-export async function HEAD(request: NextRequest, { params }: { params: { path: string[] } }) {
-  const response = await proxy(request, params.path);
+export async function HEAD(request: NextRequest, { params }: { params: Promise<{ path: string[] }> }) {
+  const { path } = await params;
+  const response = await proxy(request, path);
   return new NextResponse(null, {
     status: response.status,
     headers: response.headers,

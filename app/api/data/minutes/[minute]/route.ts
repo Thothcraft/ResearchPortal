@@ -6,10 +6,11 @@ export const dynamic = 'force-dynamic';
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: { minute: string } }
+  { params }: { params: Promise<{ minute: string }> }
 ) {
   try {
-    const minute = decodeURIComponent(params.minute);
+    const { minute: rawMinute } = await params;
+    const minute = decodeURIComponent(rawMinute);
     const detail = getMinuteDetail(minute);
 
     if (!detail) {

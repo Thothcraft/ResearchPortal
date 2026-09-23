@@ -29,10 +29,11 @@ function mergeLabels(existing: unknown, incoming: unknown): string[] {
 
 export async function PATCH(
   request: NextRequest,
-  { params }: { params: { minute: string } }
+  { params }: { params: Promise<{ minute: string }> }
 ) {
   try {
-    const minute = decodeURIComponent(params.minute);
+    const { minute: rawMinute } = await params;
+    const minute = decodeURIComponent(rawMinute);
     if (!MINUTE_ID_RE.test(minute)) {
       return NextResponse.json({ success: false, error: 'Invalid minute folder' }, { status: 400 });
     }

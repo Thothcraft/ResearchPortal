@@ -13,10 +13,11 @@ const THOTH_BASE_URL =
 
 export async function POST(
   _request: Request,
-  { params }: { params: { minute: string } }
+  { params }: { params: Promise<{ minute: string }> }
 ) {
   try {
-    const minute = decodeURIComponent(params.minute);
+    const { minute: rawMinute } = await params;
+    const minute = decodeURIComponent(rawMinute);
     const detail = getMinuteDetail(minute);
 
     if (!detail) {

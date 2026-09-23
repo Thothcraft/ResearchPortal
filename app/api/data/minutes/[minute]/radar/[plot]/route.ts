@@ -15,11 +15,12 @@ const PYTHON = process.env.THOTH_PYTHON || (fs.existsSync(VENV_PYTHON) ? VENV_PY
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: { minute: string; plot: string } }
+  { params }: { params: Promise<{ minute: string; plot: string }> }
 ) {
   try {
-    const minute = decodeURIComponent(params.minute);
-    const plot = decodeURIComponent(params.plot);
+    const { minute: rawMinute, plot: rawPlot } = await params;
+    const minute = decodeURIComponent(rawMinute);
+    const plot = decodeURIComponent(rawPlot);
     const detail = getMinuteDetail(minute);
 
     if (!detail) {

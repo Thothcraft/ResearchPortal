@@ -86,8 +86,7 @@ export function subscribeToTrainingJobs(
   
   const channelName = `training-jobs-${userId}`;
   
-  const channel = client
-    .channel(channelName)
+  const channel = (client.channel(channelName) as any)
     .on(
       'postgres_changes',
       {
@@ -96,7 +95,7 @@ export function subscribeToTrainingJobs(
         table: 'training_job',
         filter: `user_id=eq.${userId}`,
       },
-      (payload: { new: RealtimeTrainingJob }) => {
+      (payload: any) => {
         console.log('[Supabase] Training job updated:', payload.new);
         onUpdate(payload.new as RealtimeTrainingJob);
       }
@@ -109,7 +108,7 @@ export function subscribeToTrainingJobs(
         table: 'training_job',
         filter: `user_id=eq.${userId}`,
       },
-      (payload: { new: RealtimeTrainingJob }) => {
+      (payload: any) => {
         console.log('[Supabase] New training job:', payload.new);
         if (onInsert) {
           onInsert(payload.new as RealtimeTrainingJob);
@@ -124,7 +123,7 @@ export function subscribeToTrainingJobs(
         table: 'training_job',
         filter: `user_id=eq.${userId}`,
       },
-      (payload: { old: RealtimeTrainingJob | null }) => {
+      (payload: any) => {
         console.log('[Supabase] Training job deleted:', payload.old);
         if (onDelete && payload.old) {
           onDelete((payload.old as RealtimeTrainingJob).job_id);

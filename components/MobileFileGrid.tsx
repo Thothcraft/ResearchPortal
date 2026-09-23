@@ -66,7 +66,7 @@ export default function MobileFileGrid({
     folder?: FolderItem;
   } | null>(null);
   const [isSelectionMode, setIsSelectionMode] = useState(false);
-  const longPressTimer = useRef<NodeJS.Timeout>();
+  const longPressTimer = useRef<NodeJS.Timeout | null>(null);
   const touchStartPos = useRef<{ x: number; y: number } | null>(null);
 
   // Filter files based on search and filter

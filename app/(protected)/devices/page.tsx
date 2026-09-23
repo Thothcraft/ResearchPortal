@@ -76,6 +76,7 @@ type Device = {
   mac_address: string | null;
   device_uuid: string;
   hardware_info?: DeviceHardwareInfo;
+  collection_active?: boolean;
 };
 
 type DeviceFileSummary = {
@@ -576,8 +577,13 @@ function DevicePanel({
     setCollectionBusy(action);
     try {
       await onSendCommand(device.device_uuid, `${action}_collection`);
-      toast.success(action === 'start' ? 'Collection starting' : 'Collection stopping',
-        'The device will apply the command on its next heartbeat.');
+      device.collection_active = action === 'start';
+      toast.success(
+        action === 'start' ? 'Collection started' : 'Collection stopped',
+        action === 'start'
+          ? 'Continuous minute collection is now running on the device.'
+          : 'Continuous collection has been stopped.'
+      );
     } catch (error) {
       toast.error('Command failed', error instanceof Error ? error.message : `Unable to ${action} collection`);
     } finally {
@@ -590,12 +596,12 @@ function DevicePanel({
     setSettingsError('');
     try {
       const canonical = await onSaveSettings(device.device_uuid, {
-      labels: draftLabel.split(',').map((label) => label.trim()).filter(Boolean),
-      sensors: { ...DEFAULT_SENSORS, ...draftSensors },
-      csi_device_ids: draftCsiDeviceIds,
-      calibrations: settings.calibrations || {},
-      revision: settings.revision,
-      updated_at: settings.updated_at,
+        labels: draftLabel.split(',').map((label) => label.trim()).filter(Boolean),
+        sensors: { ...DEFAULT_SENSORS, ...draftSensors },
+        csi_device_ids: draftCsiDeviceIds,
+        calibrations: settings.calibrations || {},
+        revision: settings.revision,
+        updated_at: settings.updated_at,
       });
       setDraftRadarThreshold(canonical.radar_detection_threshold_normalized);
       setDraftOccupancyThreshold(canonical.occupancy_threshold_percent);
@@ -708,6 +714,16 @@ function DevicePanel({
               <span className={`rounded-full border px-2.5 py-1 font-medium ${device.online ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-slate-300 bg-slate-100 text-slate-700'}`}>
                 {device.online ? 'Online' : 'Offline'}
               </span>
+              {device.online && (
+                <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-semibold ${
+                  device.collection_active
+                    ? 'border-emerald-300 bg-emerald-50 text-emerald-800'
+                    : 'border-amber-300 bg-amber-50 text-amber-800'
+                }`}>
+                  <span className={`h-2 w-2 rounded-full ${device.collection_active ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'}`} />
+                  {device.collection_active ? 'Collecting' : 'Collection paused'}
+                </span>
+              )}
               <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1">IP {device.ip_address || 'N/A'}</span>
               <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1">Last seen {device.last_seen ? new Date(parseServerTime(device.last_seen)).toLocaleString() : 'N/A'}</span>
               <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1">{matchedMinutes.length} captured minutes</span>
@@ -727,20 +743,39 @@ function DevicePanel({
           {openMinute ? <iframe title={`Captured minute ${openMinute}`} src={`/captures/${encodeURIComponent(device.device_uuid)}/${encodeURIComponent(openMinute)}?embedded=1`} className="h-[calc(94vh-82px)] w-full border-0"/> : <>
           <div className="grid gap-0 lg:grid-cols-[360px_1fr]">
           <section className="border-b border-slate-200 p-4 sm:p-5 lg:border-b-0 lg:border-r">
+            <div className="mb-3 flex items-center justify-between rounded-lg border border-slate-300 bg-white p-3 text-sm">
+              <div className="flex items-center gap-2">
+                <span className={`h-2.5 w-2.5 rounded-full ${device.collection_active ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'}`} />
+                <span className="font-semibold text-slate-900">
+                  {device.collection_active ? 'Continuous Collection Active' : 'Collection Paused'}
+                </span>
+              </div>
+              <span className="text-xs text-slate-500">
+                {device.collection_active ? 'Recording 1-min captures' : 'Sensors idle'}
+              </span>
+            </div>
             <div className="mb-4 grid grid-cols-2 gap-2">
               <button
                 type="button"
-                disabled={collectionBusy !== null}
+                disabled={collectionBusy !== null || device.collection_active === true}
                 onClick={() => runCollectionCommand('start')}
-                className="inline-flex items-center justify-center gap-2 bg-emerald-700 px-3 py-2.5 text-sm font-semibold text-white transition hover:bg-emerald-800 disabled:opacity-50"
+                className={`inline-flex items-center justify-center gap-2 px-3 py-2.5 text-sm font-semibold transition disabled:opacity-50 ${
+                  device.collection_active
+                    ? 'border border-emerald-300 bg-emerald-100 text-emerald-900 cursor-default'
+                    : 'bg-emerald-700 text-white hover:bg-emerald-800'
+                }`}
               >
-                <Play className="h-4 w-4" />{collectionBusy === 'start' ? 'Starting…' : 'Start'}
+                <Play className="h-4 w-4" />{collectionBusy === 'start' ? 'Starting…' : (device.collection_active ? 'Collecting' : 'Start')}
               </button>
               <button
                 type="button"
-                disabled={collectionBusy !== null}
+                disabled={collectionBusy !== null || device.collection_active === false}
                 onClick={() => runCollectionCommand('stop')}
-                className="inline-flex items-center justify-center gap-2 bg-red-700 px-3 py-2.5 text-sm font-semibold text-white transition hover:bg-red-800 disabled:opacity-50"
+                className={`inline-flex items-center justify-center gap-2 px-3 py-2.5 text-sm font-semibold transition disabled:opacity-50 ${
+                  !device.collection_active
+                    ? 'border border-slate-300 bg-slate-100 text-slate-500 cursor-default'
+                    : 'bg-red-700 text-white hover:bg-red-800'
+                }`}
               >
                 <Square className="h-4 w-4" />{collectionBusy === 'stop' ? 'Stopping…' : 'Stop'}
               </button>
@@ -1266,6 +1301,10 @@ export default function DevicesPage() {
   const sendDeviceCommand = async (deviceId: string, command: string, payload: Record<string, unknown> = {}) => {
     const response = await post(`/device/${deviceId}/commands`, { command, payload });
     if (!response?.success) throw new Error(response?.message || `Failed to send ${command}`);
+    if (command === 'start_collection' || command === 'stop_collection') {
+      const active = command === 'start_collection';
+      setDevices((current) => current.map((d) => d.device_uuid === deviceId ? { ...d, collection_active: active } : d));
+    }
     return response;
   };
 

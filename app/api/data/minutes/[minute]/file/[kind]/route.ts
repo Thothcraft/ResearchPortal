@@ -8,11 +8,11 @@ export const dynamic = 'force-dynamic';
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: { minute: string; kind: string } }
+  { params }: { params: Promise<{ minute: string; kind: string }> }
 ) {
   try {
-    const minute = decodeURIComponent(params.minute);
-    const kind = params.kind;
+    const { minute: rawMinute, kind } = await params;
+    const minute = decodeURIComponent(rawMinute);
     const detail = getMinuteDetail(minute);
 
     if (!detail) {
