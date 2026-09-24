@@ -50,11 +50,14 @@ async function proxy(
   const headers = filterHeaders(request.headers);
 
   try {
+    // Forward the body as raw bytes. request.text() would UTF-8-decode the
+    // payload and corrupt binary uploads (e.g. multipart model artifacts),
+    // turning bytes like 0xFF into U+FFFD. arrayBuffer() is byte-exact.
     const body =
       bodyOverride !== undefined
         ? bodyOverride
         : method !== 'GET' && method !== 'HEAD' && method !== 'OPTIONS'
-          ? await request.text()
+          ? await request.arrayBuffer()
           : undefined;
 
     const response = await fetch(targetUrl, {
