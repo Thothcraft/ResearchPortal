@@ -11,7 +11,6 @@
   "dependencies": {
     "@chatscope/chat-ui-kit-react": "^2.1.1",
     "@chatscope/chat-ui-kit-styles": "^1.4.0",
-    "@geist-ui/core": "^2.3.8",
     "@react-three/drei": "^10.7.4",
     "@react-three/fiber": "^9.3.0",
     "@supabase/supabase-js": "^2.91.1",
@@ -20,7 +19,6 @@
     "chart.js": "^4.4.0",
     "clsx": "^2.1.1",
     "date-fns": "^2.30.0",
-    "framer-motion": "^10.16.0",
     "jspdf": "^4.0.0",
     "lucide-react": "^0.512.0",
     "next": "^15.5.4",
