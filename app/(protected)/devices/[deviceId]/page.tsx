@@ -148,7 +148,11 @@ export default function DeviceDashboardPage() {
   const radarSensorIds = useMemo(
     () =>
       sensors
-        .filter((s) => s.type === 'radar' || s.id.startsWith('radar'))
+        .filter(
+          (s) =>
+            s.type === 'radar' ||
+            (typeof s.id === 'string' && s.id.startsWith('radar')),
+        )
         .map((s) => s.id),
     [sensors],
   );
