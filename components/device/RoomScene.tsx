@@ -36,6 +36,14 @@ const SENSOR_COLORS: Record<string, string> = {
   mic: '#f472b6',
 };
 
+/** Latest radar frame payload for one sensor (`xy_map` range×azimuth). */
+export interface RadarFrame {
+  snr_db?: number;
+  energy?: number;
+  xy_map?: number[][];
+  range_profile?: number[];
+}
+
 function asRad(v: number | undefined): number {
   const n = Number(v ?? 0);
   return Math.abs(n) > Math.PI * 2 ? (n * Math.PI) / 180 : n;
@@ -130,14 +138,125 @@ function FovWedge({
   );
 }
 
+/**
+ * Live radar energy over the sensor's range×azimuth wedge — one
+ * BufferGeometry, vertex-colored; plus an energy-centroid target marker.
+ * `xy_map[i][j]`: i = range bin (0..N → 0..range_m along boresight),
+ * j = azimuth bin (−fov/2..+fov/2). Same projection as FovWedge.
+ */
+function RadarLayer({
+  frame,
+  range,
+  fovDeg,
+}: {
+  frame: RadarFrame;
+  range: number;
+  fovDeg: number;
+}) {
+  const map = frame.xy_map;
+  const data = useMemo(() => {
+    if (!map?.length || !map[0]?.length) return null;
+    const rows = map.length;
+    const cols = map[0].length;
+    const fov = Math.max(2, Math.min(330, fovDeg)) * (Math.PI / 180);
+    let max = 0;
+    for (const row of map) for (const v of row) if (v > max) max = v;
+    if (!(max > 0)) return null;
+
+    const positions: number[] = [];
+    const colors: number[] = [];
+    const cell = new THREE.Color();
+    let tx = 0, tz = 0, tw = 0;
+
+    for (let i = 0; i < rows; i += 1) {
+      for (let j = 0; j < cols; j += 1) {
+        const e = (map[i][j] ?? 0) / max;
+        if (e <= 0.04) continue;                    // noise floor
+        const r0 = (i / rows) * range;
+        const r1 = ((i + 1) / rows) * range;
+        const a0 = -fov / 2 + (j / cols) * fov;
+        const a1 = -fov / 2 + ((j + 1) / cols) * fov;
+        // quad corners: (sin a * r, 0.02, cos a * r) — same basis as wedge
+        const c = [
+          [Math.sin(a0) * r0, Math.cos(a0) * r0],
+          [Math.sin(a1) * r0, Math.cos(a1) * r0],
+          [Math.sin(a1) * r1, Math.cos(a1) * r1],
+          [Math.sin(a0) * r1, Math.cos(a0) * r1],
+        ];
+        // two triangles
+        positions.push(
+          c[0][0], 0.02, c[0][1], c[1][0], 0.02, c[1][1], c[2][0], 0.02, c[2][1],
+          c[0][0], 0.02, c[0][1], c[2][0], 0.02, c[2][1], c[3][0], 0.02, c[3][1],
+        );
+        // energy → violet→amber ramp
+        cell.setHSL(0.75 - 0.65 * e, 0.9, 0.45 + 0.2 * e);
+        for (let k = 0; k < 6; k += 1) colors.push(cell.r, cell.g, cell.b);
+        // weighted centroid for the target marker
+        const rm = (r0 + r1) / 2;
+        const am = (a0 + a1) / 2;
+        tx += Math.sin(am) * rm * e;
+        tz += Math.cos(am) * rm * e;
+        tw += e;
+      }
+    }
+    const target: V3 | null = tw > 0.15 ? [tx / tw, 0, tz / tw] : null;
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position',
+      new THREE.Float32BufferAttribute(positions, 3));
+    geo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+    return { geo, target, peak: max };
+  }, [map, range, fovDeg]);
+
+  if (!data) return null;
+  return (
+    <group>
+      <mesh geometry={data.geo} rotation={[0, 0, 0]}>
+        <meshBasicMaterial
+          vertexColors
+          transparent
+          opacity={0.85}
+          side={THREE.DoubleSide}
+          depthWrite={false}
+        />
+      </mesh>
+      {data.target && (
+        <group position={[data.target[0], 0, data.target[2]]}>
+          {/* estimated target location */}
+          <mesh position={[0, 0.55, 0]}>
+            <sphereGeometry args={[0.06, 14, 12]} />
+            <meshStandardMaterial
+              color="#f59e0b"
+              emissive="#f59e0b"
+              emissiveIntensity={1.4}
+            />
+          </mesh>
+          <Line
+            points={[
+              [0, 0.02, 0],
+              [0, 0.55, 0],
+            ]}
+            color="#f59e0b"
+            lineWidth={1.5}
+            dashed
+            dashSize={0.05}
+            gapSize={0.04}
+          />
+        </group>
+      )}
+    </group>
+  );
+}
+
 function DeviceNode({
   device,
   selectedSensor,
   onSelectSensor,
+  radarFrame,
 }: {
   device: NonNullable<RoomDoc['devices']>[number];
   selectedSensor: string | null;
   onSelectSensor?: (deviceId: string, sensorType: string) => void;
+  radarFrame?: RadarFrame | null;
 }) {
   const rotY = asRad(device.rot_y);
   return (
@@ -186,6 +305,9 @@ function DeviceNode({
                   : undefined
               }
             />
+            {sensor.type === 'radar' && radarFrame?.xy_map ? (
+              <RadarLayer frame={radarFrame} range={range} fovDeg={fov} />
+            ) : null}
           </group>
         );
       })}
@@ -197,11 +319,14 @@ export default function RoomScene({
   room,
   selectedSensor,
   onSelectSensor,
+  radarFrames,
   className,
 }: {
   room: RoomDoc | null;
   selectedSensor?: string | null;
   onSelectSensor?: (deviceId: string, sensorType: string) => void;
+  /** device_id → latest radar frame payload (xy_map/snr_db/energy) */
+  radarFrames?: Record<string, RadarFrame | null>;
   className?: string;
 }) {
   const dims = room?.dims ?? { w: 6, d: 4, h: 2.6 };
@@ -271,6 +396,7 @@ export default function RoomScene({
             device={dev}
             selectedSensor={selectedSensor ?? null}
             onSelectSensor={onSelectSensor}
+            radarFrame={radarFrames?.[dev.device_id] ?? null}
           />
         ))}
         {csiLinks.map(([a, b], i) => (

@@ -19,6 +19,7 @@ import {
   NodeSensor,
   NodeStatus,
   RoomDoc,
+  SensorTail,
   brainJson,
   nodeGet,
 } from '@/lib/node-api';
@@ -139,6 +140,48 @@ export default function DeviceDashboardPage() {
     [sensors],
   );
 
+  // Live radar frames → 3D scene: latest observation per radar sensor
+  // (~1 Hz while the Live tab is open; payloads are full xy_map frames).
+  const [radarFrames, setRadarFrames] = useState<
+    Record<string, import('@/components/device/RoomScene').RadarFrame | null>
+  >({});
+  const radarSensorIds = useMemo(
+    () =>
+      sensors
+        .filter((s) => s.type === 'radar' || s.id.startsWith('radar'))
+        .map((s) => s.id),
+    [sensors],
+  );
+  useEffect(() => {
+    if (!radarSensorIds.length || tab !== 'live') return;
+    let live = true;
+    const poll = async () => {
+      const next: Record<
+        string,
+        import('@/components/device/RoomScene').RadarFrame | null
+      > = {};
+      try {
+        const sid = radarSensorIds[0];
+        const res = await nodeGet<SensorTail>(
+          deviceId,
+          `/api/v1/sources/${encodeURIComponent(sid)}/observations?latest=1`,
+        );
+        const sample = res?.samples?.[0] as
+          | { payload?: Record<string, unknown> }
+          | undefined;
+        next[deviceId] =
+          (sample?.payload as
+            import('@/components/device/RoomScene').RadarFrame) ?? null;
+      } catch {
+        next[deviceId] = null;
+      }
+      if (live) setRadarFrames((prev) => ({ ...prev, ...next }));
+    };
+    void poll();
+    const t = setInterval(poll, 1500);
+    return () => { live = false; clearInterval(t); };
+  }, [deviceId, radarSensorIds, tab]);
+
   const title = status?.name || meta?.manual?.friendly_name || deviceId;
 
   return (
@@ -219,6 +262,7 @@ export default function DeviceDashboardPage() {
             <RoomScene
               room={room}
               selectedSensor={selectedSensor}
+              radarFrames={radarFrames}
               onSelectSensor={(dev, type) =>
                 setSelectedSensor((cur) =>
                   cur === `${dev}:${type}:0` ? null : `${dev}:${type}:0`)}
