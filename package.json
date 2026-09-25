@@ -12,6 +12,8 @@
     "@chatscope/chat-ui-kit-react": "^2.1.1",
     "@chatscope/chat-ui-kit-styles": "^1.4.0",
     "@geist-ui/core": "^2.3.8",
+    "@react-three/drei": "^10.7.4",
+    "@react-three/fiber": "^9.3.0",
     "@supabase/supabase-js": "^2.91.1",
     "@types/react-toastify": "^4.1.0",
     "axios": "^1.6.0",
@@ -28,13 +30,15 @@
     "react-icons": "^5.5.0",
     "react-toastify": "^11.0.5",
     "socket.io-client": "^4.5.0",
-    "tailwind-merge": "^3.3.1"
+    "tailwind-merge": "^3.3.1",
+    "three": "^0.178.0"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^2.1.4",
     "@types/node": "^20",
     "@types/react": "^19.1.0",
     "@types/react-dom": "^19.1.0",
+    "@types/three": "^0.178.0",
     "autoprefixer": "^10.4.21",
     "eslint": "^9.0.0",
     "eslint-config-next": "^15.5.4",

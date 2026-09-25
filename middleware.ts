@@ -8,7 +8,7 @@ export function middleware(request: NextRequest) {
   const publicRoutes = ['/auth', '/api/proxy'];
   
   // Protected routes
-  const protectedRoutes = ['/home', '/devices', '/captures', '/minutes', '/models', '/processing', '/profile', '/settings', '/labs'];
+  const protectedRoutes = ['/home', '/devices', '/captures', '/minutes', '/models', '/processing', '/profile', '/settings', '/labs', '/usage'];
   const adminRoutes = ['/admin'];
   
   // Check if accessing a protected route

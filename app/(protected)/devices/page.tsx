@@ -738,6 +738,14 @@ function DevicePanel({
                   <Link2 className="h-3 w-3" /> Local dashboard
                 </a>
               )}
+              <a
+                href={`/devices/${encodeURIComponent(device.device_uuid)}`}
+                onClick={(event) => event.stopPropagation()}
+                className="inline-flex items-center gap-1 rounded-full border border-cyan-300 bg-cyan-50 px-2.5 py-1 font-semibold text-cyan-900 hover:bg-cyan-100"
+                title="Open the cloud device dashboard (tunnel via Brain)"
+              >
+                <Activity className="h-3 w-3" /> Device dashboard
+              </a>
               {(device.hardware_info?.hostname || device.hardware_info?.lan_ip || device.ip_address) && (
                 <span
                   className="rounded-full border border-slate-200 bg-white px-2.5 py-1 font-mono text-[11px]"

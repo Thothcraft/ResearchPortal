@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
-import { Home, Monitor, LogOut, BookOpen, Shield, UserRound, Settings, ChevronUp, Boxes, Database, Map } from 'lucide-react';
+import { Home, Monitor, LogOut, BookOpen, Shield, UserRound, Settings, ChevronUp, Boxes, Database, Map, BarChart3 } from 'lucide-react';
 
 export default function Sidebar() {
   const pathname = usePathname();
@@ -17,6 +17,7 @@ export default function Sidebar() {
     { name: 'Spaces', href: '/spaces', icon: Map },
     { name: 'Data', href: '/captures', icon: Database },
     { name: 'Models', href: '/models', icon: Boxes },
+    { name: 'Usage', href: '/usage', icon: BarChart3 },
     // Labs are a Research-plan entitlement, not an org feature.
     ...(entitlements?.labs || plan === 'research'
       ? [{ name: 'Labs', href: '/labs', icon: BookOpen }]
