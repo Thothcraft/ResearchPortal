@@ -29,7 +29,13 @@ export interface NodeSensor {
   online?: boolean;
   sample_rate?: number | null;
   units?: Record<string, string>;
+  metadata?: { name?: string; [key: string]: unknown };
   [key: string]: unknown;
+}
+
+/** Human label: product name from the descriptor, falling back to id. */
+export function sensorLabel(s: NodeSensor): string {
+  return s.metadata?.name || s.id;
 }
 
 export interface SensorTail {

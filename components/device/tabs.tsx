@@ -21,6 +21,7 @@ import {
   NodeModel,
   NodeSensor,
   NodeStatus,
+  sensorLabel,
   SensorTail,
   nodeDelete,
   nodeGet,
@@ -103,7 +104,9 @@ export function StatusTab({ deviceId, status, sensors }: TabProps & {
         <ul className="space-y-1.5 text-sm">
           {sensors.map((s) => (
             <li key={s.id} className="flex items-center justify-between rounded-lg border border-slate-100 px-3 py-1.5">
-              <span className="font-mono text-xs text-slate-800">{s.id}</span>
+              <span className="text-xs text-slate-800">{sensorLabel(s)}
+                <span className="ml-1.5 font-mono text-[10px] text-slate-400">{s.id}</span>
+              </span>
               <span className="flex items-center gap-2">
                 <span className="text-xs text-slate-500">{s.type || 'sensor'}</span>
                 <span className={`h-2 w-2 rounded-full ${s.online === false ? 'bg-slate-300' : 'bg-emerald-500'}`} />
@@ -177,7 +180,7 @@ export function SensorTailPanel({ deviceId, sensor }: {
       <div className="mb-2 flex items-center justify-between">
         <h3 className="text-sm font-semibold text-slate-900">
           <Activity className="mr-1 inline h-4 w-4 text-cyan-600" />
-          {sensor.id}
+          {sensorLabel(sensor)}
         </h3>
         <span className="text-xs text-slate-500">
           {samples.length} samples · cursor {cursor.current}
