@@ -15,7 +15,7 @@ type Device = {
 };
 type Message = { role: 'user' | 'assistant'; content: string };
 
-const sensorIcon = (type: string) => type.includes('radar') ? Radar : type.includes('camera') ? Camera : type.includes('csi') ? Wifi : Cpu;
+const sensorIcon = (type?: string) => { const t = (type ?? '').toLowerCase(); return t.includes('radar') ? Radar : t.includes('camera') ? Camera : t.includes('csi') ? Wifi : Cpu; };
 
 export default function HomePage() {
   const { get, post } = useApi();
