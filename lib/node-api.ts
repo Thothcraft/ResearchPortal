@@ -84,7 +84,9 @@ export interface MetadataDoc {
 
 export type V3 = [number, number, number];
 
-/** room/v1 document — the synced node↔Brain room layout (CONTRACT §1.2). */
+/** room/v1 document — the synced node↔Brain room layout (CONTRACT §1.2).
+ * Multi-room: `devices[].room_id` assigns a device to a named room;
+ * `rooms[]` holds extra rooms (primary room uses the top-level fields). */
 export interface RoomDoc {
   format?: string;
   room_id?: string;
@@ -102,6 +104,7 @@ export interface RoomDoc {
     pos: V3;
     rot_y?: number;
     mount?: 'wall' | 'table' | 'floor' | 'ceiling' | string;
+    room_id?: string;
     sensors?: Array<{
       type: 'radar' | 'camera' | 'csi_rx' | 'csi_tx' | 'mic' | string;
       pos: V3;
@@ -111,8 +114,48 @@ export interface RoomDoc {
       range_m?: number;
     }>;
   }>;
+  rooms?: Array<{
+    room_id: string;
+    name?: string;
+    dims?: { w: number; d: number; h: number };
+    walls?: Array<{ p: V3; s: V3 }>;
+    furniture?: RoomDoc['furniture'];
+  }>;
   updated_at?: number;
   [key: string]: unknown;
+}
+
+/** All selectable rooms in a doc: primary first, then `rooms[]`. */
+export function roomOptions(doc: RoomDoc):
+    Array<{ room_id: string; name: string }> {
+  const out = [{ room_id: doc.room_id || '',
+                 name: doc.name || 'main room' }];
+  for (const r of doc.rooms ?? [])
+    out.push({ room_id: r.room_id,
+               name: r.name || r.room_id });
+  return out;
+}
+
+/** Renderable RoomDoc for one room — its geometry/furniture plus only the
+ * devices assigned to it (unassigned devices land in the primary room). */
+export function roomView(doc: RoomDoc, roomId: string): RoomDoc {
+  const primary = doc.room_id || '';
+  if (roomId === primary) {
+    return { ...doc,
+      devices: (doc.devices ?? []).filter(
+        (d) => !d.room_id || d.room_id === primary) };
+  }
+  const r = (doc.rooms ?? []).find((x) => x.room_id === roomId);
+  if (!r) return { ...doc, devices: [] };
+  return {
+    ...doc,
+    room_id: r.room_id,
+    name: r.name || r.room_id,
+    dims: r.dims ?? doc.dims,
+    walls: r.walls ?? [],
+    furniture: r.furniture ?? [],
+    devices: (doc.devices ?? []).filter((d) => d.room_id === roomId),
+  };
 }
 
 export interface NodeEventRow {

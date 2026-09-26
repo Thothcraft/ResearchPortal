@@ -19,6 +19,8 @@ import {
   NodeSensor,
   NodeStatus,
   RoomDoc,
+  roomOptions,
+  roomView,
   SensorTail,
   brainJson,
   nodeGet,
@@ -64,6 +66,7 @@ export default function DeviceDashboardPage() {
   const [status, setStatus] = useState<NodeStatus | null>(null);
   const [sensors, setSensors] = useState<NodeSensor[]>([]);
   const [room, setRoom] = useState<RoomDoc | null>(null);
+  const [selRoom, setSelRoom] = useState('');
   const [meta, setMeta] = useState<MetadataDoc | null>(null);
   const [online, setOnline] = useState<boolean | null>(null);
   const [err, setErr] = useState('');
@@ -87,7 +90,10 @@ export default function DeviceDashboardPage() {
     try {
       const res = await brainJson<{ room?: RoomDoc | null }>(
         `/nodes/${encodeURIComponent(deviceId)}/room`);
-      if (res?.room) setRoom(res.room);
+      if (res?.room) {
+        setRoom(res.room);
+        setSelRoom((prev) => prev || (res.room!.room_id ?? ''));
+      }
     } catch { /* cached room is optional */ }
     try {
       const m = await nodeGet<MetadataDoc>(deviceId, '/api/v1/metadata');
@@ -263,8 +269,25 @@ export default function DeviceDashboardPage() {
                 {room ? 'cached room/v1 doc' : 'awaiting first room_changed push'}
               </span>
             </div>
+            {room && roomOptions(room).length > 1 && (
+              <div className="mb-3 flex flex-wrap gap-1.5">
+                {roomOptions(room).map((r) => (
+                  <button
+                    key={r.room_id || 'primary'}
+                    onClick={() => setSelRoom(r.room_id)}
+                    className={`rounded-md border px-2.5 py-1 text-xs transition ${
+                      r.room_id === selRoom
+                        ? 'border-blue-500 bg-blue-50 text-blue-700'
+                        : 'border-slate-200 text-slate-500 hover:border-slate-300'
+                    }`}
+                  >
+                    {r.name}
+                  </button>
+                ))}
+              </div>
+            )}
             <RoomScene
-              room={room}
+              room={room ? roomView(room, selRoom || (room.room_id ?? '')) : room}
               selectedSensor={selectedSensor}
               radarFrames={radarFrames}
               onSelectSensor={(dev, type) =>
