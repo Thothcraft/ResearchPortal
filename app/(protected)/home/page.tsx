@@ -2,7 +2,7 @@
 
 import { FormEvent, useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import { ArrowUp, Camera, Cpu, Radar, Sparkles, Wifi } from 'lucide-react';
+import { ArrowUp, BookOpen, Camera, Check, Copy, Cpu, Download, Package, Radar, Sparkles, Terminal, Wifi } from 'lucide-react';
 import { useApi } from '@/hooks/useApi';
 import { useAuth } from '@/contexts/AuthContext';
 
@@ -17,6 +17,68 @@ type Message = { role: 'user' | 'assistant'; content: string };
 
 const sensorIcon = (type?: string) => { const t = (type ?? '').toLowerCase(); return t.includes('radar') ? Radar : t.includes('camera') ? Camera : t.includes('csi') ? Wifi : Cpu; };
 
+/** The stack — mirrored from thothcraft.com/#stack, with the install /
+ * download / docs affordances for each layer. */
+type LayerCmd = { kind: 'pypi' | 'apt' | 'shell'; label: string; cmd: string };
+type LayerLink = { href: string; label: string; icon: 'download' | 'docs' };
+const STACK: Array<{ name: string; desc: string; cmds: LayerCmd[]; links: LayerLink[] }> = [
+  {
+    name: 'WHISPY',
+    desc: 'Physical data acquisition & synchronization — sensor and actuator drivers.',
+    cmds: [
+      { kind: 'pypi', label: 'PyPI', cmd: 'pip install whispy' },
+      { kind: 'apt', label: 'Pi OS deps', cmd: 'sudo apt-get install -y python3-picamera2 python3-sense-hat python3-rpi.gpio' },
+    ],
+    links: [
+      { href: 'https://pypi.org/project/whispy/', label: 'PyPI', icon: 'download' },
+      { href: 'https://github.com/gadm21/whispy', label: 'Docs', icon: 'docs' },
+    ],
+  },
+  {
+    name: 'THOTH',
+    desc: 'Continuous edge execution — daemon, local API, dashboard, fusion.',
+    cmds: [
+      { kind: 'pypi', label: 'PyPI', cmd: 'pip install thoth-node' },
+      { kind: 'shell', label: 'Windows', cmd: 'irm https://get.thothcraft.com/install.ps1 | iex' },
+      { kind: 'shell', label: 'Linux / Pi', cmd: 'curl -fsSL https://get.thothcraft.com/install.sh | sudo bash' },
+    ],
+    links: [
+      { href: 'https://thothcraft.com/download', label: 'Installer', icon: 'download' },
+      { href: 'https://github.com/Thothcraft/thoth', label: 'Docs', icon: 'docs' },
+    ],
+  },
+  {
+    name: 'BRAIN',
+    desc: 'Spaces, entities, history, fleet and physical context — this hub.',
+    cmds: [
+      { kind: 'shell', label: 'Pair a node', cmd: 'thoth pair' },
+    ],
+    links: [
+      { href: 'https://hub.thothcraft.com', label: 'thothHUB', icon: 'download' },
+      { href: 'https://github.com/Thothcraft/Brain', label: 'Docs', icon: 'docs' },
+    ],
+  },
+  {
+    name: 'CONTEXT INTERFACE',
+    desc: 'SDKs, APIs, events, conditions and agent protocols over live context.',
+    cmds: [
+      { kind: 'pypi', label: 'PyPI', cmd: 'pip install whispy' },
+      { kind: 'shell', label: 'Node API', cmd: 'thoth sensors' },
+    ],
+    links: [
+      { href: 'https://github.com/Thothcraft/thoth', label: 'API reference', icon: 'docs' },
+    ],
+  },
+  {
+    name: 'INTELLIGENT SOFTWARE',
+    desc: 'Applications and agents that act on the world.',
+    cmds: [],
+    links: [
+      { href: 'https://thothcraft.com/#developers', label: 'Build on it', icon: 'docs' },
+    ],
+  },
+];
+
 export default function HomePage() {
   const { get, post } = useApi();
   const { user } = useAuth();
@@ -25,7 +87,14 @@ export default function HomePage() {
   const [input, setInput] = useState('');
   const [chatId, setChatId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [copied, setCopied] = useState('');
   const logRef = useRef<HTMLDivElement>(null);
+
+  const copyCmd = (cmd: string) => {
+    navigator.clipboard?.writeText(cmd).catch(() => {});
+    setCopied(cmd);
+    window.setTimeout(() => setCopied((c) => (c === cmd ? '' : c)), 1500);
+  };
 
   const load = useCallback(async () => {
     const response = await get('/device/list?include_offline=true').catch(() => ({ devices: [] }));
@@ -97,6 +166,38 @@ export default function HomePage() {
         <button onClick={() => ask('Which devices are online?')}>Which devices are online?</button>
         <button onClick={() => ask('Start data collection on my online device')}>Start collection</button>
       </div>
+      <section className="ai-stack" aria-labelledby="stack-h">
+        <p className="ai-home-kicker">the stack</p>
+        <h2 id="stack-h">Four layers, one context.</h2>
+        <ol>
+          {STACK.map((layer) => (
+            <li key={layer.name}>
+              <div className="ai-stack-head">
+                <b>{layer.name}</b>
+                <span>{layer.desc}</span>
+              </div>
+              <div className="ai-stack-actions">
+                {layer.cmds.map((c) => (
+                  <button key={c.cmd} type="button" className="ai-stack-cmd"
+                          title={`copy: ${c.cmd}`} onClick={() => copyCmd(c.cmd)}>
+                    {c.kind === 'pypi' ? <Package /> : c.kind === 'apt' ? <Terminal /> : <Terminal />}
+                    <span className="ai-stack-kind">{c.label}</span>
+                    <code>{c.cmd}</code>
+                    {copied === c.cmd ? <Check className="ok" /> : <Copy />}
+                  </button>
+                ))}
+                {layer.links.map((l) => (
+                  <a key={l.href + l.label} className="ai-stack-link"
+                     href={l.href} target="_blank" rel="noopener">
+                    {l.icon === 'download' ? <Download /> : <BookOpen />}
+                    {l.label}
+                  </a>
+                ))}
+              </div>
+            </li>
+          ))}
+        </ol>
+      </section>
     </section>
     <aside className="ai-home-rail">
       <section>

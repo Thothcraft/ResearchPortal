@@ -132,3 +132,25 @@ body{font-family:Inter,"Helvetica Neue",Arial,sans-serif;background:#f4f1e9;lett
 
 /* thothHUB home: compact, calm, and device-first. */
 .ai-home{grid-template-columns:minmax(0,1fr) 300px;gap:16px}.ai-home-stage{min-height:640px;border:1px solid #c9c4b9;border-radius:18px;background:#faf8f2;color:#11110f;padding:clamp(26px,4vw,52px);box-shadow:none}.ai-home-stage h1{margin:14px 0 4px;font-family:Inter,"Helvetica Neue",Arial,sans-serif;font-size:clamp(42px,6vw,72px);font-weight:600!important;line-height:1;letter-spacing:-.06em!important}.ai-home-kicker{color:#77736b}.ai-home-log{max-height:340px;margin-top:28px;border-top:1px solid #ddd8ce;padding-top:14px}.ai-home-message{border-color:#ddd8ce;background:#fff;color:#4d4a44}.ai-home-message.user{background:#11110f;color:#fff;border-color:#11110f}.ai-home-form{border-top-color:#ddd8ce}.ai-home-form input{border-color:#c9c4b9;background:#fff;color:#11110f}.ai-home-form button{background:#11110f;color:#fff}.ai-home-prompts button{border-color:#c9c4b9;color:#4d4a44;background:#fff}.ai-home-rail>section{border-radius:14px;box-shadow:none}
+
+/* stack section — four layers, one context */
+.ai-stack{position:relative;margin-top:26px;border-top:1px solid #ddd8ce;padding-top:18px}
+.ai-stack .ai-home-kicker{margin:0}
+.ai-stack h2{margin:10px 0 0;font-family:Georgia,serif;font-size:clamp(26px,3.4vw,40px);font-weight:400;letter-spacing:-.02em}
+.ai-stack ol{list-style:none;margin:16px 0 0;padding:0;display:flex;flex-direction:column}
+.ai-stack li{border-top:1px solid #e3ded4;padding:12px 0}
+.ai-stack li:last-child{border-bottom:1px solid #e3ded4}
+.ai-stack-head{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap}
+.ai-stack-head b{font-family:ui-monospace,monospace;font-size:13px;letter-spacing:.12em;min-width:170px}
+.ai-stack-head span{color:#77736b;font-size:12.5px}
+.ai-stack-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:9px}
+.ai-stack-cmd{display:inline-flex;align-items:center;gap:7px;max-width:100%;border:1px solid #c9c4b9;border-radius:8px;background:#fff;padding:6px 9px;cursor:pointer;font-size:11px;color:#4d4a44;text-align:left}
+.ai-stack-cmd:hover{border-color:#11110f}
+.ai-stack-cmd svg{width:13px;height:13px;flex-shrink:0;color:#77736b}
+.ai-stack-cmd svg.ok{color:#238653}
+.ai-stack-cmd .ai-stack-kind{font:700 9px ui-monospace,monospace;text-transform:uppercase;letter-spacing:.1em;color:#77736b;border:1px solid #e3ded4;border-radius:4px;padding:1px 5px;flex-shrink:0}
+.ai-stack-cmd code{font-family:ui-monospace,monospace;font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ai-stack-link{display:inline-flex;align-items:center;gap:6px;border:1px solid #11110f;border-radius:8px;background:#11110f;color:#f4f1e9;padding:6px 10px;font-size:11px;font-weight:700;text-decoration:none}
+.ai-stack-link:hover{background:#33332e}
+.ai-stack-link svg{width:13px;height:13px}
+@media(max-width:700px){.ai-stack-cmd code{max-width:52vw}}
