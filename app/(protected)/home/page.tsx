@@ -178,9 +178,11 @@ export default function HomePage() {
               </div>
               <div className="ai-stack-actions">
                 {layer.cmds.map((c) => (
-                  <button key={c.cmd} type="button" className="ai-stack-cmd"
+                  <button key={c.cmd} type="button" className={`ai-stack-cmd ${c.kind}`}
                           title={`copy: ${c.cmd}`} onClick={() => copyCmd(c.cmd)}>
-                    {c.kind === 'pypi' ? <Package /> : c.kind === 'apt' ? <Terminal /> : <Terminal />}
+                    <span className={`ai-stack-ic ${c.kind}`}>
+                      {c.kind === 'pypi' ? <Package /> : <Terminal />}
+                    </span>
                     <span className="ai-stack-kind">{c.label}</span>
                     <code>{c.cmd}</code>
                     {copied === c.cmd ? <Check className="ok" /> : <Copy />}
@@ -189,7 +191,9 @@ export default function HomePage() {
                 {layer.links.map((l) => (
                   <a key={l.href + l.label} className="ai-stack-link"
                      href={l.href} target="_blank" rel="noopener">
-                    {l.icon === 'download' ? <Download /> : <BookOpen />}
+                    <span className={`ai-stack-ic ${l.icon}`}>
+                      {l.icon === 'download' ? <Download /> : <BookOpen />}
+                    </span>
                     {l.label}
                   </a>
                 ))}

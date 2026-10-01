@@ -154,3 +154,14 @@ body{font-family:Inter,"Helvetica Neue",Arial,sans-serif;background:#f4f1e9;lett
 .ai-stack-link:hover{background:#33332e}
 .ai-stack-link svg{width:13px;height:13px}
 @media(max-width:700px){.ai-stack-cmd code{max-width:52vw}}
+
+/* stack icon badges */
+.ai-stack-ic{display:inline-grid;place-items:center;width:24px;height:24px;border-radius:6px;flex-shrink:0}
+.ai-stack-ic svg{width:13px;height:13px}
+.ai-stack-ic.pypi{background:#ffd64f;color:#1c1b16}
+.ai-stack-ic.apt{background:#a80030;color:#fff}
+.ai-stack-ic.shell{background:#11110f;color:#f4f1e9}
+.ai-stack-ic.download{background:#d9e6bb;color:#11110f}
+.ai-stack-ic.docs{background:#e8e4da;color:#11110f}
+.ai-stack-cmd>.ai-stack-ic{margin-right:1px}
+.ai-stack-cmd>svg{width:12px;height:12px;color:#aaa59b}
