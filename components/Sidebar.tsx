@@ -4,24 +4,19 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
-import { Home, Monitor, LogOut, BookOpen, Shield, UserRound, Settings, ChevronUp, Boxes, Database, Map, BarChart3 } from 'lucide-react';
+import { Home, Monitor, LogOut, Shield, UserRound, Settings, ChevronUp, Boxes, Map, BarChart3 } from 'lucide-react';
 
 export default function Sidebar() {
   const pathname = usePathname();
-  const { logout, user, entitlements } = useAuth();
+  const { logout, user } = useAuth();
   const [moreOpen, setMoreOpen] = useState(false);
   const plan = user?.plan || 'free';
   const items = [
     { name: 'Home', href: '/home', icon: Home },
     { name: 'Devices', href: '/devices', icon: Monitor },
     { name: 'Spaces', href: '/spaces', icon: Map },
-    { name: 'Data', href: '/captures', icon: Database },
     { name: 'Models', href: '/models', icon: Boxes },
     { name: 'Usage', href: '/usage', icon: BarChart3 },
-    // Labs are a Research-plan entitlement, not an org feature.
-    ...(entitlements?.labs || plan === 'research'
-      ? [{ name: 'Labs', href: '/labs', icon: BookOpen }]
-      : []),
     ...(user?.role === 1 ? [{ name: 'Admin', href: '/admin', icon: Shield }] : []),
   ];
   const signOut = async () => {

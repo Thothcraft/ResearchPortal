@@ -74,7 +74,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [error, setError] = useState<string | null>(null);
   const router = useRouter();
 
-  // Fetch the plan entitlement set — drives gated UI (Labs, downloads).
+  // Fetch the plan entitlement set — drives gated UI (downloads, etc.).
   const refreshEntitlements = async () => {
     try {
       const res = await fetch('/api/proxy/account/entitlements', {

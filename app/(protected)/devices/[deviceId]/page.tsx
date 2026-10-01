@@ -48,7 +48,7 @@ type TabId = 'status' | 'live' | 'captures' | 'models' | 'automations';
 const TABS: Array<{ id: TabId; label: string; icon: typeof Radio }> = [
   { id: 'status', label: 'Status', icon: Radio },
   { id: 'live', label: 'Live', icon: Camera },
-  { id: 'captures', label: 'Captures', icon: ListTree },
+  { id: 'captures', label: 'Collected', icon: ListTree },
   { id: 'models', label: 'Models', icon: Cpu },
   { id: 'automations', label: 'Automations', icon: GitBranch },
 ];

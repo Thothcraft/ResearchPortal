@@ -88,7 +88,7 @@ export function StatusTab({ deviceId, status, sensors }: TabProps & {
             ['Sensors', String(sensors.length)],
             ['Active models', String(status?.models_active ?? '—')],
             ['Paired to cloud', status?.brain?.paired ? 'yes' : 'no'],
-            ['Capture active', status?.capture?.active ? 'yes' : 'no'],
+            ['Collection', status?.capture?.active ? 'collecting' : 'idle'],
           ].map(([k, v]) => (
             <div key={k} className="flex justify-between border-b border-slate-100 py-1">
               <dt className="text-slate-500">{k}</dt>
@@ -213,7 +213,7 @@ export function CapturesTab({ deviceId }: TabProps) {
       const res = await nodeGet<{ captures?: CaptureRecord[] }>(deviceId, '/api/captures');
       setCaptures(res.captures || []);
     } catch (e) {
-      toast.error('Captures', e instanceof Error ? e.message : 'load failed');
+      toast.error('Collected data', e instanceof Error ? e.message : 'load failed');
     }
   }, [deviceId, toast]);
 
@@ -230,7 +230,7 @@ export function CapturesTab({ deviceId }: TabProps) {
       toast.success('Done', ok);
       await load();
     } catch (e) {
-      toast.error('Capture action failed', e instanceof Error ? e.message : 'error');
+      toast.error('Collection action failed', e instanceof Error ? e.message : 'error');
     } finally {
       setBusy('');
     }
@@ -255,18 +255,21 @@ export function CapturesTab({ deviceId }: TabProps) {
     }
   };
 
+  const activeCount = captures.filter((c) =>
+    c.state === 'active' || (c.started_at != null && c.stopped_at == null)).length;
+
   return (
     <Card
-      title="Captures"
+      title={`Collected data${activeCount ? ' · recording' : ''}`}
       actions={
         <div className="flex gap-2">
           <button
             type="button"
             disabled={busy === 'start'}
-            onClick={() => run('start', () => nodePost(deviceId, '/api/captures/start', {}), 'capture started')}
+            onClick={() => run('start', () => nodePost(deviceId, '/api/captures/start', {}), 'collection started')}
             className="inline-flex items-center gap-1 rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-700 disabled:opacity-50"
           >
-            <Play className="h-3.5 w-3.5" /> Start
+            <Play className="h-3.5 w-3.5" /> Start collecting
           </button>
           <button
             type="button"
@@ -279,7 +282,7 @@ export function CapturesTab({ deviceId }: TabProps) {
       }
     >
       {captures.length === 0 && (
-        <p className="text-sm text-slate-500">No captures on this node.</p>
+        <p className="text-sm text-slate-500">Nothing collected on this node yet.</p>
       )}
       <ul className="space-y-2">
         {captures.map((cap) => {
@@ -287,6 +290,21 @@ export function CapturesTab({ deviceId }: TabProps) {
           const active = cap.state === 'active' || (cap.started_at != null && cap.stopped_at == null);
           const labels = (cap.labels || []).map((l) =>
             typeof l === 'string' ? l : String(l.label || ''));
+          const counts = (cap.sample_counts || {}) as Record<string, number>;
+          const started = Number(cap.started_at || 0);
+          const ended = Number(cap.stopped_at || 0) || (active ? Date.now() / 1000 : 0);
+          const spanS = Math.max(0, ended - started);
+          const duration = spanS < 60 ? `${Math.round(spanS)}s`
+            : spanS < 3600 ? `${Math.floor(spanS / 60)}m ${Math.round(spanS % 60)}s`
+            : `${Math.floor(spanS / 3600)}h ${Math.floor((spanS % 3600) / 60)}m`;
+          // second-level coverage: manifest `seconds` map epoch → per-sensor counts
+          const secs = (cap.seconds || {}) as Record<string, Record<string, number>>;
+          const buckets = Math.min(60, Math.max(1, Math.ceil(spanS)));
+          const filled = new Set<number>();
+          for (const k of Object.keys(secs)) {
+            const b = Math.floor(((Number(k) - started) / Math.max(1, spanS)) * buckets);
+            if (b >= 0 && b < buckets) filled.add(b);
+          }
           return (
             <li key={id} className="rounded-lg border border-slate-200 p-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
@@ -296,7 +314,7 @@ export function CapturesTab({ deviceId }: TabProps) {
                     {active ? 'recording' : (cap.state || 'stopped')}
                   </span>
                   <span className="text-xs text-slate-500">
-                    {fmtTime(cap.started_at)} → {fmtTime(cap.stopped_at)}
+                    {fmtTime(cap.started_at)} → {fmtTime(cap.stopped_at)} · {duration}
                   </span>
                 </div>
                 <div className="flex items-center gap-1.5">
@@ -304,9 +322,9 @@ export function CapturesTab({ deviceId }: TabProps) {
                     <button
                       type="button"
                       disabled={busy === `stop-${id}`}
-                      onClick={() => run(`stop-${id}`, () => nodePost(deviceId, '/api/captures/stop', { capture_id: id }), 'capture stopped')}
+                      onClick={() => run(`stop-${id}`, () => nodePost(deviceId, '/api/captures/stop', { capture_id: id }), 'collection stopped')}
                       className="rounded-md border border-amber-300 bg-amber-50 p-1.5 text-amber-700 hover:bg-amber-100"
-                      title="Stop capture"
+                      title="Stop collecting"
                     >
                       <Square className="h-3.5 w-3.5" />
                     </button>
@@ -331,14 +349,35 @@ export function CapturesTab({ deviceId }: TabProps) {
                   <button
                     type="button"
                     disabled={active}
-                    onClick={() => run(`del-${id}`, () => nodeDelete(deviceId, `/api/captures/${encodeURIComponent(id)}`), 'capture deleted')}
+                    onClick={() => run(`del-${id}`, () => nodeDelete(deviceId, `/api/captures/${encodeURIComponent(id)}`), 'collection deleted')}
                     className="rounded-md border border-slate-200 p-1.5 text-slate-600 hover:bg-red-50 hover:text-red-700 disabled:opacity-40"
-                    title={active ? 'Stop the capture first' : 'Delete'}
+                    title={active ? 'Stop collecting first' : 'Delete'}
                   >
                     <Trash2 className="h-3.5 w-3.5" />
                   </button>
                 </div>
               </div>
+              {Object.keys(counts).length > 0 && (
+                <div className="mt-1.5 flex flex-wrap gap-1.5 text-[10px] text-slate-600">
+                  {Object.entries(counts).map(([sid, n]) => (
+                    <span key={sid} className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 font-mono">
+                      {sid}: {n}
+                    </span>
+                  ))}
+                </div>
+              )}
+              {spanS > 0 && (
+                <div className="mt-1.5 flex items-center gap-px"
+                     title={`${filled.size}/${buckets} seconds with aligned data`}>
+                  {Array.from({ length: buckets }, (_, i) => (
+                    <div key={i} className="h-2 flex-1 rounded-[1px]"
+                         style={{ background: filled.has(i) ? '#10b981' : '#e2e8f0' }} />
+                  ))}
+                  <span className="ml-1.5 text-[10px] text-slate-500">
+                    {Math.round((filled.size / buckets) * 100)}%
+                  </span>
+                </div>
+              )}
               <div className="mt-2 flex flex-wrap items-center gap-1.5">
                 {labels.map((l) => (
                   <span key={l} className="rounded-full bg-cyan-50 px-2 py-0.5 text-[10px] font-medium text-cyan-800">
