@@ -6,6 +6,7 @@ import dynamic from 'next/dynamic';
 import {
   ArrowLeft,
   Box as BoxIcon,
+  BrainCircuit,
   Camera,
   Cpu,
   GitBranch,
@@ -13,6 +14,7 @@ import {
   Loader2,
   Radio,
 } from 'lucide-react';
+import { DeviceContextPanel } from '@/components/context/DeviceContextPanel';
 import { useToast } from '@/contexts/ToastContext';
 import {
   MetadataDoc,
@@ -43,7 +45,7 @@ const RoomScene = dynamic(() => import('@/components/device/RoomScene'), {
   ),
 });
 
-type TabId = 'status' | 'live' | 'captures' | 'models' | 'automations';
+type TabId = 'status' | 'live' | 'captures' | 'models' | 'automations' | 'context';
 
 const TABS: Array<{ id: TabId; label: string; icon: typeof Radio }> = [
   { id: 'status', label: 'Status', icon: Radio },
@@ -51,6 +53,7 @@ const TABS: Array<{ id: TabId; label: string; icon: typeof Radio }> = [
   { id: 'captures', label: 'Collected', icon: ListTree },
   { id: 'models', label: 'Models', icon: Cpu },
   { id: 'automations', label: 'Automations', icon: GitBranch },
+  { id: 'context', label: 'Context', icon: BrainCircuit },
 ];
 
 /** viewer=portal — hides local-token display, unpair, LAN links (§5). */
