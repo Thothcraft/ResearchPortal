@@ -90,6 +90,28 @@ export interface MetadataDoc {
 
 export type V3 = [number, number, number];
 
+/** Room-to-world anchor: origin = room floor centre in ENU metres
+ * from the building origin; heading is clockwise from north toward the
+ * room's -Z direction. `surveyed` flags user-confirmed dimensions. */
+export interface RoomSpatial {
+  surveyed?: boolean;
+  origin_enu_m?: [number, number, number] | null;
+  heading_deg?: number | null;
+  floor?: number | null;
+}
+
+/** Building anchor: shared house identity + geographic origin every
+ * node in the same house must agree on for a combined map. */
+export interface BuildingAnchor {
+  id?: string;
+  name?: string;
+  anchor?: {
+    latitude: number | null;
+    longitude: number | null;
+    altitude_m: number | null;
+  };
+}
+
 /** room/v1 document — the synced node↔Brain room layout (CONTRACT §1.2).
  * Multi-room: `devices[].room_id` assigns a device to a named room;
  * `rooms[]` holds extra rooms (primary room uses the top-level fields). */
@@ -99,6 +121,8 @@ export interface RoomDoc {
   name?: string;
   dims?: { w: number; d: number; h: number };
   walls?: Array<{ p: V3; s: V3 }>;
+  spatial?: RoomSpatial;
+  building?: BuildingAnchor;
   furniture?: Array<{
     type: string;
     pos: V3;
@@ -111,6 +135,7 @@ export interface RoomDoc {
     rot_y?: number;
     mount?: 'wall' | 'table' | 'floor' | 'ceiling' | string;
     room_id?: string;
+    position_uncertainty_m?: number | null;
     sensors?: Array<{
       type: 'radar' | 'camera' | 'csi_rx' | 'csi_tx' | 'mic' | string;
       pos: V3;
@@ -125,6 +150,7 @@ export interface RoomDoc {
     name?: string;
     dims?: { w: number; d: number; h: number };
     walls?: Array<{ p: V3; s: V3 }>;
+    spatial?: RoomSpatial;
     furniture?: RoomDoc['furniture'];
   }>;
   updated_at?: number;
@@ -159,6 +185,7 @@ export function roomView(doc: RoomDoc, roomId: string): RoomDoc {
     name: r.name || r.room_id,
     dims: r.dims ?? doc.dims,
     walls: r.walls ?? [],
+    spatial: r.spatial ?? doc.spatial,
     furniture: r.furniture ?? [],
     devices: (doc.devices ?? []).filter((d) => d.room_id === roomId),
   };

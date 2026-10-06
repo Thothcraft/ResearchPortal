@@ -35,6 +35,7 @@ import {
   SensorTailPanel,
   StatusTab,
 } from '@/components/device/tabs';
+import { LayoutTab } from '@/components/device/LayoutTab';
 
 const RoomScene = dynamic(() => import('@/components/device/RoomScene'), {
   ssr: false,
@@ -45,11 +46,12 @@ const RoomScene = dynamic(() => import('@/components/device/RoomScene'), {
   ),
 });
 
-type TabId = 'status' | 'live' | 'captures' | 'models' | 'automations' | 'context';
+type TabId = 'status' | 'live' | 'layout' | 'captures' | 'models' | 'automations' | 'context';
 
 const TABS: Array<{ id: TabId; label: string; icon: typeof Radio }> = [
   { id: 'status', label: 'Status', icon: Radio },
   { id: 'live', label: 'Live', icon: Camera },
+  { id: 'layout', label: 'Layout', icon: BoxIcon },
   { id: 'captures', label: 'Collected', icon: ListTree },
   { id: 'models', label: 'Models', icon: Cpu },
   { id: 'automations', label: 'Automations', icon: GitBranch },
@@ -312,6 +314,13 @@ export default function DeviceDashboardPage() {
         </div>
       )}
 
+      {tab === 'layout' && (
+        <LayoutTab
+          deviceId={deviceId}
+          cachedRoom={room}
+          onSaved={(doc) => setRoom(doc)}
+        />
+      )}
       {tab === 'captures' && <CapturesTab deviceId={deviceId} viewer={VIEWER} />}
       {tab === 'models' && <ModelsTab deviceId={deviceId} viewer={VIEWER} />}
       {tab === 'automations' && <AutomationsTab deviceId={deviceId} viewer={VIEWER} />}
