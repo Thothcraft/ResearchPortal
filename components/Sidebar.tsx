@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
+import CellLogo from '@/components/CellLogo';
 import { Home, Monitor, LogOut, Shield, UserRound, Settings, ChevronUp, Boxes, Map, BarChart3, BrainCircuit } from 'lucide-react';
 
 export default function Sidebar() {
@@ -27,7 +28,7 @@ export default function Sidebar() {
   };
 
   return <aside className="portal-sidebar">
-    <Link href="/home" className="portal-brand"><span>T</span><strong>thothHUB</strong><small>Device cloud</small></Link>
+    <Link href="/home" className="portal-brand"><span className="cell"><CellLogo size={30} /></span><strong>thothHUB</strong><small>Device cloud</small></Link>
     <nav>{items.map(({ name, href, icon: Icon }) => {
       const active = pathname === href || pathname?.startsWith(`${href}/`);
       return <Link key={href} href={href} className={active ? 'active' : ''}><Icon/><span>{name}</span></Link>;

@@ -165,3 +165,4 @@ body{font-family:Inter,"Helvetica Neue",Arial,sans-serif;background:#f4f1e9;lett
 .ai-stack-ic.docs{background:#e8e4da;color:#11110f}
 .ai-stack-cmd>.ai-stack-ic{margin-right:1px}
 .ai-stack-cmd>svg{width:12px;height:12px;color:#aaa59b}
+.portal-brand>span.cell{border:0;border-radius:0;padding:0;display:grid;place-items:center;background:transparent}
