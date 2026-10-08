@@ -142,17 +142,75 @@ export function StatusTab({ deviceId, status, sensors }: TabProps & {
 /* Live                                                                */
 /* ------------------------------------------------------------------ */
 
+/** First meaningful numeric leaf of a sample payload — the value the
+ * live sparkline tracks (G11). Prefers known names, falls back to the
+ * first shallow numeric leaf. */
+function pickNumeric(payload: unknown): number | null {
+  if (payload == null || typeof payload !== 'object') return null;
+  const p = payload as Record<string, unknown>;
+  for (const k of ['rssi', 'snr_db', 'snr', 'value', 'level', 'rms',
+    'amplitude', 'heart_rate', 'bpm', 'cpu_percent', 'temperature',
+    'count', 'magnitude']) {
+    const v = p[k];
+    if (typeof v === 'number' && Number.isFinite(v)) return v;
+  }
+  for (const v of Object.values(p)) {
+    if (typeof v === 'number' && Number.isFinite(v)) return v;
+    if (v && typeof v === 'object') {
+      for (const iv of Object.values(v as Record<string, unknown>)) {
+        if (typeof iv === 'number' && Number.isFinite(iv)) return iv;
+      }
+    }
+  }
+  return null;
+}
+
+const SERIES_CAP = 240;   // rolling window of points kept per sensor
+const PLOT_POINTS = 120;  // decimation target — stride-samples the window
+
+/** Inline SVG sparkline — dependency-free, decimates the series. */
+function Sparkline({ values }: { values: number[] }) {
+  if (!values.length) return null;
+  const stride = Math.max(1, Math.ceil(values.length / PLOT_POINTS));
+  const pts = values.filter((_, i) => i % stride === 0);
+  const min = Math.min(...pts);
+  const max = Math.max(...pts);
+  const span = max - min || 1;
+  const w = 100, h = 32;
+  const path = pts
+    .map((v, i) =>
+      `${(i / Math.max(1, pts.length - 1)) * w},${h - ((v - min) / span) * h}`)
+    .join(' ');
+  return (
+    <div className="mb-2">
+      <svg viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none"
+        className="h-16 w-full rounded bg-slate-50" role="img"
+        aria-label="Live signal plot">
+        <polyline points={path} fill="none" stroke="#0891b2"
+          strokeWidth="1.5" vectorEffect="non-scaling-stroke" />
+      </svg>
+      <div className="mt-1 flex justify-between text-[10px] text-slate-500">
+        <span>min {min.toFixed(2)}</span>
+        <span>n={values.length} · every {stride}</span>
+        <span>max {max.toFixed(2)}</span>
+      </div>
+    </div>
+  );
+}
+
 export function SensorTailPanel({ deviceId, sensor }: {
   deviceId: string;
   sensor: NodeSensor;
 }) {
   const [tail, setTail] = useState<SensorTail | null>(null);
+  const [series, setSeries] = useState<number[]>([]);
   const [err, setErr] = useState('');
   const cursor = useRef<number>(0);
 
   useEffect(() => {
     let live = true;
     cursor.current = 0;
+    setSeries([]);
     const poll = async () => {
       try {
         const res = await nodeGet<SensorTail>(
@@ -162,6 +220,16 @@ export function SensorTailPanel({ deviceId, sensor }: {
         if (!live) return;
         if (res.cursor != null) cursor.current = Number(res.cursor);
         setTail(res);
+        const vals = (res.samples || [])
+          .map((s) => pickNumeric(s?.payload ?? s))
+          .filter((v): v is number => v != null);
+        if (vals.length) {
+          setSeries((prev) => {
+            const next = prev.concat(vals);
+            return next.length > SERIES_CAP
+              ? next.slice(next.length - SERIES_CAP) : next;
+          });
+        }
         setErr('');
       } catch (e) {
         if (live) setErr(e instanceof Error ? e.message : 'stream failed');
@@ -174,6 +242,7 @@ export function SensorTailPanel({ deviceId, sensor }: {
 
   const samples = tail?.samples || [];
   const latest = samples.length ? samples[samples.length - 1] : null;
+  const rate = latest && (latest as { sample_rate?: number }).sample_rate;
 
   return (
     <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
@@ -183,14 +252,20 @@ export function SensorTailPanel({ deviceId, sensor }: {
           {sensorLabel(sensor)}
         </h3>
         <span className="text-xs text-slate-500">
-          {samples.length} samples · cursor {cursor.current}
+          {rate ? `${rate} Hz · ` : ''}{samples.length} samples · cursor {cursor.current}
         </span>
       </div>
       {err && <p className="text-xs text-red-600">{err}</p>}
+      <Sparkline values={series} />
       {latest ? (
-        <pre className="max-h-56 overflow-auto rounded bg-slate-50 p-3 text-[11px] leading-relaxed text-slate-700">
-          {JSON.stringify(latest, null, 2)}
-        </pre>
+        <details>
+          <summary className="cursor-pointer text-xs text-slate-500">
+            Latest sample
+          </summary>
+          <pre className="mt-1 max-h-56 overflow-auto rounded bg-slate-50 p-3 text-[11px] leading-relaxed text-slate-700">
+            {JSON.stringify(latest, null, 2)}
+          </pre>
+        </details>
       ) : (
         <p className="text-xs text-slate-500">Waiting for samples…</p>
       )}
