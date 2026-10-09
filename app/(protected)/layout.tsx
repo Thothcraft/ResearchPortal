@@ -7,6 +7,7 @@ import Sidebar from '@/components/Sidebar';
 import { KeyboardShortcuts } from '@/components/KeyboardShortcuts';
 import MobileNavigation from '@/components/MobileNavigation';
 import PWAStatus from '@/components/PWAStatus';
+import AssistantChat from '@/components/AssistantChat';
 
 export default function ProtectedLayout({
   children,
@@ -68,6 +69,7 @@ export default function ProtectedLayout({
         {children}
       </main>
       <MobileNavigation />
+      <AssistantChat />
       <PWAStatus />
       <KeyboardShortcuts isOpen={showShortcuts} onClose={() => setShowShortcuts(false)} />
     </div>
