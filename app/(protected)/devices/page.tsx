@@ -338,7 +338,9 @@ export default function DevicesPage() {
                   {device.device_name || device.device_id}
                 </h2>
                 <div className="mt-1 font-mono text-[11px] text-slate-500">
-                  {device.hardware_info?.hostname || device.ip_address || device.device_id}
+                  {device.hardware_info?.hostname
+                    ? `${device.hardware_info.hostname}:5000`
+                    : device.ip_address || device.device_id}
                 </div>
               </div>
             </div>
