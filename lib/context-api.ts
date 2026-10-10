@@ -156,3 +156,74 @@ export const CONTEXT_KEY_FAMILIES = [
   'occupancy', 'presence', 'location', 'activity', 'ble',
   'localization', 'environment',
 ] as const;
+
+// ---------------------------------------------------------------------------
+// LLM context inference — POST /v1/context/infer
+// ---------------------------------------------------------------------------
+
+export interface InferOptions {
+  tiers: string[];
+  models: string[];                    // user-selectable large-context set
+  defaults: Record<string, string>;    // resolved model per tier
+  gather_default_s: number;
+}
+
+export interface InferRequestBody {
+  thinking?: string;
+  model?: string;                      // explicit pick — overrides tier
+  gather_window_s?: number;            // >0 → Brain assembles the bundle
+  entity_hint?: string;
+  dry_run?: boolean;
+  window?: Record<string, unknown>;
+  calibration?: Record<string, unknown>;
+  descriptors?: Record<string, unknown>;
+  context?: Record<string, unknown>;
+  devices?: Array<Record<string, unknown>>;
+  history?: Array<Record<string, unknown>>;
+  coverage?: string[];
+}
+
+export interface InferResult {
+  form?: Record<string, any>;
+  summary?: string;
+  analysis?: string;
+  model_text?: string | null;
+  seen?: Record<string, any>;          // exact payload the model received
+  thinking?: string;
+  model_id?: string;
+  questions?: Array<Record<string, any>>;
+  uncertainties?: Array<Record<string, any>>;
+  device_updates?: Array<Record<string, any>>;
+  receipt?: Record<string, any>;
+  dry_run?: boolean;
+  generated_at?: number;
+}
+
+/** The retained last run (`infer:last` entity attributes). `input` and
+ * `output` are JSON strings of what the model saw / produced. */
+export interface InferLast {
+  at?: number;
+  model_id?: string;
+  tier?: string;
+  dry_run?: boolean;
+  summary?: string;
+  analysis?: string;
+  model_text?: string;
+  input?: string;
+  output?: string;
+}
+
+export const inferApi = {
+  options: () => brainJson<InferOptions>('/context/infer/options'),
+
+  last: () =>
+    brainJson<InferLast>('/context/infer/last')
+      .catch(() => null),
+
+  run: (body: InferRequestBody) =>
+    brainJson<InferResult>('/context/infer', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }),
+};

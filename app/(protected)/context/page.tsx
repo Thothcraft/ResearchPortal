@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import {
   Activity, BrainCircuit, Filter, GitMerge, Loader2, MapPin,
-  RadioTower, RefreshCw,
+  RadioTower, RefreshCw, Sparkles,
 } from 'lucide-react';
 import { useApi } from '@/hooks/useApi';
 import {
@@ -16,8 +16,10 @@ import { BleRelationMap } from '@/components/context/BleRelationMap';
 import { EvidenceInspector } from '@/components/context/EvidenceInspector';
 import { EntityExplorer } from '@/components/context/EntityExplorer';
 import { LocalizationPanel } from '@/components/context/LocalizationPanel';
+import { InferPanel } from '@/components/context/InferPanel';
 
-type Tab = 'overview' | 'entities' | 'evidence' | 'events' | 'ble' | 'localization';
+type Tab = 'overview' | 'entities' | 'evidence' | 'events' | 'ble'
+  | 'localization' | 'infer';
 
 const TABS: Array<{ id: Tab; label: string; icon: typeof Activity }> = [
   { id: 'overview', label: 'Live context', icon: BrainCircuit },
@@ -26,6 +28,7 @@ const TABS: Array<{ id: Tab; label: string; icon: typeof Activity }> = [
   { id: 'events', label: 'Timeline', icon: Activity },
   { id: 'ble', label: 'BLE map', icon: RadioTower },
   { id: 'localization', label: 'Localization', icon: MapPin },
+  { id: 'infer', label: 'Infer', icon: Sparkles },
 ];
 
 const POLL_MS = 15000;
@@ -130,6 +133,8 @@ export default function ContextPage() {
         <EventTimeline events={events} />
       ) : tab === 'ble' ? (
         <BleRelationMap />
+      ) : tab === 'infer' ? (
+        <InferPanel />
       ) : (
         <LocalizationPanel />
       )}
